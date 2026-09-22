@@ -1,0 +1,16 @@
+{
+  "name": "NAVIA Claude Code Master Spec",
+  "files": [
+    "CLAUDE_CODE_MASTER_PROMPT.md",
+    "DATA_PIPELINE.md",
+    "CLAUDE.md",
+    "BUILD.md",
+    "tests/core.test.ts",
+    "docs/ARCHITECTURE.md",
+    "packages/core/src/confidence.ts",
+    "packages/core/src/dead-reckoning.ts",
+    "packages/core/src/geodesy.ts",
+    "packages/core/src/gnss-monitor.ts",
+    "packages/core/src/map-matcher.ts"
+  ]
+}

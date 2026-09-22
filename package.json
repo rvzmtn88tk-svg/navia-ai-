@@ -1,0 +1,18 @@
+{
+  "name": "navia",
+  "private": true,
+  "version": "0.1.0",
+  "description": "NAVIA AI — resilient offline-capable navigation for Ukraine. Monorepo: packages/core (platform-independent navigation engine), apps/mobile (Expo/React Native app), scripts/data (OSM/Valhalla offline data pipeline).",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "tsx --test packages/*/test/**/*.test.ts",
+    "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p packages/core/tsconfig.test.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

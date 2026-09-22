@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "NAVIA",
+    "slug": "navia",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "navia",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b1220"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ua.navia.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації у фоновому режимі під час поїздки.",
+        "NSMicrophoneUsageDescription": "NAVIA використовує мікрофон для голосових команд.",
+        "NSCameraUsageDescription": "NAVIA використовує камеру для розпізнавання орієнтирів (Camera Vision)."
+      }
+    },
+    "android": {
+      "package": "ua.navia.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "RECORD_AUDIO",
+        "CAMERA"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b1220"
+      }
+    },
+    "plugins": [
+      "expo-location",
+      "expo-sensors",
+      "expo-sqlite",
+      [
+        "@maplibre/maplibre-react-native",
+        {
+          "android": { "unstable_useVendoredDependencies": true }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_REAL_EAS_PROJECT_ID"
+      }
+    }
+  }
+}

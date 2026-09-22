@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-native",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020"],
+    "noEmit": true,
+    "types": ["react"],
+    "typeRoots": ["./node_modules/@types", "../../node_modules/@types", "/opt/node-tools/node_modules/@types"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "App.tsx", "index.ts"]
+}
