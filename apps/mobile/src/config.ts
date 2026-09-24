@@ -24,4 +24,6 @@ export const config = {
   autocompleteUrl: readEnv("EXPO_PUBLIC_NAVIA_AUTOCOMPLETE_URL") ?? "https://photon.komoot.io/api",
   geocoderUrl: readEnv("EXPO_PUBLIC_NAVIA_GEOCODER_URL") ?? "https://nominatim.openstreetmap.org",
   airAlertApiUrl: readEnv("EXPO_PUBLIC_NAVIA_AIR_ALERT_API_URL"),
+  /** MapTiler key for satellite/terrain layers; null means those layers are unavailable. */
+  mapTilerKey: readEnv("EXPO_PUBLIC_NAVIA_MAPTILER_KEY"),
 } as const;

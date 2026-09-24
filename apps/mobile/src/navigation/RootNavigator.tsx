@@ -3,33 +3,47 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAppSettings } from "../settings/AppSettings";
-import { APP_FONT_FAMILY } from "../components/AppText";
+import { useT } from "../i18n";
+import { typography } from "../theme/tokens";
+import type { PlaceRef, SavedSlot } from "../store/placesStore";
+
+export type RouteMode = "car" | "walk";
 
 export type RootStackParamList = {
-  Home: undefined;
-  Search: undefined;
-  Navigation: { destinationLat: number; destinationLon: number; destinationLabel: string };
+  Home: { focusPlace?: PlaceRef; category?: string } | undefined;
+  Search: { pickFor?: SavedSlot } | undefined;
+  Navigation: { destinationLat: number; destinationLon: number; destinationLabel: string; mode?: RouteMode };
   Diagnostics: undefined;
   Settings: undefined;
-  Assistant: { initialQuestion?: string } | undefined;
+  Sources: undefined;
+  Assistant: { initialQuestion?: string; voice?: boolean } | undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator(): JSX.Element {
-  const { palette: p, language } = useAppSettings();
-  const en = language === "en";
+  const { colors } = useAppSettings();
+  const { t } = useT();
   return (
-    <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: true, headerStyle: { backgroundColor: p.surface }, headerTintColor: p.text, headerTitleStyle: { fontFamily: APP_FONT_FAMILY, fontWeight: "600", fontSize: 18 }, headerShadowVisible: false, contentStyle: { backgroundColor: p.background } }}>
+    <Stack.Navigator initialRouteName="Home" screenOptions={{
+      headerShown: true,
+      headerStyle: { backgroundColor: colors.background },
+      headerTintColor: colors.accent,
+      headerTitleStyle: { ...typography.headline, color: colors.textPrimary },
+      headerShadowVisible: false,
+      headerBackTitle: t("common.back"),
+      contentStyle: { backgroundColor: colors.background },
+    }}>
       {/* Defer each feature tree until it is opened. In particular, do not
           initialize native sensor, speech and map screens while the app is
           still entering its home screen. */}
       <Stack.Screen name="Home" getComponent={() => require("../screens/HomeScreen").HomeScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="Search" getComponent={() => require("../screens/SearchScreen").SearchScreen} options={{ title: en ? "Choose destination" : "Куди їдемо?" }} />
-      <Stack.Screen name="Navigation" getComponent={() => require("../screens/NavigationScreen").NavigationScreen} options={{ title: en ? "Navigation" : "Навігація", headerShown: false }} />
-      <Stack.Screen name="Assistant" getComponent={() => require("../screens/AssistantScreen").AssistantScreen} options={{ title: en ? "NAVIA co-pilot" : "Штурман NAVIA" }} />
-      <Stack.Screen name="Settings" getComponent={() => require("../screens/SettingsScreen").SettingsScreen} options={{ title: en ? "Settings" : "Налаштування" }} />
-      <Stack.Screen name="Diagnostics" getComponent={() => require("../screens/DiagnosticsScreen").DiagnosticsScreen} options={{ title: en ? "Device diagnostics" : "Діагностика" }} />
+      <Stack.Screen name="Search" getComponent={() => require("../screens/SearchScreen").SearchScreen} options={{ headerShown: false, animation: "fade" }} />
+      <Stack.Screen name="Navigation" getComponent={() => require("../screens/NavigationScreen").NavigationScreen} options={{ headerShown: false, animation: "fade" }} />
+      <Stack.Screen name="Assistant" getComponent={() => require("../screens/AssistantScreen").AssistantScreen} options={{ title: t("copilot.title"), presentation: "modal" }} />
+      <Stack.Screen name="Settings" getComponent={() => require("../screens/SettingsScreen").SettingsScreen} options={{ title: t("settings.title") }} />
+      <Stack.Screen name="Sources" getComponent={() => require("../screens/SourcesScreen").SourcesScreen} options={{ title: t("sources.title"), presentation: "modal" }} />
+      <Stack.Screen name="Diagnostics" getComponent={() => require("../screens/DiagnosticsScreen").DiagnosticsScreen} options={{ title: t("settings.diagnostics") }} />
     </Stack.Navigator>
   );
 }

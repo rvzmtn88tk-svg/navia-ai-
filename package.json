@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "tsx --test packages/*/test/**/*.test.ts",
+    "test": "tsx --test packages/*/test/**/*.test.ts apps/mobile/test/**/*.test.ts",
     "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p packages/core/tsconfig.test.json",
     "android": "npm run android --workspace=@navia/mobile --",
     "ios": "npm run ios --workspace=@navia/mobile --"
