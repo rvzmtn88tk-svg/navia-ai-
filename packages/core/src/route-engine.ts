@@ -20,9 +20,13 @@
 import type { LatLon, RouteStep } from "./types";
 import { haversineMeters } from "./geodesy";
 
+export type TravelMode = "car" | "walk";
+
 export type RouteRequest = {
   origin: LatLon;
   destination: LatLon;
+  /** Defaults to "car". */
+  mode?: TravelMode;
 };
 
 export type Route = {

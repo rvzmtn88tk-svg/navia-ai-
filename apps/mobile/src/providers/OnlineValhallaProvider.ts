@@ -67,23 +67,23 @@ function decodePolyline6(encoded: string): LatLon[] {
   return points;
 }
 
-// Valhalla's Odin maneuver `type` enum, collapsed onto our simplified
-// RouteStep maneuver union (depart/straight/left/right/uturn/roundabout/
-// arrive) — an intentional simplification (Valhalla distinguishes "slight
-// right" from "right" from "sharp right", say); good enough for the HUD
-// text this feeds, not a source of navigational error since the actual
-// distances/road names still come straight from Valhalla.
+// Valhalla's Odin maneuver `type` enum mapped onto RouteStep maneuvers.
+// Types 26/27 are roundabout enter/exit; the enter maneuver carries the exit
+// count, the exit maneuver is folded into "straight".
 const VALHALLA_MANEUVER_TYPE: Record<number, RouteStep["maneuver"]> = {
   1: "depart", 2: "depart", 3: "depart",
   4: "arrive", 5: "arrive", 6: "arrive",
-  7: "straight", 8: "straight", 17: "straight", 22: "straight", 25: "straight",
-  9: "right", 10: "right", 11: "right", 18: "right", 20: "right", 23: "right",
-  14: "left", 15: "left", 16: "left", 19: "left", 21: "left", 24: "left",
+  7: "straight", 8: "straight", 17: "straight", 22: "straight", 27: "straight",
+  9: "slight_right", 10: "right", 11: "sharp_right",
+  16: "slight_left", 15: "left", 14: "sharp_left",
   12: "uturn", 13: "uturn",
-  26: "roundabout", 27: "roundabout",
+  18: "exit_right", 20: "exit_right", 19: "exit_left", 21: "exit_left",
+  23: "slight_right", 24: "slight_left",
+  25: "merge", 37: "merge", 38: "merge",
+  26: "roundabout",
 };
 
-function mapManeuverType(type: number): RouteStep["maneuver"] {
+export function mapManeuverType(type: number): RouteStep["maneuver"] {
   return VALHALLA_MANEUVER_TYPE[type] ?? "straight";
 }
 
@@ -94,6 +94,7 @@ type ValhallaManeuver = {
   length: number; // km (metric units requested below)
   time: number; // seconds
   begin_shape_index: number;
+  roundabout_exit_count?: number;
 };
 
 type ValhallaLeg = {
@@ -131,8 +132,9 @@ export class OnlineValhallaProvider implements RoutingProvider {
         { lat: request.origin.lat, lon: request.origin.lon },
         { lat: request.destination.lat, lon: request.destination.lon },
       ],
-      costing: "auto",
+      costing: request.mode === "walk" ? "pedestrian" : "auto",
       units: "kilometers",
+      language: "uk-UA",
       ...(alternates > 0 ? { alternates } : {}),
     };
 
@@ -179,6 +181,7 @@ export class OnlineValhallaProvider implements RoutingProvider {
         id: `step-${i}`,
         roadName: maneuver.street_names?.[0] ?? "",
         maneuver: mapManeuverType(maneuver.type),
+        ...(maneuver.type === 26 && Number.isInteger(maneuver.roundabout_exit_count) && (maneuver.roundabout_exit_count ?? 0) > 0 ? { roundaboutExit: maneuver.roundabout_exit_count } : {}),
         distanceM: maneuver.length * 1000,
         durationS: maneuver.time,
         location: geometry[index]!,

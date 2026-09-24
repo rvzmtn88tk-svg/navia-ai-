@@ -107,6 +107,13 @@ function maneuverPhrase(m: RouteStep["maneuver"]): string {
   switch (m) {
     case "left": return "ліворуч";
     case "right": return "праворуч";
+    case "slight_left": return "плавно ліворуч";
+    case "slight_right": return "плавно праворуч";
+    case "sharp_left": return "різко ліворуч";
+    case "sharp_right": return "різко праворуч";
+    case "exit_left": return "з’їзд ліворуч";
+    case "exit_right": return "з’їзд праворуч";
+    case "merge": return "злиття";
     case "uturn": return "розворот";
     case "roundabout": return "круговий рух";
     case "arrive": return "прибуття до пункту призначення";

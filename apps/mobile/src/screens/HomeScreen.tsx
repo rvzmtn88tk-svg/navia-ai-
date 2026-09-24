@@ -6,6 +6,7 @@ import { Animated, Linking, Modal, Pressable, RefreshControl, ScrollView, StyleS
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList, RouteMode } from "../navigation/RootNavigator";
+import { DEMO_DESTINATION } from "@navia/core";
 import { useNaviaStore } from "../engine/naviaController";
 import { useLiveContext, type GnssHealth, type GpsStatus } from "../engine/useLiveContext";
 import { useAppSettings, type MapLayer } from "../settings/AppSettings";
@@ -121,6 +122,8 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
 
   const fullTop = insets.top + space.xs + SEARCH_H + space.xs;
   const controlsBottom = Animated.add(sheetVisible, space.md);
+  // Floating controls step aside once the sheet grows past half height.
+  const controlsOpacity = sheetVisible.interpolate({ inputRange: [halfSheetHeight + space.lg, halfSheetHeight + space.xxl * 2], outputRange: [1, 0], extrapolate: "clamp" });
   const cameraPadding = useMemo(() => ({ top: fullTop + CHIPS_H, bottom: PEEK_H + insets.bottom }), [fullTop, insets.bottom]);
 
   return (
@@ -175,13 +178,13 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
       </View>
 
       {/* Floating controls above the sheet */}
-      <Animated.View style={[styles.rightRail, { bottom: controlsBottom }]} pointerEvents="box-none">
+      <Animated.View style={[styles.rightRail, { bottom: controlsBottom, opacity: controlsOpacity }]} pointerEvents={snap === "full" ? "none" : "box-none"}>
         <IconButton icon="layers" label={t("home.layers")} onPress={() => setLayersOpen(true)} />
         <IconButton icon={cameraMode === "free" ? "locate" : "locateFilled"} label={t("home.locate")}
           onPress={() => { if (!fix) void live.requestPermission(); setCameraMode("follow"); map.current?.recenter(); }} />
       </Animated.View>
       {alertActive && shelter && !selected && (
-        <Animated.View style={[styles.leftRail, { bottom: controlsBottom }]}>
+        <Animated.View style={[styles.leftRail, { bottom: controlsBottom, opacity: controlsOpacity }]} pointerEvents={snap === "full" ? "none" : "box-none"}>
           <Button label={t("home.nearestShelter")} icon="shelter" variant="critical"
             onPress={() => startRoute({ id: shelter.id, label: shelter.name, lat: shelter.location.lat, lon: shelter.location.lon }, "walk")} />
         </Animated.View>
@@ -227,7 +230,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
               </Pressable>
               {__DEV__ && <Text variant="caption" color="accent" style={styles.demoLink} onPress={() => {
                 setDemoMode(true);
-                navigation.navigate("Navigation", { destinationLat: 50.3450, destinationLon: 30.8950, destinationLabel: `Бориспіль (${t("common.demo")})` });
+                navigation.navigate("Navigation", { destinationLat: DEMO_DESTINATION.lat, destinationLon: DEMO_DESTINATION.lon, destinationLabel: `Бориспіль (${t("common.demo")})` });
               }}>{t("common.demo")} ▸</Text>}
             </>
           )}

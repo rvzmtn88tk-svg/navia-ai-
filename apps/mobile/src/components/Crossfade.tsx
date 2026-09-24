@@ -39,3 +39,13 @@ export function useToneColor(tone: number, colors: string[]): Animated.AnimatedI
   }, [tone, value]);
   return value.interpolate({ inputRange: colors.map((_, i) => i), outputRange: colors });
 }
+
+/** Fades and slides children in when they mount. */
+export function Appear({ from = 0, children, style, delay = 0 }: { from?: number; children: React.ReactNode; style?: object; delay?: number }): JSX.Element {
+  const progress = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(progress, { toValue: 1, duration: motion.normal, delay, easing: easing.decelerate, useNativeDriver: true }).start();
+  }, [progress, delay]);
+  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [from, 0] });
+  return <Animated.View style={[style, { opacity: progress, transform: [{ translateY }] }]}>{children}</Animated.View>;
+}

@@ -25,7 +25,7 @@ import type { GNSSRawSample, GNSSConfig } from "./gnss-monitor";
 import { GNSSMonitor } from "./gnss-monitor";
 import { calculateConfidence } from "./confidence";
 import { SensorFusionEngine } from "./sensor-fusion";
-import type { Route, RoutingProvider } from "./route-engine";
+import type { Route, RoutingProvider, TravelMode } from "./route-engine";
 import { RouteProgressEngine, distanceFromRouteCorridorM } from "./route-engine";
 import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
@@ -111,9 +111,9 @@ export class NavigationEngine {
    * honestly (no silent demo fallback — spec section 40/user's explicit
    * "don't switch to DemoRoutingProvider and call it real") if the
    * provider fails (e.g. Valhalla endpoint unreachable). */
-  async requestRoute(origin: LatLon, destination: LatLon): Promise<Route> {
+  async requestRoute(origin: LatLon, destination: LatLon, mode: TravelMode = "car"): Promise<Route> {
     const revision = ++this.routeRevision;
-    const route = await this.routingProvider.route({ origin, destination });
+    const route = await this.routingProvider.route({ origin, destination, mode });
     if (revision !== this.routeRevision) throw new Error("NavigationEngine: route request was cancelled or superseded.");
     this.route = route;
     this.offRouteDetector.reset();

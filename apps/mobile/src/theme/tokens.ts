@@ -35,6 +35,14 @@ export type ThemeColors = {
   pressed: string;
   disabled: string;
   shadow: string;
+  /** Navigation maneuver card: deep brand surface with white content, both themes. */
+  maneuverCard: string;
+  maneuverCardDeep: string;
+  onManeuver: string;
+  onManeuverSecondary: string;
+  onManeuverFaint: string;
+  /** Glyph colour on coloured map markers. */
+  onMarker: string;
 };
 
 const light: ThemeColors = {
@@ -68,6 +76,12 @@ const light: ThemeColors = {
   pressed: "rgba(14, 26, 36, 0.06)",
   disabled: "#B7C1C9",
   shadow: "#0B1620",
+  maneuverCard: "#0A5E59",
+  maneuverCardDeep: "#084C48",
+  onManeuver: "#FFFFFF",
+  onManeuverSecondary: "rgba(255, 255, 255, 0.85)",
+  onManeuverFaint: "rgba(255, 255, 255, 0.35)",
+  onMarker: "#FFFFFF",
 };
 
 const dark: ThemeColors = {
@@ -101,6 +115,12 @@ const dark: ThemeColors = {
   pressed: "rgba(241, 245, 248, 0.08)",
   disabled: "#46546A",
   shadow: "#000000",
+  maneuverCard: "#0E4F4C",
+  maneuverCardDeep: "#0A3F3D",
+  onManeuver: "#FFFFFF",
+  onManeuverSecondary: "rgba(255, 255, 255, 0.85)",
+  onManeuverFaint: "rgba(255, 255, 255, 0.35)",
+  onMarker: "#FFFFFF",
 };
 
 export const palettes: Record<ColorScheme, ThemeColors> = { light, dark };

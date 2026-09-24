@@ -88,11 +88,20 @@ export type RouteStep = {
   maneuver:
     | "depart"
     | "straight"
+    | "slight_left"
+    | "slight_right"
     | "left"
     | "right"
+    | "sharp_left"
+    | "sharp_right"
     | "uturn"
     | "roundabout"
+    | "exit_left"
+    | "exit_right"
+    | "merge"
     | "arrive";
+  /** Roundabout exit number (1 = first exit), when the router provides it. */
+  roundaboutExit?: number;
   distanceM: number;
   durationS: number;
   location: LatLon;

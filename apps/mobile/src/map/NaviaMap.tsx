@@ -116,7 +116,10 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
   const traveledShape = useMemo(() => lineFeature(traveledGeometry), [traveledGeometry]);
 
   return (
-    <View style={StyleSheet.absoluteFill}>
+    // A finger dragging on the map means the user took control of the camera.
+    // (MapLibre's isUserInteraction flag is unreliable while a follow
+    // animation is running, so the touch itself is the signal.)
+    <View style={StyleSheet.absoluteFill} onTouchMove={onUserGesture}>
       <MapLibreGL.MapView
         style={StyleSheet.absoluteFill}
         mapStyle={mapStyle}
@@ -175,7 +178,7 @@ function PlaceMarker({ place, selected, onPress }: { place: NearbyPlace; selecte
   return (
     <Touchable haptic accessibilityRole="button" accessibilityLabel={place.name} onPress={() => onPress?.(place)}
       style={[styles.placeMarker, { width: size, height: size, borderRadius: size / 2, backgroundColor: meta.color, borderColor: c.surface }, elevation(2, c)]}>
-      <Icon name={meta.icon} size={selected ? 22 : 16} color="#FFFFFF" />
+      <Icon name={meta.icon} size={selected ? 22 : 16} color={c.onMarker} />
     </Touchable>
   );
 }
