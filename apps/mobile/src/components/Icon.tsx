@@ -7,7 +7,7 @@ export type IconName =
   | "info" | "mic" | "send" | "refresh" | "star" | "home" | "work" | "clock" | "pin" | "car" | "walk"
   | "shelter" | "resilience" | "fuel" | "charger" | "pharmacy" | "hospital" | "atm" | "water" | "food"
   | "shop" | "transport" | "satellite" | "alert" | "check" | "sparkle" | "volume" | "plus" | "minus"
-  | "compass" | "route" | "user" | "globe" | "moon" | "shield";
+  | "compass" | "route" | "user" | "globe" | "moon" | "shield" | "phone" | "eye" | "traffic";
 
 type Props = { name: IconName; size?: number; color: string; strokeWidth?: number };
 
@@ -68,5 +68,8 @@ function glyph(name: IconName, s: Stroke, f: { fill: string }): JSX.Element {
     case "globe": return <><Circle cx="12" cy="12" r="9" {...s} /><Path d="M3 12h18M12 3c2.5 2.6 3.6 5.6 3.6 9s-1.1 6.4-3.6 9c-2.5-2.6-3.6-5.6-3.6-9S9.5 5.6 12 3Z" {...s} /></>;
     case "moon": return <Path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" {...s} />;
     case "shield": return <Path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z" {...s} />;
+    case "traffic": return <><Path d="M8.5 2.5h7a1.5 1.5 0 0 1 1.5 1.5v14a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 18V4a1.5 1.5 0 0 1 1.5-1.5ZM12 19.5v2.5" {...s} /><Circle cx="12" cy="6.5" r="1.6" {...s} /><Circle cx="12" cy="11" r="1.6" {...s} /><Circle cx="12" cy="15.5" r="1.6" {...s} /></>;
+    case "phone": return <Path d="M6.5 3.5h3l1.5 4-2 1.3a11 11 0 0 0 6.2 6.2l1.3-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2Z" {...s} />;
+    case "eye": return <><Path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" {...s} /><Circle cx="12" cy="12" r="3" {...s} /></>;
   }
 }

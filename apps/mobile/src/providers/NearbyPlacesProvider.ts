@@ -1,4 +1,6 @@
 import type { LatLon } from "@navia/core";
+import { overpass, type OverpassElement } from "./overpass";
+import { tilePoisNear } from "./vectorTiles";
 
 export type NearbyPlaceCategory =
   | "shelter" | "resilience" | "fuel" | "shop" | "pharmacy" | "hospital"
@@ -17,15 +19,6 @@ export type NearbyPlace = {
   source: "Kyiv City open data" | "OpenStreetMap";
 };
 
-type OverpassElement = {
-  type: string;
-  id: number;
-  lat?: number;
-  lon?: number;
-  center?: { lat: number; lon: number };
-  tags?: Record<string, string>;
-};
-type OverpassResponse = { elements?: OverpassElement[] };
 type ArcGISFeature = {
   geometry?: { x?: number; y?: number; coordinates?: [number, number] };
   properties?: Record<string, unknown>;
@@ -33,18 +26,23 @@ type ArcGISFeature = {
 };
 type ArcGISResponse = { features?: ArcGISFeature[]; error?: { message?: string } };
 
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 // Use Kyiv's public production GIS service. The old stage host often returned
 // an empty layer, which made the official shelter and resilience points vanish.
 const KYIV_GIS_BASE = "https://gisserver.kyivcity.gov.ua/mayno/rest/services/KYIV_API/Public_protection/MapServer";
 const SEARCH_RADIUS_M = 2600;
 
+/** Kyiv city limits (bounding box) — where the city's official shelter and
+ * resilience-point layers apply. Decided by position, not by the alert feed. */
+export function isInKyiv(p: LatLon): boolean {
+  return p.lat >= 50.21 && p.lat <= 50.59 && p.lon >= 30.24 && p.lon <= 30.83;
+}
+
 export type FetchCategory = "shelter" | "resilience" | "fuel" | "charger" | "pharmacy" | "hospital" | "atm" | "water" | "food" | "shop";
 
 // Overpass selectors per category (kept in sync with classify()).
 const CATEGORY_QUERY: Record<FetchCategory, string[]> = {
-  shelter: ['["amenity"="shelter"]["shelter_type"~"bomb|air_raid|air-raid|civil|bunker|protective|underground",i]', '["building"="bunker"]', '["military"="bunker"]'],
-  resilience: ['["amenity"="social_facility"]["social_facility"~"shelter|warming_centre"]', '["power_supply"="point"]'],
+  shelter: ['["amenity"="shelter"]["shelter_type"~"bomb|air_raid|air-raid|civil|bunker|protective|underground",i]', '["building"="bunker"]', '["military"="bunker"]', '["name"~"укриття|сховищ|shelter",i]'],
+  resilience: ['["amenity"="social_facility"]["social_facility"~"shelter|warming_centre"]', '["power_supply"="point"]', '["name"~"незламн",i]'],
   fuel: ['["amenity"="fuel"]'],
   charger: ['["amenity"="charging_station"]'],
   pharmacy: ['["amenity"="pharmacy"]', '["shop"="chemist"]'],
@@ -54,6 +52,49 @@ const CATEGORY_QUERY: Record<FetchCategory, string[]> = {
   food: ['["amenity"~"^(restaurant|cafe|fast_food|food_court)$"]'],
   shop: ['["shop"~"^(supermarket|convenience|mall|department_store|marketplace)$"]'],
 };
+
+// First pass, then a wider pass when fewer than 3 were found (villages).
+const CATEGORY_RADII: Record<FetchCategory, number[]> = {
+  shelter: [3000, 15000], resilience: [3000, 15000], fuel: [6000, 20000], charger: [6000, 20000], hospital: [6000, 20000],
+  pharmacy: [3000, 10000], atm: [3000, 10000], shop: [3000, 10000], water: [3000, 10000], food: [2000, 8000],
+};
+
+const TILE_CATEGORIES = new Set<FetchCategory>(["fuel", "charger", "pharmacy", "hospital", "atm", "shop", "food", "water"]);
+
+const NOMINATIM_PHRASE: Partial<Record<FetchCategory, string>> = {
+  fuel: "fuel", pharmacy: "pharmacy", hospital: "hospital", atm: "atm", shop: "supermarket", food: "cafe", charger: "charging station", water: "drinking water",
+};
+
+// Last good result per category, kept on the phone for use without network.
+type SavedPlaces = { location: LatLon; at: number; places: NearbyPlace[] };
+type KV = { getItemAsync(key: string): Promise<string | null>; setItemAsync(key: string, value: string): Promise<void> };
+let kv: KV | null | undefined;
+function storage(): KV | null {
+  if (kv !== undefined) return kv;
+  try { kv = (require("expo-sqlite/kv-store") as { default: KV }).default; } catch { kv = null; }
+  return kv;
+}
+export function setPlacesStorageForTests(store: KV | null): void {
+  kv = store;
+}
+async function save(category: FetchCategory, location: LatLon, places: NearbyPlace[]): Promise<void> {
+  const store = storage();
+  if (!store || places.length === 0) return;
+  await store.setItemAsync(`navia.places.${category}.v1`, JSON.stringify({ location, at: Date.now(), places } satisfies SavedPlaces)).catch(() => {});
+}
+async function loadSaved(category: FetchCategory, location: LatLon): Promise<NearbyPlace[] | null> {
+  const store = storage();
+  if (!store) return null;
+  try {
+    const raw = await store.getItemAsync(`navia.places.${category}.v1`);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as SavedPlaces;
+    if (Date.now() - saved.at > 14 * 86_400_000 || distanceM(saved.location, location) > 8000) return null;
+    return saved.places.map((p) => ({ ...p, distanceM: distanceM(location, p.location) })).sort((a, b) => a.distanceM - b.distanceM);
+  } catch {
+    return null;
+  }
+}
 
 const categoryCache = new Map<string, { location: LatLon; at: number; places: NearbyPlace[] }>();
 const MAX_RESULTS = 120;
@@ -71,6 +112,7 @@ function classify(tags: Record<string, string>): NearbyPlaceCategory | null {
   // Only protective shelters count: OSM "amenity=shelter" is mostly bus stops,
   // picnic roofs and huts, which must never be offered as a shelter.
   if (isProtectiveShelter(tags)) return "shelter";
+  if (/незламн/i.test(tags.name ?? "")) return "resilience";
   if (tags.amenity === "social_facility" && /warming|shelter/i.test(tags.social_facility ?? "")) return "resilience";
   if (tags.power_supply === "point" || tags.amenity === "community_centre") return "resilience";
   if (tags.amenity === "fuel") return "fuel";
@@ -91,9 +133,14 @@ function classify(tags: Record<string, string>): NearbyPlaceCategory | null {
 
 const PROTECTIVE_SHELTER = /bomb|air_raid|air-raid|civil|bunker|protective|underground/i;
 
+const NOT_A_SHELTER = /public_transport|picnic|gazebo|lean_to|weather|field|basic_hut|sun_shelter|rock_shelter/i;
+
 export function isProtectiveShelter(tags: Record<string, string>): boolean {
   if (tags.building === "bunker" || tags.military === "bunker" || tags.bunker_type) return true;
-  return tags.amenity === "shelter" && PROTECTIVE_SHELTER.test(tags.shelter_type ?? "");
+  if (tags.amenity === "shelter" && PROTECTIVE_SHELTER.test(tags.shelter_type ?? "")) return true;
+  // Named "Укриття"/"Сховище" features, but never a bus stop or picnic roof.
+  if (/укриття|сховищ/i.test(tags.name ?? "") && !NOT_A_SHELTER.test(tags.shelter_type ?? "") && tags.highway !== "bus_stop" && tags.public_transport == null) return true;
+  return false;
 }
 
 function placeName(tags: Record<string, string>, category: NearbyPlaceCategory): string {
@@ -177,24 +224,12 @@ export class NearbyPlacesProvider {
     }
 
     const query = `[out:json][timeout:18];(nwr(around:${SEARCH_RADIUS_M},${location.lat},${location.lon})["amenity"~"shelter|fuel|pharmacy|hospital|clinic|doctors|bus_station|ferry_terminal|police|fire_station|atm|bank|parking|charging_station|toilets|drinking_water|restaurant|cafe|fast_food|food_court"];nwr(around:${SEARCH_RADIUS_M},${location.lat},${location.lon})["emergency"="assembly_point"];nwr(around:${SEARCH_RADIUS_M},${location.lat},${location.lon})["shop"~"supermarket|convenience|mall|chemist|department_store|marketplace"];nwr(around:${SEARCH_RADIUS_M},${location.lat},${location.lon})["amenity"="social_facility"]["social_facility"~"shelter|warming_centre"];nwr(around:${SEARCH_RADIUS_M},${location.lat},${location.lon})["power_supply"="point"];nwr(around:${SEARCH_RADIUS_M},${location.lat},${location.lon})["public_transport"="station"];nwr(around:${SEARCH_RADIUS_M},${location.lat},${location.lon})["railway"~"station|subway_entrance|tram_stop"];);out center tags;`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
     let osmPlaces: NearbyPlace[] = [];
     let osmError: unknown = null;
     try {
-      const response = await fetch(OVERPASS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", Accept: "application/json", "User-Agent": "NAVIA/0.1 (navigation app)" },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`OpenStreetMap returned HTTP ${response.status}.`);
-      const data = await response.json() as OverpassResponse;
-      osmPlaces = parseOverpass(data.elements ?? [], location);
+      osmPlaces = parseOverpass(await overpass(query), location);
     } catch (error) {
       osmError = error;
-    } finally {
-      clearTimeout(timeout);
     }
 
     let official: NearbyPlace[] = [];
@@ -215,44 +250,110 @@ export class NearbyPlacesProvider {
   }
 
   /** Places of one category, nearest first. Queried on demand so a busy city
-   * centre full of cafés cannot crowd out pharmacies or fuel. */
+   * centre full of cafés cannot crowd out pharmacies or fuel. Villages get a
+   * wider second pass; when every OSM mirror fails, Nominatim is tried, and
+   * when the network is gone the last saved result for this area is used. */
   async fetchCategory(location: LatLon, category: FetchCategory, options: { includeKyivOfficialData?: boolean; force?: boolean } = {}): Promise<NearbyPlace[]> {
     const key = `${category}:${options.includeKyivOfficialData ? "kyiv" : "osm"}`;
     const cached = categoryCache.get(key);
     if (!options.force && cached && Date.now() - cached.at < 90_000 && distanceM(location, cached.location) < 500) return cached.places;
-    const radius = category === "fuel" || category === "charger" || category === "hospital" ? 6000 : 3000;
-    const around = `(around:${radius},${location.lat},${location.lon})`;
-    const selectors = CATEGORY_QUERY[category].map((q) => `nwr${around}${q};`).join("");
-    const query = `[out:json][timeout:15];(${selectors});out center tags 400;`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 18_000);
-    let osm: NearbyPlace[] = [];
-    let osmError: unknown = null;
-    try {
-      const response = await fetch(OVERPASS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", Accept: "application/json", "User-Agent": "NAVIA/0.1 (navigation app)" },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`OpenStreetMap returned HTTP ${response.status}.`);
-      const data = await response.json() as OverpassResponse;
-      osm = parseOverpass(data.elements ?? [], location).filter((p) => p.category === category);
-    } catch (error) {
-      osmError = error;
-    } finally {
-      clearTimeout(timeout);
+
+    // Official city layers run in parallel with OpenStreetMap; when they
+    // already cover the area, a slow OSM mirror is not waited for.
+    const officialTask: Promise<NearbyPlace[]> = options.includeKyivOfficialData && (category === "shelter" || category === "resilience")
+      ? this.queryKyivLayer(location, category === "shelter" ? 0 : 1, category)
+      : Promise.resolve([]);
+    const osmTask = this.osmCategory(location, category);
+    let official = await officialTask;
+    let osmResult: { osm: NearbyPlace[]; error: unknown } | null;
+    if (official.length >= 3) {
+      osmResult = await Promise.race([osmTask, new Promise<null>((resolve) => { setTimeout(() => resolve(null), 1_500); })]);
+    } else {
+      osmResult = await osmTask;
+      official = official.length ? official : await officialTask;
     }
-    let official: NearbyPlace[] = [];
-    if (options.includeKyivOfficialData && (category === "shelter" || category === "resilience")) {
-      official = await this.queryKyivLayer(location, category === "shelter" ? 0 : 1, category);
+    const osm = osmResult?.osm ?? [];
+    if (osmResult?.error && osm.length === 0 && official.length === 0) {
+      const saved = await loadSaved(category, location);
+      if (saved) return saved;
+      throw osmResult.error;
     }
-    if (osmError && osm.length === 0 && official.length === 0) throw osmError;
     const byId = new Map<string, NearbyPlace>();
     for (const place of [...official, ...osm]) byId.set(place.id, place);
     const places = [...byId.values()].sort((a, b) => a.distanceM - b.distanceM).slice(0, 40);
     categoryCache.set(key, { location, at: Date.now(), places });
+    void save(category, location, places);
     return places;
+  }
+
+  /** OpenStreetMap side of a category search: map tiles, Overpass passes, Nominatim. */
+  private async osmCategory(location: LatLon, category: FetchCategory): Promise<{ osm: NearbyPlace[]; error: unknown }> {
+    let osm: NearbyPlace[] = [];
+    let error: unknown = null;
+    // Everyday categories: the map's own tiles first (fast CDN, no Overpass).
+    // Close first (3×3 tiles), wider only when the neighbourhood is sparse.
+    if (TILE_CATEGORIES.has(category)) {
+      for (const radius of [1500, 3500]) {
+        try {
+          const found = await tilePoisNear(location, category, radius);
+          osm = found.map((p) => ({ id: `tile-${p.id}`, name: p.name ?? placeName({}, category), category, location: p.location, distanceM: p.distanceM, source: "OpenStreetMap" as const }));
+        } catch { break; /* fall through to Overpass */ }
+        if (osm.length >= 3) break;
+      }
+    }
+    for (const radius of osm.length >= 3 ? [] : CATEGORY_RADII[category]) {
+      try {
+        const found = await this.queryCategory(location, category, radius);
+        if (found.length >= osm.length) osm = found;
+        error = null;
+      } catch (e) {
+        error = e;
+        break;
+      }
+      if (osm.length >= 3) break;
+    }
+    if (error && osm.length === 0) {
+      try { osm = await this.nominatimCategory(location, category); error = null; } catch { /* keep the Overpass error */ }
+    }
+    return { osm, error: osm.length > 0 ? null : error };
+  }
+
+  private async queryCategory(location: LatLon, category: FetchCategory, radius: number): Promise<NearbyPlace[]> {
+    const around = `(around:${radius},${location.lat},${location.lon})`;
+    const selectors = CATEGORY_QUERY[category].map((q) => `nwr${around}${q};`).join("");
+    const query = `[out:json][timeout:15];(${selectors});out center tags 400;`;
+    return parseOverpass(await overpass(query), location).filter((p) => p.category === category);
+  }
+
+  /** Fallback source (Nominatim special phrases) for everyday categories. */
+  private async nominatimCategory(location: LatLon, category: FetchCategory): Promise<NearbyPlace[]> {
+    const phrase = NOMINATIM_PHRASE[category];
+    if (!phrase) return [];
+    const d = 0.12; // ~13 km box
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=40&bounded=1&addressdetails=1&accept-language=uk&q=${encodeURIComponent(phrase)}&viewbox=${location.lon - d},${location.lat + d},${location.lon + d},${location.lat - d}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "NAVIA/0.1 (navigation app)" }, signal: controller.signal });
+      if (!response.ok) throw new Error(`Nominatim HTTP ${response.status}`);
+      const rows = await response.json() as { osm_type?: string; osm_id?: number; lat?: string; lon?: string; name?: string; address?: Record<string, string> }[];
+      return rows.flatMap((row) => {
+        const lat = Number(row.lat), lon = Number(row.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+        const address = [row.address?.road, row.address?.house_number].filter(Boolean).join(" ");
+        return [{
+          id: `osm-${row.osm_type ?? "x"}-${row.osm_id ?? `${lat},${lon}`}`,
+          name: row.name || placeName({}, category),
+          category,
+          location: { lat, lon },
+          ...(address ? { address } : {}),
+          distanceM: distanceM(location, { lat, lon }),
+          source: "OpenStreetMap" as const,
+        }];
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async queryKyivLayer(location: LatLon, layer: number, type: "shelter" | "resilience"): Promise<NearbyPlace[]> {

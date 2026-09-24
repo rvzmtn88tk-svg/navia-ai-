@@ -33,6 +33,7 @@ function legacyPalette(c: ThemeColors): AppPalette {
   };
 }
 const darkPalette = legacyPalette(palettes.dark);
+const lightPalette = legacyPalette(palettes.light);
 
 type SettingsContextValue = {
   themePreference: ThemePreference;
@@ -112,11 +113,10 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const value = useMemo<SettingsContextValue>(() => ({
     themePreference,
     isDark,
-    // NAVIA chrome is always the navy brand palette; the theme setting picks
-    // the day or night map underneath.
-    scheme: "dark",
-    colors: palettes.dark,
-    palette: darkPalette,
+    // Day = "Lunar" (light chrome + light map), night = "Deep Space".
+    scheme: isDark ? "dark" : "light",
+    colors: isDark ? palettes.dark : palettes.light,
+    palette: isDark ? darkPalette : lightPalette,
     language,
     displayName,
     introSoundEnabled,

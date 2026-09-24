@@ -20,8 +20,12 @@ import { layerAvailable, useMapStyle } from "../map/mapStyles";
 import { BottomSheet, type SheetSnap } from "../components/BottomSheet";
 import { Crossfade } from "../components/Crossfade";
 import { BrandMark } from "../components/BrandMark";
-import { AlertStatus, alertHeadline, type AlertTone } from "../components/AlertStatus";
+import { AlertStatus, alertBeaconTone, alertHeadline, type AlertTone } from "../components/AlertStatus";
 import { SafetyPanel } from "../components/SafetyPanel";
+import { useCopilotWorld } from "../ai/useCopilotWorld";
+import { useCopilotActions } from "../ai/useCopilotActions";
+import { proactiveInsights, suggestions } from "../ai/copilotBrain";
+import { StatusBeacon } from "../components/StatusBeacon";
 import { NaviaAiMark } from "../components/NaviaAiMark";
 import { Icon, type IconName } from "../components/Icon";
 import { Button, Card, Chip, Divider, IconButton, ListRow, SectionLabel, Segmented, Text, TextField, Touchable, useColors } from "../components/ui";
@@ -76,6 +80,13 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     focusOn(focus, 16);
     navigation.setParams({ focusPlace: undefined });
   }, [navigation, route.params?.focusPlace]);
+
+  // The co-pilot's "Safety" button.
+  useEffect(() => {
+    if (!route.params?.openSafety) return;
+    openSafety(true);
+    navigation.setParams({ openSafety: undefined });
+  }, [navigation, route.params?.openSafety]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const user = useMemo(() => fix ? { lat: fix.lat, lon: fix.lon, headingDeg: fix.headingDeg, accuracyM: fix.accuracyM } : null, [fix]);
   const categoryEntry = category ? live.byCategory[category] : undefined;
@@ -220,7 +231,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
       <BottomSheet snap={snap} onSnapChange={setSnap} peekHeight={PEEK_H} fullTop={fullTop} visibleHeight={sheetVisible}
         header={selected ? <PlaceHeader place={selected} t={t} lang={lang} onClose={closeContext} />
           : category ? <CategoryHeader category={category} count={categoryPlaces.length} t={t} onClose={closeContext} />
-            : <View style={styles.savedRow}>
+            : <View style={[styles.savedRow, styles.savedHeader]}>
                 <SavedTile icon="home" label={t("saved.home")} place={home} onPress={() => home ? startRoute(home, "car") : navigation.navigate("Search", { pickFor: "home" })} />
                 <SavedTile icon="work" label={t("saved.work")} place={work} onPress={() => work ? startRoute(work, "car") : navigation.navigate("Search", { pickFor: "work" })} />
               </View>}
@@ -284,8 +295,9 @@ function alertTone(alert: GeolocatedAirAlert | null, state: string): { tone: Ale
   return alertHeadline(alert, state === "loading");
 }
 
-// Two quiet indicators on the map. They stay dim while all is well and light
-// up when GPS degrades or an alert covers the user's location. Details live in
+// Two indicators on the map in the colour of the situation: green when all is
+// well, yellow for an unstable signal or an alert elsewhere in the oblast, red
+// for lost GPS or an alert at the user's location (pulsing). Details live in
 // the pulled-up sheet.
 function StatusBeacons({ gpsStatus, health, alert, t, onPress }: {
   gpsStatus: GpsStatus; health: GnssHealth; alert: GeolocatedAirAlert | null; t: Translate; onPress: () => void;
@@ -294,32 +306,9 @@ function StatusBeacons({ gpsStatus, health, alert, t, onPress }: {
   const al = alertTone(alert, "");
   return (
     <View style={styles.beacons} pointerEvents="box-none">
-      <Beacon icon="satellite" tone={gps.tone === "success" ? "neutral" : gps.tone} label={t(gps.key)} onPress={onPress} />
-      <Beacon icon="alert" tone={al.tone === "success" ? "neutral" : al.tone} label={t(al.key)} onPress={onPress} />
+      <StatusBeacon icon="satellite" tone={gps.tone} label={t(gps.key)} onPress={onPress} />
+      <StatusBeacon icon="alert" tone={alertBeaconTone(alert, false)} label={t(al.key)} onPress={onPress} />
     </View>
-  );
-}
-
-function Beacon({ icon, tone, label, onPress }: { icon: IconName; tone: AlertTone; label: string; onPress: () => void }): JSX.Element {
-  const c = useColors();
-  const lit = tone === "critical" || tone === "warning";
-  const fg = lit ? toneColor(c, tone) : c.textMuted;
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!lit) { pulse.stopAnimation(); pulse.setValue(0); return; }
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [lit, pulse]);
-  return (
-    <Touchable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
-      style={[styles.beacon, { backgroundColor: c.surfaceElevated, borderColor: lit ? fg : c.border }, elevation(2, c)]}>
-      {lit && <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.beaconGlow, { backgroundColor: fg, opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.4] }) }]} />}
-      <Icon name={icon} size={iconSize.md} color={fg} />
-    </Touchable>
   );
 }
 
@@ -411,21 +400,40 @@ function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefr
   );
 }
 
+// The co-pilot speaks first: the most important thing right now (alert with
+// the nearest shelter, GPS trouble, or "all calm") with action buttons, then
+// a field to ask anything.
 function CopilotCard({ question, onChange, onSend, onVoice, onPrompt, t }: { question: string; onChange: (v: string) => void; onSend: () => void; onVoice: () => void; onPrompt: (q: string) => void; t: Translate }): JSX.Element {
   const c = useColors();
-  const prompts = [t("copilot.prompt.gps"), t("copilot.prompt.shelter"), t("copilot.prompt.fuel")];
+  const world = useCopilotWorld();
+  const run = useCopilotActions(onPrompt);
+  const insight = proactiveInsights(world)[0]!;
+  const tone = insight.tone === "critical" ? c.critical : insight.tone === "warning" ? c.warning : c.brandTeal;
+  const chips = suggestions(world).slice(0, 4);
   return (
-    <Card style={styles.card}>
+    <Card style={[styles.card, { borderColor: insight.tone === "calm" ? c.border : tone }]}>
       <View style={styles.cardHead}>
-        <NaviaAiMark size={36} />
-        <Text variant="headline" style={styles.flex}>{t("copilot.title")}</Text>
+        <NaviaAiMark size={40} active={insight.tone !== "calm"} />
+        <View style={styles.flex}>
+          <Text variant="headline">{t("copilot.title")}</Text>
+          <Text variant="caption" color="muted">{t("copilot.onDevice")}</Text>
+        </View>
       </View>
+      <Text variant="callout" style={{ color: insight.tone === "calm" ? c.textSecondary : c.textPrimary }}>{insight.text}</Text>
+      {insight.actions.length > 0 && (
+        <View style={styles.insightActions}>
+          {insight.actions.map((a, i) => (
+            <Button key={`${a.kind}-${i}`} label={a.label} variant={a.kind === "route" ? (insight.tone === "critical" ? "critical" : "primary") : "secondary"}
+              icon={a.kind === "route" ? (a.mode === "walk" ? "walk" : "car") : a.kind === "safety" ? "shield" : "sparkle"} onPress={() => run(a)} />
+          ))}
+        </View>
+      )}
       <View style={[styles.composer, { backgroundColor: c.surfaceMuted }]}>
         <TextField value={question} onChangeText={onChange} placeholder={t("copilot.placeholder")} returnKeyType="send" onSubmitEditing={onSend} accessibilityLabel={t("copilot.placeholder")} />
         <IconButton icon={question.trim() ? "send" : "mic"} tone="accent" size={40} label={question.trim() ? t("copilot.send") : t("copilot.mic")} onPress={question.trim() ? onSend : onVoice} />
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.prompts}>
-        {prompts.map((p) => <Chip key={p} label={p} onPress={() => onPrompt(p)} />)}
+        {chips.map((a) => a.kind === "ask" && <Chip key={a.question} label={a.label} onPress={() => onPrompt(a.question)} />)}
       </ScrollView>
     </Card>
   );
@@ -497,8 +505,6 @@ const styles = StyleSheet.create({
   chipsScroll: { marginTop: space.xs, flexGrow: 0 },
   chips: { gap: space.xs, paddingHorizontal: space.md, paddingVertical: space.xxs },
   beacons: { flexDirection: "row", gap: space.xs, paddingHorizontal: space.md, marginTop: space.sm },
-  beacon: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  beaconGlow: { borderRadius: 20 },
   compassRow: { alignItems: "flex-end", paddingHorizontal: space.md, marginTop: space.sm },
   compass: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   rightRail: { position: "absolute", right: space.md, gap: space.sm, alignItems: "center" },
@@ -517,6 +523,8 @@ const styles = StyleSheet.create({
   composer: { flexDirection: "row", alignItems: "center", borderRadius: radius.pill, paddingLeft: space.md, paddingRight: space.xxs, minHeight: 48 },
   prompts: { gap: space.xs },
   savedRow: { flexDirection: "row", gap: space.xs },
+  insightActions: { gap: space.xs },
+  savedHeader: { paddingHorizontal: space.md, paddingBottom: space.sm },
   savedTile: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: space.sm, padding: space.sm, borderRadius: radius.lg },
   stack: { gap: space.md },
   buttonRow: { flexDirection: "row", gap: space.xs },

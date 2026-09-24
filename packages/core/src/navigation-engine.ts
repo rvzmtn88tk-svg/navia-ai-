@@ -30,6 +30,7 @@ import { RouteProgressEngine, distanceFromRouteCorridorM } from "./route-engine"
 import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
 import { TelemetryLogger } from "./telemetry-logger";
+import { haversineMeters } from "./geodesy";
 import { MotionDetector, RouteDeadReckoner, deadReckoningConfidence, type DeadReckoningEstimate } from "./route-dead-reckoning";
 
 const DEFAULT_GNSS_CONFIG: GNSSConfig = {
@@ -42,6 +43,9 @@ export type NavigationEngineOptions = {
   gnssConfig?: Partial<GNSSConfig>;
   /** How long with no new GNSS fix before declaring GNSS_LOST (staleness, not sample quality). */
   staleAfterMs?: number;
+  /** Same, while the device is standing still: iOS sends few or no fixes when
+   * the position does not change, so silence is not signal loss. */
+  stationaryStaleAfterMs?: number;
 };
 
 function idleState(): NavigationState {
@@ -72,6 +76,8 @@ export class NavigationEngine {
   private gnssMonitor: GNSSMonitor;
   private gnssMaxFreshAgeMs: number;
   private staleAfterMs: number;
+  private stationaryStaleAfterMs: number;
+  private prevTrustedGnssRaw: GNSSRawSample | null = null;
   private fusion = new SensorFusionEngine();
   private progressEngine = new RouteProgressEngine();
   private offRouteDetector = new OffRouteDetector();
@@ -98,6 +104,9 @@ export class NavigationEngine {
   private motion = new MotionDetector();
   private manualStart: { position: LatLon; atMs: number } | null = null;
   private drWasActive = false;
+  /** Consecutive plausible fixes rejected as inconsistent with dead reckoning. */
+  private conflictFixes: GNSSRawSample[] = [];
+  private conflictSuppressedUntil = 0;
 
   constructor(options: NavigationEngineOptions) {
     this.routingProvider = options.routingProvider;
@@ -105,6 +114,7 @@ export class NavigationEngine {
     this.gnssMonitor = new GNSSMonitor(gnssConfig);
     this.gnssMaxFreshAgeMs = gnssConfig.maxFreshAgeMs;
     this.staleAfterMs = options.staleAfterMs ?? 6000;
+    this.stationaryStaleAfterMs = options.stationaryStaleAfterMs ?? 30_000;
   }
 
   getState(): NavigationState { return this.currentState; }
@@ -163,6 +173,7 @@ export class NavigationEngine {
     this.motion.reset();
     this.manualStart = null;
     this.drWasActive = false;
+    this.conflictFixes = [];
     this.progressEngine = new RouteProgressEngine();
     this.offRouteDetector.reset();
     this.stateMachine.reset();
@@ -194,6 +205,35 @@ export class NavigationEngine {
     return true;
   }
 
+  /** The user confirmed the conflicting GNSS position is real: follow GNSS again. */
+  acceptGnssConflict(nowMs = Date.now()): boolean {
+    const last = this.conflictFixes[this.conflictFixes.length - 1];
+    if (!last) return false;
+    this.drWasActive = false;
+    this.lastGnssRaw = last;
+    this.lastGnssIntegrity = { trusted: true, anomalyScore: 0, freshnessScore: 1 };
+    this.prevTrustedGnssRaw = this.lastTrustedGnssRaw;
+    this.lastTrustedGnssRaw = last;
+    this.conflictFixes = [];
+    this.telemetry.log("MANUAL_POSITION", { kind: "gnss-conflict-accepted" }, nowMs);
+    return true;
+  }
+
+  /** The user says the conflicting GNSS position is fake: keep dead reckoning, don't ask for 2 min. */
+  rejectGnssConflict(nowMs = Date.now()): void {
+    this.conflictFixes = [];
+    this.conflictSuppressedUntil = nowMs + 120_000;
+    this.telemetry.log("SPOOF_SUSPECT", { kind: "gnss-conflict-rejected" }, nowMs);
+  }
+
+  private currentConflict(nowMs: number, drPosition: LatLon | null): NavigationState["gnssConflict"] {
+    const f = this.conflictFixes;
+    if (f.length < 5 || nowMs < this.conflictSuppressedUntil || !drPosition) return null;
+    const first = f[0]!, last = f[f.length - 1]!;
+    if (last.timestamp - first.timestamp < 4_000 || nowMs - last.timestamp > 5_000) return null;
+    return { distanceM: Math.round(haversineMeters(last, drPosition)), sinceMs: first.timestamp };
+  }
+
   /** Last trusted fix, for offering "start from the last stable position". */
   getLastTrustedFix(): { position: LatLon; timestamp: number } | null {
     const p = this.lastTrustedPosition?.position;
@@ -216,12 +256,38 @@ export class NavigationEngine {
     if (integrity.trusted && this.route && this.drWasActive && !this.deadReckoner.isConsistent(sample, nowMs)) {
       integrity.trusted = false;
       this.telemetry.log("SPOOF_SUSPECT", { accuracyM: sample.accuracyM }, nowMs);
+      // Keep a run of mutually plausible conflicting fixes: the user decides
+      // whether it is a real correction (e.g. after a tunnel) or spoofing.
+      const prev = this.conflictFixes[this.conflictFixes.length - 1];
+      const dt = prev ? (sample.timestamp - prev.timestamp) / 1000 : 0;
+      const plausible = prev != null && dt > 0 && haversineMeters(prev, sample) / dt <= 45;
+      this.conflictFixes = plausible ? [...this.conflictFixes.slice(-19), sample] : [sample];
+    } else if (integrity.trusted) {
+      this.conflictFixes = [];
     }
     this.lastGnssRaw = sample;
     this.lastGnssIntegrity = integrity;
     this.telemetry.log("GNSS_FIX", { accuracyM: sample.accuracyM, trusted: integrity.trusted }, sample.timestamp);
-    if (integrity.trusted) this.lastTrustedGnssRaw = sample;
+    if (integrity.trusted) {
+      this.prevTrustedGnssRaw = this.lastTrustedGnssRaw;
+      this.lastTrustedGnssRaw = sample;
+    }
     return integrity.trusted;
+  }
+
+  /** Standing still (last trusted fix nearly motionless and the accelerometer,
+   * when available, not reporting motion) gets a longer silence allowance. */
+  private currentStaleLimitMs(nowMs: number): number {
+    const last = this.lastTrustedGnssRaw;
+    if (!last || last !== this.lastGnssRaw) return this.staleAfterMs;
+    // Speed when the receiver reports it; otherwise the last two fixes
+    // standing (almost) in the same place.
+    const prev = this.prevTrustedGnssRaw;
+    const still = last.speedMps != null
+      ? last.speedMps < 0.7
+      : prev != null && haversineMeters(prev, last) < 8;
+    const moving = this.motion.isMoving(nowMs);
+    return still && moving !== true ? this.stationaryStaleAfterMs : this.staleAfterMs;
   }
 
   /** Advance the engine's state to `nowMs`. Call this on a regular clock
@@ -229,7 +295,8 @@ export class NavigationEngine {
    * detects GNSS_LOST via staleness and updates the route/status state. */
   tick(nowMs: TimestampMs = Date.now()): NavigationState {
     const ageMs = this.lastGnssRaw ? nowMs - this.lastGnssRaw.timestamp : Infinity;
-    const isStale = ageMs < -1_500 || ageMs > this.staleAfterMs;
+    const staleLimitMs = this.currentStaleLimitMs(nowMs);
+    const isStale = ageMs < -1_500 || ageMs > staleLimitMs;
 
     const gnssIntegrityState: GNSSIntegrityState = !this.lastGnssRaw
       ? "LOST"
@@ -247,7 +314,7 @@ export class NavigationEngine {
       this.recoveryFixStreak = 0;
       this.degradedFixStreak = 0;
       if (this.displayedGnss === "NORMAL") this.displayedGnss = "DEGRADED";
-      if (this.lostSinceMs == null) this.lostSinceMs = nowMs - Math.max(0, ageMs - this.staleAfterMs);
+      if (this.lostSinceMs == null) this.lostSinceMs = nowMs - Math.max(0, ageMs - staleLimitMs);
       if (nowMs - this.lostSinceMs >= GNSS_LOST_CONFIRM_MS) this.displayedGnss = "LOST";
     } else if (gnssIntegrityState === "DEGRADED") {
       this.lostSinceMs = null;
@@ -386,6 +453,7 @@ export class NavigationEngine {
       lastTrustedFixAt: this.lastTrustedPosition?.position.timestamp ?? null,
       positionMode: route ? (hasFreshTrustedPosition ? "GNSS" : dr ? (dr.anchorSource === "manual" ? "MANUAL" : "DEAD_RECKONING") : null) : null,
       positionUncertaintyM: dr ? Math.round(dr.uncertaintyM) : null,
+      gnssConflict: this.currentConflict(nowMs, dr ? dr.position : null),
       updatedAt: nowMs,
     };
     return this.currentState;

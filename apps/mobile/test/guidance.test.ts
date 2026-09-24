@@ -46,7 +46,7 @@ test("GuidanceAnnouncer: each stage once, never backwards on GPS jitter", () => 
 
 test("cautiousPhrase: no distance while the position is estimated", () => {
   const { cautiousPhrase } = require("../src/voice/guidance") as typeof import("../src/voice/guidance");
-  assert.equal(cautiousPhrase({ id: "x", maneuver: "right", roadName: "вулиця Хрещатик" }, "uk"), "Приготуйтеся: скоро поверніть праворуч на вулицю Хрещатик.");
+  assert.equal(cautiousPhrase({ id: "x", maneuver: "right", roadName: "вулиця Хрещатик" }, "uk"), "Приготуйтеся: скоро поверніть праворуч на вулицю Хрещатик. Коли повернете — натисніть «Я вже повернув».");
 });
 
 test("alertPhrase names the scope and ending", () => {

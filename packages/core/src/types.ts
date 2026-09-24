@@ -147,6 +147,9 @@ export type NavigationState = {
   positionMode?: "GNSS" | "DEAD_RECKONING" | "MANUAL" | null;
   /** Along-route uncertainty in metres while not on GNSS (grows over time). */
   positionUncertaintyM?: number | null;
+  /** GNSS has consistently reported a place far from the dead-reckoned one
+   * for a few seconds: either a real correction or spoofing — ask the user. */
+  gnssConflict?: { distanceM: number; sinceMs: TimestampMs } | null;
   updatedAt: TimestampMs;
 };
 

@@ -9,7 +9,8 @@ import type { GNSSRawSample } from "@navia/core";
 import { navigationEngine, useNaviaStore } from "./naviaController";
 import { GeolocatedAirAlertProvider } from "../providers/GeolocatedAirAlertProvider";
 import { AirThreatSummaryProvider } from "../providers/AirThreatSummaryProvider";
-import { NearbyPlacesProvider, type FetchCategory, type NearbyPlace } from "../providers/NearbyPlacesProvider";
+import type { FetchCategory } from "../providers/NearbyPlacesProvider";
+import { useNearbyStore } from "../store/nearbyStore";
 
 export type GpsStatus = "checking" | "permission" | "searching" | "ready" | "error";
 export type GnssHealth = "stable" | "unstable" | "lost";
@@ -17,10 +18,8 @@ export type LoadState = "idle" | "loading" | "ready" | "error";
 
 const alertProvider = new GeolocatedAirAlertProvider();
 const threatProvider = new AirThreatSummaryProvider();
-const placesProvider = new NearbyPlacesProvider();
 
 const ALERT_EVERY_MS = 30_000;
-const PLACES_EVERY_MS = 45_000;
 
 function toSample(loc: Location.LocationObject): GNSSRawSample | null {
   const { latitude, longitude, accuracy, speed, heading } = loc.coords;
@@ -47,27 +46,13 @@ export function useLiveContext() {
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("checking");
   const [health, setHealth] = useState<GnssHealth>("lost");
   const [alertState, setAlertState] = useState<LoadState>("idle");
-  const [places, setPlaces] = useState<NearbyPlace[]>([]);
-  const [placesState, setPlacesState] = useState<LoadState>("idle");
   const [refreshing, setRefreshing] = useState(false);
-  const [byCategory, setByCategory] = useState<Partial<Record<FetchCategory, { state: LoadState; places: NearbyPlace[] }>>>({});
+  const byCategory = useNearbyStore((s) => s.byCategory);
   const shelterRequested = useRef(false);
   const sub = useRef<Location.LocationSubscription | null>(null);
   const lastAlertAt = useRef(0);
-  const lastPlacesAt = useRef(0);
-
-  const loadPlaces = useCallback(async (point: GNSSRawSample, force = false) => {
-    if (!force && Date.now() - lastPlacesAt.current < PLACES_EVERY_MS) return;
-    lastPlacesAt.current = Date.now();
-    setPlacesState((s) => (s === "ready" ? s : "loading"));
-    try {
-      const region = useNaviaStore.getState().alert?.region;
-      setPlaces(await placesProvider.fetchNearby({ lat: point.lat, lon: point.lon }, { includeKyivOfficialData: region === "м. Київ", force }));
-      setPlacesState("ready");
-    } catch {
-      setPlacesState((s) => (s === "ready" ? s : "error"));
-    }
-  }, []);
+  const probing = useRef(false);
+  const lastProbeAt = useRef(0);
 
   const loadAlert = useCallback(async (point: GNSSRawSample, force = false) => {
     if (!force && Date.now() - lastAlertAt.current < ALERT_EVERY_MS) return;
@@ -85,16 +70,7 @@ export function useLiveContext() {
 
   /** Loads one category on demand (chips, nearest shelter). */
   const loadCategory = useCallback(async (category: FetchCategory, force = false) => {
-    const fix = useNaviaStore.getState().currentFix;
-    if (!fix) return;
-    setByCategory((prev) => ({ ...prev, [category]: { state: prev[category]?.places.length ? "ready" : "loading", places: prev[category]?.places ?? [] } }));
-    try {
-      const region = useNaviaStore.getState().alert?.region;
-      const found = await placesProvider.fetchCategory({ lat: fix.lat, lon: fix.lon }, category, { includeKyivOfficialData: region === "м. Київ", force });
-      setByCategory((prev) => ({ ...prev, [category]: { state: "ready", places: found } }));
-    } catch {
-      setByCategory((prev) => ({ ...prev, [category]: { state: prev[category]?.places.length ? "ready" : "error", places: prev[category]?.places ?? [] } }));
-    }
+    await useNearbyStore.getState().load(category, force);
   }, []);
 
   const onLocation = useCallback((loc: Location.LocationObject) => {
@@ -110,10 +86,9 @@ export function useLiveContext() {
     if (!accepted || state.trustedPosition?.position.timestamp !== sample.timestamp) return;
     setCurrentFix(sample);
     void loadAlert(sample);
-    void loadPlaces(sample);
     // Shelters are always kept ready for the "Nearest shelter" action.
     if (!shelterRequested.current) { shelterRequested.current = true; setTimeout(() => void loadCategory("shelter"), 1500); }
-  }, [loadAlert, loadCategory, loadPlaces, setCurrentFix]);
+  }, [loadAlert, loadCategory, setCurrentFix]);
 
   const start = useCallback(async (ask: boolean) => {
     let permission = await Location.getForegroundPermissionsAsync().catch(() => ({ status: "denied" as const, canAskAgain: false }));
@@ -142,11 +117,27 @@ export function useLiveContext() {
     // Staleness is decided by the engine clock; tick it so health can drop to
     // "lost" when fixes stop arriving.
     const tick = setInterval(() => {
+      // iOS goes quiet while the phone stands still. After some silence ask
+      // for a fresh fix: an answer means GPS is fine, no answer means trouble.
+      // While the signal is not confirmed stable, ask more often so a real
+      // recovery shows within ~15 s instead of a minute.
+      const last = useNaviaStore.getState().currentFix;
+      const stable = navigationEngine.getState().gnss === "NORMAL";
+      const quietFor = stable ? 10_000 : 4_000;
+      const probeEvery = stable ? 15_000 : 5_000;
+      if (last && Date.now() - last.timestamp > quietFor && !probing.current && Date.now() - lastProbeAt.current > probeEvery) {
+        probing.current = true;
+        lastProbeAt.current = Date.now();
+        void Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
+        ]).then((loc) => { if (loc) onLocation(loc); }).catch(() => {}).finally(() => { probing.current = false; });
+      }
       setHealth(healthFrom(navigationEngine.tick(Date.now()).gnss));
       if (!useNaviaStore.getState().isDemoMode) useNaviaStore.getState().refresh();
     }, 2_000);
     return () => { clearInterval(tick); sub.current?.remove(); sub.current = null; };
-  }, [navigating, start]);
+  }, [navigating, start, onLocation]);
 
   // During navigation the GPS subscription is paused here, but the alert must
   // stay current: re-check it every minute from the latest known position.
@@ -164,11 +155,14 @@ export function useLiveContext() {
     try {
       await start(true);
       const fix = useNaviaStore.getState().currentFix;
-      if (fix) await Promise.all([loadAlert(fix, true), loadPlaces(fix, true)]);
+      if (fix) {
+        const loaded = Object.keys(useNearbyStore.getState().byCategory) as FetchCategory[];
+        await Promise.all([loadAlert(fix, true), ...loaded.map((c) => loadCategory(c, true))]);
+      }
     } finally {
       setRefreshing(false);
     }
-  }, [loadAlert, loadPlaces, start]);
+  }, [loadAlert, loadCategory, start]);
 
-  return { gpsStatus, health, alertState, places, placesState, byCategory, loadCategory, refreshing, refresh, requestPermission: () => start(true) };
+  return { gpsStatus, health, alertState, byCategory, loadCategory, refreshing, refresh, requestPermission: () => start(true) };
 }

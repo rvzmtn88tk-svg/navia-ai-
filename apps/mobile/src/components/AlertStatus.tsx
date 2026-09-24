@@ -19,8 +19,14 @@ export function alertHeadline(alert: GeolocatedAirAlert | null, loading: boolean
     const key: StringKey = alert.scope === "region" ? "alert.activeIn.region" : alert.scope === "city" ? "alert.activeIn.city" : "alert.activeIn.district";
     return { key, tone: alert.level === "yellow" ? "warning" : "critical" };
   }
-  if (alert.active === false) return { key: "alert.clear", tone: alert.otherDistrictsActive ? "warning" : "success" };
+  if (alert.active === false) return { key: "alert.clear", tone: "success" };
   return { key: "alert.unknown", tone: "neutral" };
+}
+
+/** Map beacon: red when the alert covers you, yellow when it is elsewhere in the oblast, green when quiet. */
+export function alertBeaconTone(alert: GeolocatedAirAlert | null, loading: boolean): AlertTone {
+  const head = alertHeadline(alert, loading);
+  return head.tone === "success" && alert?.otherDistrictsActive ? "warning" : head.tone;
 }
 
 export function toneColor(c: ThemeColors, tone: AlertTone): string {

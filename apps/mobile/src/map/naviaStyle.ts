@@ -13,21 +13,23 @@ type MapPalette = {
   label: string; labelHalo: string; poiLabel: string; boundary: string; special: string;
 };
 
-// Day: teal-tinted slate ground, bold teal water, orange arteries with navy
-// casing. Deliberately far from the white/grey/yellow look of consumer maps.
+// "Lunar" day: cool moon-grey ground, grey-teal greenery, periwinkle
+// arteries and warm motorways. Teal is reserved for the route.
 const DAY: MapPalette = {
-  background: "#D9E4E6", residential: "#D2DEE1", green: "#AFD8C6", wood: "#9ACDB8", water: "#3DB5B0", waterLabel: "#0B4F55",
-  building: "#C4D2D7", building3d: "#B5C5CB", roadMinor: "#F4F8F9", roadMinorCasing: "#A9BCC4", roadMid: "#FFFFFF", roadMidCasing: "#6F8796",
-  roadMajor: "#FFB067", roadMajorCasing: "#1B3346", motorway: "#F5822F", motorwayCasing: "#10263A", path: "#8FA5B1", rail: "#7D909C",
-  label: "#0F2436", labelHalo: "#E6EEF0", poiLabel: "#2F4A5C", boundary: "#5E7686", special: "#CFDCDF",
+  background: "#E7ECF2", residential: "#E1E7EE", green: "#D3E4E2", wood: "#C8DDDA", water: "#9CCBDA", waterLabel: "#0E4A5C",
+  building: "#D5DDE7", building3d: "#C8D1DD", roadMinor: "#FFFFFF", roadMinorCasing: "#C3CEDA", roadMid: "#FFFFFF", roadMidCasing: "#8C9FB4",
+  roadMajor: "#C7D5EC", roadMajorCasing: "#6C88AE", motorway: "#FFC58A", motorwayCasing: "#C9712A", path: "#A4B3C3", rail: "#96A5B6",
+  label: "#0F2238", labelHalo: "#EEF2F7", poiLabel: "#3B4E64", boundary: "#8190A6", special: "#DEE5EC",
 };
 
-// Night: deep NAVIA navy, glowing teal water, amber arteries.
+// "Deep Space" night: near-black navy like the sky, streets as faint star
+// trails, arteries in steel blue, motorways muted amber. No green; bright
+// teal is reserved for the route so it can never be confused with a road.
 const NIGHT: MapPalette = {
-  background: "#07101C", residential: "#0B1626", green: "#0C3430", wood: "#0E3B35", water: "#0F5560", waterLabel: "#6FD6D2",
-  building: "#13213A", building3d: "#1A2C48", roadMinor: "#1C2D46", roadMinorCasing: "#07101C", roadMid: "#2B4262", roadMidCasing: "#07101C",
-  roadMajor: "#C8692B", roadMajorCasing: "#07101C", motorway: "#F28A3D", motorwayCasing: "#1B0F06", path: "#2E4460", rail: "#34465E",
-  label: "#B6C7D8", labelHalo: "#07101C", poiLabel: "#8BA0B6", boundary: "#4A6282", special: "#0F1A2B",
+  background: "#050A14", residential: "#070E1B", green: "#07161C", wood: "#081A20", water: "#0A1C33", waterLabel: "#5FC9D6",
+  building: "#0B1526", building3d: "#122038", roadMinor: "#1C2E4C", roadMinorCasing: "#050A14", roadMid: "#2A4674", roadMidCasing: "#050A14",
+  roadMajor: "#335F8F", roadMajorCasing: "#050A14", motorway: "#9C6638", motorwayCasing: "#1A0E06", path: "#1D2C44", rail: "#27374F",
+  label: "#8FA6C0", labelHalo: "#050A14", poiLabel: "#6F86A2", boundary: "#34507A", special: "#08101E",
 };
 
 function set(layer: Layer, key: string, value: unknown): void {
@@ -64,6 +66,8 @@ function recolor(layer: Layer, p: MapPalette): void {
   if (layer.type === "symbol" && layer.layout && "text-field" in layer.layout) {
     const water = id.startsWith("water");
     const poi = id.startsWith("poi");
+    // Muted POI icons: the brand colours on the map stay NAVIA's.
+    if (poi && "icon-image" in layer.layout) set(layer, "icon-opacity", 0.7);
     set(layer, "text-color", water ? p.waterLabel : poi ? p.poiLabel : p.label);
     set(layer, "text-halo-color", p.labelHalo);
   }

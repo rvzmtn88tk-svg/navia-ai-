@@ -17,14 +17,14 @@ export default function App(): JSX.Element {
 }
 
 function AppContent(): JSX.Element {
-  const { colors: c } = useAppSettings();
+  const { colors: c, isDark } = useAppSettings();
   const navigationTheme = {
     ...DefaultTheme,
-    dark: true,
+    dark: isDark,
     colors: { ...DefaultTheme.colors, primary: c.accent, background: c.background, card: c.surface, text: c.textPrimary, border: c.border, notification: c.critical },
   };
   return <>
-    <StatusBar barStyle="light-content" backgroundColor={c.background} />
+    <StatusBar barStyle={isDark ? "light-content" : "dark-content"} backgroundColor={c.background} />
     <NavigationContainer theme={navigationTheme}><AppErrorBoundary><RootNavigator /></AppErrorBoundary></NavigationContainer>
     <IntroOverlay />
   </>;

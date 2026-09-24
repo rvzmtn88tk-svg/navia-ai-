@@ -42,23 +42,42 @@ type Props = {
   padding?: { top: number; bottom: number; left?: number; right?: number };
   onMapError?: () => void;
   onMapReady?: () => void;
+  /** Current speed, for the automatic navigation zoom. */
+  speedMps?: number | null;
 };
 
 const KYIV: LatLon = { lat: 50.4501, lon: 30.5234 };
 const FOLLOW_ZOOM = 15.5;
-const NAV_ZOOM = 17.2;
-const NAV_PITCH = 55;
+const NAV_PITCH = 45;
+
+/** Navigation zoom by speed: close on foot, wider in town, widest on the highway. */
+export function autoNavZoom(speedMps: number | null | undefined): number {
+  const v = speedMps ?? 0;
+  if (v < 2.5) return 16.8;
+  if (v < 9) return 16.2;
+  if (v < 17) return 15.6;
+  if (v < 25) return 15;
+  return 14.4;
+}
 
 export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function NaviaMap(props, ref) {
   const {
     mapStyle, user, quality, cameraMode, onUserGesture, onBearingChange, routeGeometry = [], traveledGeometry = [],
-    destination, places = [], selectedPlaceId, onPlacePress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady,
+    destination, places = [], selectedPlaceId, onPlacePress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps,
   } = props;
   const c = useColors();
   const camera = useRef<MapLibreGL.CameraRef | null>(null);
   const mapView = useRef<MapLibreGL.MapViewRef | null>(null);
   const zoom = useRef(user ? FOLLOW_ZOOM : 12);
   const bearing = useRef(0);
+  // A pinch keeps following but remembers the chosen zoom; a drag takes the
+  // camera over (free mode). Follow updates pause while touching.
+  const userNavZoom = useRef<number | null>(null);
+  const fingers = useRef(0);
+  const gesture = useRef<{ x: number; y: number; zoom: number; moved: boolean } | null>(null);
+  const liveZoom = useRef(user ? FOLLOW_ZOOM : 12);
+  const speed = useRef<number | null | undefined>(speedMps);
+  speed.current = speedMps;
   const lastUser = useRef<UserPosition | null>(user);
   lastUser.current = user;
   const [initialCenter] = useState<LatLon>(user ?? KYIV);
@@ -69,11 +88,11 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
 
   const moveToUser = useCallback((duration: number, mode: CameraMode) => {
     const u = lastUser.current;
-    if (!u || mode === "free") return;
+    if (!u || mode === "free" || fingers.current > 0) return;
     const heading = mode === "navigate" ? (u.headingDeg ?? bearing.current) : bearing.current;
     camera.current?.setCamera({
       centerCoordinate: [u.lon, u.lat],
-      zoomLevel: mode === "navigate" ? NAV_ZOOM : Math.max(zoom.current, 14),
+      zoomLevel: mode === "navigate" ? userNavZoom.current ?? autoNavZoom(speed.current) : Math.max(zoom.current, 14),
       heading,
       pitch: mode === "navigate" ? NAV_PITCH : 0,
       padding: cameraPadding,
@@ -96,7 +115,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
   }, [cameraMode, moveToUser]);
 
   useImperativeHandle(ref, () => ({
-    recenter: () => moveToUser(motion.slow + motion.fast, cameraMode === "free" ? "follow" : cameraMode),
+    recenter: () => { userNavZoom.current = null; moveToUser(motion.slow + motion.fast, cameraMode === "free" ? "follow" : cameraMode); },
     zoomBy: (delta) => {
       zoom.current = Math.max(3, Math.min(19.5, zoom.current + delta));
       camera.current?.zoomTo(zoom.current, motion.fast);
@@ -126,7 +145,35 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
     // A finger dragging on the map means the user took control of the camera.
     // (MapLibre's isUserInteraction flag is unreliable while a follow
     // animation is running, so the touch itself is the signal.)
-    <View style={StyleSheet.absoluteFill} onTouchMove={onUserGesture}>
+    <View
+      style={StyleSheet.absoluteFill}
+      onTouchStart={(e) => {
+        fingers.current = e.nativeEvent.touches.length;
+        if (!gesture.current) gesture.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY, zoom: liveZoom.current, moved: false };
+      }}
+      onTouchMove={(e) => {
+        fingers.current = e.nativeEvent.touches.length;
+        const g = gesture.current;
+        if (g && Math.hypot(e.nativeEvent.pageX - g.x, e.nativeEvent.pageY - g.y) > 16) g.moved = true;
+      }}
+      onTouchEnd={(e) => {
+        fingers.current = e.nativeEvent.touches.length;
+        if (fingers.current > 0) return;
+        const g = gesture.current;
+        gesture.current = null;
+        if (!g) return;
+        // Decided when the fingers lift: a zoom change means pinch (keep
+        // following, remember the zoom); a drag without zoom change is a pan
+        // that takes the camera over. (The map may see two fingers where
+        // React Native only sees one, so finger counts can't decide this.)
+        if (Math.abs(liveZoom.current - g.zoom) > 0.08) {
+          if (cameraMode === "navigate") userNavZoom.current = Math.max(12.5, Math.min(18.5, liveZoom.current));
+        } else if (g.moved) {
+          onUserGesture?.();
+        }
+      }}
+      onTouchCancel={() => { fingers.current = 0; gesture.current = null; }}
+    >
       <MapLibreGL.MapView
         ref={mapView}
         style={StyleSheet.absoluteFill}
@@ -136,9 +183,11 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
         compassEnabled={false}
         pitchEnabled
         rotateEnabled
-        onRegionWillChange={(feature) => { if (feature.properties.isUserInteraction) onUserGesture?.(); }}
+        // Gesture detection lives in the touch handlers above (pinch ≠ pan).
+        onRegionIsChanging={(feature) => { liveZoom.current = feature.properties.zoomLevel; }}
         onRegionDidChange={(feature) => {
           zoom.current = feature.properties.zoomLevel;
+          liveZoom.current = feature.properties.zoomLevel;
           const h = feature.properties.heading ?? 0;
           if (Math.abs(h - bearing.current) > 0.5) { bearing.current = h; onBearingChange?.(h); }
         }}
@@ -148,9 +197,15 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
         <MapLibreGL.Camera ref={camera} defaultSettings={{ centerCoordinate: [initialCenter.lon, initialCenter.lat], zoomLevel: user ? FOLLOW_ZOOM : 12 }} />
 
         {routeGeometry.length > 1 && (
-          <MapLibreGL.ShapeSource id="navia-route" shape={routeShape}>
+          // The route as an orbit trail: a soft glow, a dark casing and a
+          // teal → orange gradient from here to the destination.
+          <MapLibreGL.ShapeSource id="navia-route" shape={routeShape} lineMetrics>
+            <MapLibreGL.LineLayer id="navia-route-glow" style={{ lineColor: c.routeLine, lineOpacity: 0.35, lineBlur: 8, lineWidth: ["interpolate", ["exponential", 1.5], ["zoom"], 10, 12, 18, 34], lineCap: "round", lineJoin: "round" }} />
             <MapLibreGL.LineLayer id="navia-route-casing" style={{ lineColor: c.routeCasing, lineWidth: ["interpolate", ["exponential", 1.5], ["zoom"], 10, 6, 18, 18], lineCap: "round", lineJoin: "round" }} />
-            <MapLibreGL.LineLayer id="navia-route-line" style={{ lineColor: c.routeLine, lineWidth: ["interpolate", ["exponential", 1.5], ["zoom"], 10, 4, 18, 13], lineCap: "round", lineJoin: "round" }} />
+            <MapLibreGL.LineLayer id="navia-route-line" style={{
+              lineGradient: ["interpolate", ["linear"], ["line-progress"], 0, c.routeLine, 0.7, c.routeLine, 1, c.brandOrange],
+              lineWidth: ["interpolate", ["exponential", 1.5], ["zoom"], 10, 4, 18, 13], lineCap: "round", lineJoin: "round",
+            }} />
           </MapLibreGL.ShapeSource>
         )}
         {traveledGeometry.length > 1 && (

@@ -63,3 +63,58 @@ export function buildCopilotState(input: CopilotStateInput): CopilotState {
     ...(input.places?.length ? { nearbyPlaces: input.places.slice(0, 10).map((p) => ({ name: p.name, category: p.category, distanceM: Math.round(p.distanceM) })) } : {}),
   };
 }
+
+// ——— Richer snapshot for the Claude co-pilot, from the on-device world ———
+
+import type { CopilotWorld } from "./copilotBrain";
+import { directionWords, walkMinutes } from "./copilotBrain";
+
+export type CopilotStateV2 = CopilotState & {
+  positionMode?: "GNSS" | "DEAD_RECKONING" | "MANUAL";
+  uncertaintyM?: number;
+  lastFixMinAgo?: number;
+  street?: string;
+  alertDetail?: { scope?: string; level?: string; reasons?: string[]; otherDistricts?: number };
+  routeCue?: string;
+  routeConfirm?: string;
+  landmarkBehind?: string;
+  landmarkAhead?: string;
+  landmarkCount?: number;
+  places?: { name: string; kind: string; distanceM: number; direction?: string; walkMin?: number }[];
+};
+
+/** Everything the co-pilot knows, in words and distances only — never coordinates. */
+export function stateFromWorld(w: CopilotWorld): CopilotStateV2 {
+  const places = Object.values(w.places).flatMap((list) => (list ?? []).slice(0, 3))
+    .sort((a, b) => a.distanceM - b.distanceM).slice(0, 12)
+    .map((p) => ({ name: p.name, kind: p.kind, distanceM: Math.round(p.distanceM), ...(p.bearingDeg != null ? { direction: directionWords(p.bearingDeg, w.lang) } : {}), ...(p.distanceM <= 3000 ? { walkMin: walkMinutes(p.distanceM) } : {}) }));
+  const r = w.route;
+  return {
+    lang: w.lang,
+    gnss: w.gps.state,
+    confidence: w.gps.positionMode === "DEAD_RECKONING" ? "LOW" : w.gps.state === "NORMAL" ? "HIGH" : w.gps.state === "DEGRADED" ? "MEDIUM" : "UNKNOWN",
+    ...(w.gps.positionMode ? { positionMode: w.gps.positionMode } : {}),
+    ...(w.gps.uncertaintyM ? { uncertaintyM: Math.round(w.gps.uncertaintyM) } : {}),
+    ...(w.gps.lastFixAgeS != null ? { lastFixMinAgo: Math.round(w.gps.lastFixAgeS / 60) } : {}),
+    ...(w.here?.area ? { district: w.here.area } : {}),
+    ...(w.here?.street ? { street: w.here.street } : {}),
+    ...(r ? {
+      destination: r.destination,
+      remainingM: Math.round(r.remainingM),
+      ...(r.etaS != null ? { etaMin: Math.round(r.etaS / 60) } : {}),
+      offRoute: r.offRoute,
+      ...(r.next ? { nextManeuver: { maneuver: r.next.action, distanceM: r.next.distanceM != null ? Math.round(r.next.distanceM) : null, ...(r.next.road ? { roadName: r.next.road } : {}) } } : {}),
+      ...(r.next?.cue ? { routeCue: r.next.cue } : {}),
+      ...(r.next?.confirm ? { routeConfirm: r.next.confirm } : {}),
+      ...(r.behind ? { landmarkBehind: r.behind } : {}),
+      ...(r.ahead ? { landmarkAhead: r.ahead } : {}),
+      landmarkCount: r.landmarkCount,
+    } : {}),
+    ...(w.alert ? {
+      alert: { active: w.alert.active, ...(w.alert.area ? { area: w.alert.area } : {}) },
+      alertDetail: { ...(w.alert.scope ? { scope: w.alert.scope } : {}), ...(w.alert.level ? { level: w.alert.level } : {}), ...(w.alert.reasons ? { reasons: w.alert.reasons } : {}), ...(w.alert.otherDistricts ? { otherDistricts: w.alert.otherDistricts } : {}) },
+    } : {}),
+    ...(w.regional?.kindsText ? { regionSummary: `${w.regional.state}: ${w.regional.kindsText}` } : {}),
+    ...(places.length ? { places } : {}),
+  };
+}

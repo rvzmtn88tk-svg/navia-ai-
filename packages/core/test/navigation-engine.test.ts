@@ -143,3 +143,78 @@ test("NavigationEngine: reaching the destination transitions to ARRIVED via real
   const state = engine.tick(0);
   assert.equal(state.mode, "ARRIVED");
 });
+
+test("GNSS: a phone standing still is not declared lost when iOS stops sending fixes", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider });
+  const t0 = 1_000_000;
+  for (let i = 0; i < 4; i++) {
+    engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: t0 + i * 1000, accuracyM: 5, speedMps: 0, headingDeg: null }, t0 + i * 1000);
+    engine.tick(t0 + i * 1000);
+  }
+  assert.equal(engine.tick(t0 + 3000 + 15_000).gnss, "NORMAL");
+  assert.notEqual(engine.tick(t0 + 3000 + 45_000).gnss, "NORMAL");
+});
+
+test("GNSS: a moving phone that stops getting fixes loses GNSS quickly", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider });
+  const t0 = 2_000_000;
+  for (let i = 0; i < 4; i++) {
+    engine.pushGnssSample({ lat: 50.45 + i * 0.0001, lon: 30.52, timestamp: t0 + i * 1000, accuracyM: 5, speedMps: 11, headingDeg: 0 }, t0 + i * 1000);
+    engine.tick(t0 + i * 1000);
+  }
+  assert.notEqual(engine.tick(t0 + 3000 + 9_000).gnss, "NORMAL");
+});
+
+test("GNSS: unknown speed but the same place twice counts as standing still", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider });
+  const t0 = 3_000_000;
+  for (let i = 0; i < 3; i++) {
+    engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: t0 + i * 1000, accuracyM: 5, speedMps: null, headingDeg: null }, t0 + i * 1000);
+    engine.tick(t0 + i * 1000);
+  }
+  assert.equal(engine.tick(t0 + 2000 + 15_000).gnss, "NORMAL");
+});
+
+test("GNSS conflict: fixes far from the dead-reckoned position are held back, then the user decides", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider, staleAfterMs: 5000 });
+  await engine.requestRoute({ lat: 50.4501, lon: 30.5234 }, { lat: 50.4501, lon: 30.5366 });
+  engine.pushGnssSample({ lat: 50.4501, lon: 30.5234, timestamp: 0, accuracyM: 5, speedMps: 10, headingDeg: 90 }, 0);
+  engine.tick(0);
+  engine.tick(9000); // GNSS lost → dead reckoning
+  assert.equal(engine.getState().positionMode, "DEAD_RECKONING");
+  // A steady, plausible track ~1.2 km south: consistent with itself, not with the route estimate.
+  for (let i = 0; i < 6; i++) {
+    const t = 10_000 + i * 1000;
+    const accepted = engine.pushGnssSample({ lat: 50.4390 - i * 0.00005, lon: 30.5250, timestamp: t, accuracyM: 5, speedMps: 6, headingDeg: 180 }, t);
+    assert.equal(accepted, false, "not followed automatically");
+    engine.tick(t);
+  }
+  const conflict = engine.getState().gnssConflict;
+  assert.ok(conflict && conflict.distanceM > 800, "the user is asked about a sustained conflict");
+  assert.equal(engine.acceptGnssConflict(15_000), true);
+  engine.pushGnssSample({ lat: 50.43865, lon: 30.5250, timestamp: 16_000, accuracyM: 5, speedMps: 6, headingDeg: 180 }, 16_000);
+  const after = engine.tick(16_000);
+  assert.equal(after.positionMode, "GNSS", "after the user confirms, GNSS is followed again");
+});
+
+test("GNSS conflict: 'it's fake' keeps dead reckoning and stops asking for a while", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider, staleAfterMs: 5000 });
+  await engine.requestRoute({ lat: 50.4501, lon: 30.5234 }, { lat: 50.4501, lon: 30.5366 });
+  engine.pushGnssSample({ lat: 50.4501, lon: 30.5234, timestamp: 0, accuracyM: 5, speedMps: 10, headingDeg: 90 }, 0);
+  engine.tick(0);
+  engine.tick(9000);
+  for (let i = 0; i < 6; i++) {
+    const t = 10_000 + i * 1000;
+    engine.pushGnssSample({ lat: 50.4390, lon: 30.5250 + i * 0.00005, timestamp: t, accuracyM: 5, speedMps: 3, headingDeg: 90 }, t);
+    engine.tick(t);
+  }
+  assert.ok(engine.getState().gnssConflict);
+  engine.rejectGnssConflict(15_000);
+  for (let i = 0; i < 6; i++) {
+    const t = 16_000 + i * 1000;
+    engine.pushGnssSample({ lat: 50.4390, lon: 30.5260 + i * 0.00005, timestamp: t, accuracyM: 5, speedMps: 3, headingDeg: 90 }, t);
+    engine.tick(t);
+  }
+  assert.equal(engine.getState().gnssConflict, null);
+  assert.equal(engine.getState().positionMode, "DEAD_RECKONING");
+});

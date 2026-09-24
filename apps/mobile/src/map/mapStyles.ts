@@ -1,6 +1,7 @@
-// Map layer styles. Standard uses OpenFreeMap (no key). Satellite needs a
-// MapTiler key. Terrain uses MapTiler Outdoor when a key exists, otherwise the
-// standard style plus hillshading from the open AWS Terrain Tiles dataset.
+// Map layer styles. Standard uses OpenFreeMap (no key) recoloured to NAVIA.
+// Satellite needs a MapTiler key. Terrain uses MapTiler Outdoor when a key
+// exists, otherwise the OpenTopoMap topographic raster (contours, shading,
+// elevation) — hillshade alone is invisible on flat Ukrainian terrain.
 import { useEffect, useState } from "react";
 import { config } from "../config";
 import type { MapLayer } from "../settings/AppSettings";
@@ -59,6 +60,29 @@ async function brandedStyle(dark: boolean, relief: boolean, flat: boolean): Prom
   return json;
 }
 
+/** OpenTopoMap raster (CC-BY-SA), dimmed at night. Attribution: Sources screen. */
+function topoStyle(dark: boolean): string {
+  return JSON.stringify({
+    version: 8,
+    name: "navia-topo",
+    sources: {
+      topo: {
+        type: "raster",
+        tiles: ["a", "b", "c"].map((s) => `https://${s}.tile.opentopomap.org/{z}/{x}/{y}.png`),
+        tileSize: 256,
+        maxzoom: 17,
+        attribution: "© OpenTopoMap (CC-BY-SA), © OpenStreetMap contributors",
+      },
+    },
+    layers: [
+      { id: "background", type: "background", paint: { "background-color": dark ? "#0A1220" : "#E4E9EC" } },
+      { id: "topo", type: "raster", source: "topo", paint: dark
+        ? { "raster-brightness-max": 0.62, "raster-brightness-min": 0.04, "raster-saturation": -0.35, "raster-contrast": 0.1 }
+        : { "raster-saturation": -0.1 } },
+    ],
+  });
+}
+
 export function useMapStyle(layer: MapLayer, dark: boolean, retryKey = 0, flat = false): ResolvedStyle {
   const [resolved, setResolved] = useState<ResolvedStyle>({ status: "loading" });
   useEffect(() => {
@@ -67,9 +91,12 @@ export function useMapStyle(layer: MapLayer, dark: boolean, retryKey = 0, flat =
       setResolved(config.mapTilerKey ? { status: "ready", style: mapTilerStyle("hybrid") } : { status: "unavailable", reason: "needsKey" });
       return;
     }
-    if (layer === "terrain" && config.mapTilerKey) { setResolved({ status: "ready", style: mapTilerStyle(dark ? "outdoor-v2-dark" : "outdoor-v2") }); return; }
+    if (layer === "terrain") {
+      setResolved({ status: "ready", style: config.mapTilerKey ? mapTilerStyle(dark ? "outdoor-v2-dark" : "outdoor-v2") : topoStyle(dark) });
+      return;
+    }
     setResolved((prev) => (prev.status === "ready" ? prev : { status: "loading" }));
-    brandedStyle(dark, layer === "terrain", flat)
+    brandedStyle(dark, false, flat)
       .then((style) => { if (!cancelled) setResolved({ status: "ready", style }); })
       // Network trouble: fall back to the plain hosted style rather than no map.
       .catch(() => { if (!cancelled) setResolved({ status: "ready", style: dark ? config.mapStyleDarkUrl : config.mapStyleUrl }); });

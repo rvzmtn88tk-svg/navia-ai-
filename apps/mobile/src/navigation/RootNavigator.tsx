@@ -10,8 +10,8 @@ import type { PlaceRef, SavedSlot } from "../store/placesStore";
 export type RouteMode = "car" | "walk";
 
 export type RootStackParamList = {
-  Home: { focusPlace?: PlaceRef; category?: string } | undefined;
-  Search: { pickFor?: SavedSlot } | undefined;
+  Home: { focusPlace?: PlaceRef; category?: string; openSafety?: boolean } | undefined;
+  Search: { pickFor?: SavedSlot; initialQuery?: string } | undefined;
   Navigation: { destinationLat: number; destinationLon: number; destinationLabel: string; mode?: RouteMode };
   Diagnostics: undefined;
   Settings: undefined;

@@ -18,14 +18,16 @@ const MAX_QUESTION_CHARS = 500;
 const MAX_HISTORY_TURNS = 6;
 
 // Frozen system prompt: kept byte-stable so it can be served from the cache.
-const SYSTEM_PROMPT = `Ти — штурман NAVIA, голосовий помічник у навігаторі для водіїв і пішоходів в Україні.
+const SYSTEM_PROMPT = `Ти — штурман NAVIA: спокійний, людяний помічник у навігаторі для водіїв і пішоходів в Україні під час повітряних тривог і глушіння GPS. Ти говориш з живою людиною, яка може хвилюватися або бути за кермом.
 
-Відповідай лише на основі даних NAVIA, які приходять у повідомленні в блоці <navia_state>. Це єдине джерело фактів про позицію, маршрут, GPS, тривоги й місця поруч.
-- Не вигадуй вулиць, поворотів, відстаней, місць, укриттів чи стану GPS. Якщо потрібного факту немає в даних, прямо скажи, що не можеш це перевірити.
-- Якщо "confidence" дорівнює LOW або UNKNOWN, або GPS LOST, не називай точних відстаней до повороту: скажи, що позиція зараз неточна.
-- Ніколи не стверджуй, що маршрут, місце чи укриття безпечні. Дані про тривоги лише інформаційні; нагадуй про офіційні сповіщення, коли йдеться про небезпеку.
+Відповідай лише на основі даних NAVIA з блоку <navia_state>. Це єдине джерело фактів про позицію, маршрут, GPS, тривоги, орієнтири й місця поруч.
+- Не вигадуй вулиць, поворотів, відстаней, місць, укриттів чи стану GPS. Якщо потрібного факту немає, чесно скажи, що не можеш це перевірити, і що людина може зробити.
+- Місця називай з відстанню та напрямком ("200 м на північний схід, близько 3 хв пішки"), якщо вони є в даних.
+- Якщо "positionMode" = DEAD_RECKONING або GPS LOST: не називай точних метрів до повороту; опирайся на орієнтир ("routeCue", "landmarkAhead", "landmarkBehind") і нагадай натиснути «Я вже повернув» після повороту.
+- Ніколи не стверджуй, що маршрут, місце чи укриття безпечні. Дані про тривоги лише інформаційні; коли йдеться про небезпеку, нагадуй про офіційні сповіщення.
 - Не давай тактичних порад щодо повітряних загроз і не роби висновків про їхній напрямок.
-- Користувач може бути за кермом: відповідай коротко, 1–2 речення, без списків і розмітки, простими словами.
+- При загрозі життю першим реченням порадь телефонувати 112 або 103.
+- Відповідай коротко: 1–3 речення, без списків і розмітки, простими словами, тепло й по суті.
 - Мова відповіді — мова поля "lang" (uk — українська, en — англійська).`;
 
 type Place = { name: string; category: string; distanceM: number };
@@ -43,6 +45,17 @@ type CopilotState = {
   alert?: { active: boolean | null; area?: string; sinceTime?: string };
   regionSummary?: string;
   nearbyPlaces?: Place[];
+  positionMode?: "GNSS" | "DEAD_RECKONING" | "MANUAL";
+  uncertaintyM?: number;
+  lastFixMinAgo?: number;
+  street?: string;
+  alertDetail?: { scope?: string; level?: string; reasons?: string[]; otherDistricts?: number };
+  routeCue?: string;
+  routeConfirm?: string;
+  landmarkBehind?: string;
+  landmarkAhead?: string;
+  landmarkCount?: number;
+  places?: { name: string; kind: string; distanceM: number; direction?: string; walkMin?: number }[];
 };
 type Turn = { role: "user" | "assistant"; text: string };
 
@@ -72,6 +85,28 @@ export function sanitizeState(raw: unknown): CopilotState {
     offRoute: typeof s.offRoute === "boolean" ? s.offRoute : undefined,
     alert: a ? { active: typeof a.active === "boolean" ? a.active : null, area: str(a.area), sinceTime: str(a.sinceTime, 5) } : undefined,
     regionSummary: str(s.regionSummary, 200),
+    positionMode: s.positionMode === "GNSS" || s.positionMode === "DEAD_RECKONING" || s.positionMode === "MANUAL" ? s.positionMode : undefined,
+    uncertaintyM: num(s.uncertaintyM),
+    lastFixMinAgo: num(s.lastFixMinAgo),
+    street: str(s.street),
+    alertDetail: (() => {
+      const d = s.alertDetail as Record<string, unknown> | undefined;
+      if (!d) return undefined;
+      return {
+        scope: str(d.scope, 20), level: str(d.level, 20), otherDistricts: num(d.otherDistricts),
+        reasons: Array.isArray(d.reasons) ? d.reasons.slice(0, 4).map((r) => str(r, 120)).filter((r): r is string => !!r) : undefined,
+      };
+    })(),
+    routeCue: str(s.routeCue),
+    routeConfirm: str(s.routeConfirm),
+    landmarkBehind: str(s.landmarkBehind),
+    landmarkAhead: str(s.landmarkAhead),
+    landmarkCount: num(s.landmarkCount),
+    places: Array.isArray(s.places)
+      ? s.places.slice(0, 12).map((p) => p as Record<string, unknown>)
+        .map((p) => ({ name: str(p.name) ?? "", kind: str(p.kind, 30) ?? "", distanceM: num(p.distanceM) ?? 0, direction: str(p.direction, 40), walkMin: num(p.walkMin) }))
+        .filter((p) => p.name)
+      : undefined,
     nearbyPlaces: Array.isArray(s.nearbyPlaces)
       ? s.nearbyPlaces.slice(0, 10).map((p) => p as Record<string, unknown>)
         .map((p) => ({ name: str(p.name) ?? "", category: str(p.category, 30) ?? "", distanceM: num(p.distanceM) ?? 0 }))

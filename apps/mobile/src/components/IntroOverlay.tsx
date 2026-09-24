@@ -1,39 +1,43 @@
-// Branded launch sequence. Starts exactly where the native splash ends (logo
-// centred on the dark brand ground), then: the logo settles with a light
-// burst, an orbit ring sweeps round, "NAVIA" letters rise one by one, and the
-// whole scene pushes towards the viewer and dissolves into the map.
-// ~2 s on every launch; the first launch adds the slogan and then the tour.
-import React, { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StatusBar, StyleSheet, View } from "react-native";
-import Svg, { Circle, Defs, LinearGradient, Stop } from "react-native-svg";
+// Branded launch sequence (~2.4 s): deep-space ground with twinkling stars,
+// the NAVIA emblem draws itself (ring traces, ticks appear, the split arrow
+// rises with a glow), the NAVIA wordmark rises letter by letter and a light
+// sweep crosses it, then the scene pushes towards the viewer into the map.
+// The first launch continues into the story tour (greeting + slogan there).
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Easing, StatusBar, StyleSheet, View, useWindowDimensions } from "react-native";
 import { Audio } from "expo-av";
 import { useAppSettings } from "../settings/AppSettings";
-import { useT } from "../i18n";
 import { palettes, space, typography } from "../theme/tokens";
-import { BrandMark } from "./BrandMark";
+import { NaviaEmblem } from "./NaviaEmblem";
 import { Onboarding } from "./Onboarding";
 
 const BRAND = palettes.dark;
-const LOGO = 130;
-const RING = 220;
+const EMBLEM = 168;
 const LETTERS = ["N", "A", "V", "I", "A"];
+
+/** Deterministic pseudo-random star field. */
+function stars(count: number, w: number, h: number): { x: number; y: number; r: number; delay: number }[] {
+  let seed = 7;
+  const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  return Array.from({ length: count }, () => ({ x: rand() * w, y: rand() * h, r: 0.8 + rand() * 1.6, delay: rand() * 900 }));
+}
 
 export function IntroOverlay(): JSX.Element | null {
   const { ready, onboardingComplete, introSoundEnabled } = useAppSettings();
-  const { t } = useT();
+  const { width, height } = useWindowDimensions();
   const [stage, setStage] = useState<"intro" | "tour" | "done">("intro");
-  const firstLaunch = useRef<boolean | null>(null);
-  const logo = useRef(new Animated.Value(0)).current;
-  const burst = useRef(new Animated.Value(0)).current;
-  const ring = useRef(new Animated.Value(0)).current;
+  const draw = useRef(new Animated.Value(0)).current; // JS driver: SVG props
+  const rise = useRef(new Animated.Value(0)).current;
+  const glow = useRef(new Animated.Value(0)).current;
   const letters = useRef(LETTERS.map(() => new Animated.Value(0))).current;
-  const slogan = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
+  const sweep = useRef(new Animated.Value(0)).current;
+  const twinkle = useRef(new Animated.Value(0)).current;
   const exit = useRef(new Animated.Value(0)).current;
+  const field = useMemo(() => stars(46, width, height), [width, height]);
 
   useEffect(() => {
     if (!ready) return;
-    firstLaunch.current = !onboardingComplete;
-    const first = firstLaunch.current;
+    const first = !onboardingComplete;
     let sound: Audio.Sound | null = null;
     let disposed = false;
     if (introSoundEnabled) {
@@ -42,24 +46,27 @@ export function IntroOverlay(): JSX.Element | null {
         .catch(() => {});
     }
     const ease = Easing.bezier(0.2, 0, 0, 1);
-    const t_ = (value: Animated.Value, duration: number, delay = 0, easing = ease) =>
-      Animated.timing(value, { toValue: 1, duration, delay, easing, useNativeDriver: true });
-
-    const core = Animated.parallel([
-      t_(logo, 520, 0, Easing.bezier(0.34, 1.4, 0.64, 1)),
-      t_(burst, 700, 80),
-      t_(ring, 900, 120, Easing.bezier(0.45, 0, 0.2, 1)),
-      Animated.stagger(55, letters.map((l) => t_(l, 320, 480))),
+    const tw = Animated.loop(Animated.sequence([
+      Animated.timing(twinkle, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(twinkle, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    tw.start();
+    const sequence = Animated.sequence([
+      Animated.parallel([
+        Animated.timing(draw, { toValue: 1, duration: 1250, easing: ease, useNativeDriver: false }),
+        Animated.timing(rise, { toValue: 1, duration: 900, delay: 350, easing: Easing.bezier(0.34, 1.4, 0.64, 1), useNativeDriver: true }),
+        Animated.timing(glow, { toValue: 1, duration: 700, delay: 700, useNativeDriver: false }),
+        Animated.stagger(70, letters.map((l) => Animated.timing(l, { toValue: 1, duration: 360, delay: 700, easing: ease, useNativeDriver: true }))),
+      ]),
+      Animated.timing(sweep, { toValue: 1, duration: 520, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      Animated.delay(first ? 250 : 120),
+      Animated.timing(exit, { toValue: 1, duration: 420, easing: Easing.bezier(0.4, 0, 1, 1), useNativeDriver: true }),
     ]);
-    const sloganIn = Animated.stagger(120, slogan.map((s) => t_(s, 300)));
-    const out = t_(exit, 420, 0, Easing.bezier(0.4, 0, 1, 1));
-    const sequence = first
-      ? Animated.sequence([core, sloganIn, Animated.delay(900), out])
-      : Animated.sequence([core, Animated.delay(250), out]);
-    sequence.start(() => setStage(first ? "tour" : "done"));
+    sequence.start(() => { tw.stop(); setStage(first ? "tour" : "done"); });
     return () => {
       disposed = true;
       sequence.stop();
+      tw.stop();
       if (sound) void (sound as Audio.Sound).unloadAsync().catch(() => {});
     };
     // Run once when settings are ready.
@@ -74,55 +81,34 @@ export function IntroOverlay(): JSX.Element | null {
   if (stage === "done") return null;
   if (stage === "tour") return <Onboarding onDone={() => setStage("done")} />;
 
-  const logoScale = logo.interpolate({ inputRange: [0, 1], outputRange: [1, 0.86] });
-  const sceneScale = exit.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] });
+  const sceneScale = exit.interpolate({ inputRange: [0, 1], outputRange: [1, 1.7] });
   const sceneOpacity = exit.interpolate({ inputRange: [0, 0.7, 1], outputRange: [1, 0.6, 0] });
-  const burstScale = burst.interpolate({ inputRange: [0, 1], outputRange: [0.4, 2.2] });
-  const burstOpacity = burst.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.35, 0] });
-  const ringRotate = ring.interpolate({ inputRange: [0, 1], outputRange: ["-120deg", "240deg"] });
-  const ringOpacity = ring.interpolate({ inputRange: [0, 0.15, 0.85, 1], outputRange: [0, 1, 1, 0.55] });
+  const emblemScale = rise.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] });
+  const sweepX = sweep.interpolate({ inputRange: [0, 1], outputRange: [-120, 260] });
 
   return (
     <Animated.View style={[StyleSheet.absoluteFill, styles.cover, { backgroundColor: BRAND.background, opacity: sceneOpacity }]} pointerEvents="auto">
       <StatusBar barStyle="light-content" />
+      {field.map((s, i) => (
+        <Animated.View key={i} style={[styles.star, {
+          left: s.x, top: s.y, width: s.r * 2, height: s.r * 2, borderRadius: s.r,
+          opacity: twinkle.interpolate({ inputRange: [0, 1], outputRange: i % 2 ? [0.25, 0.8] : [0.8, 0.25] }),
+        }]} />
+      ))}
       <Animated.View style={[styles.center, { transform: [{ scale: sceneScale }] }]}>
-        <View style={styles.stage}>
-          <Animated.View style={[styles.burst, { backgroundColor: BRAND.brandTeal, opacity: burstOpacity, transform: [{ scale: burstScale }] }]} />
-          <Animated.View style={[styles.ring, { opacity: ringOpacity, transform: [{ rotate: ringRotate }] }]}>
-            <Svg width={RING} height={RING}>
-              <Defs>
-                <LinearGradient id="orbit" x1="0" y1="0" x2="1" y2="1">
-                  <Stop offset="0" stopColor={BRAND.brandTeal} stopOpacity="1" />
-                  <Stop offset="0.55" stopColor={BRAND.brandTeal} stopOpacity="0" />
-                  <Stop offset="1" stopColor={BRAND.brandOrange} stopOpacity="0.9" />
-                </LinearGradient>
-              </Defs>
-              <Circle cx={RING / 2} cy={RING / 2} r={RING / 2 - 3} stroke="url(#orbit)" strokeWidth={2.5} fill="none" />
-              <Circle cx={RING - 3} cy={RING / 2} r={4} fill={BRAND.brandOrange} />
-            </Svg>
-          </Animated.View>
-          <Animated.View style={{ transform: [{ scale: logoScale }] }}><BrandMark size={LOGO} /></Animated.View>
-        </View>
+        <Animated.View style={{ transform: [{ scale: emblemScale }] }}>
+          <NaviaEmblem size={EMBLEM} progress={draw} glow={glow} />
+        </Animated.View>
         <View style={styles.wordmark} accessibilityLabel="NAVIA">
           {LETTERS.map((letter, i) => (
             <Animated.Text key={i} style={[typography.display, styles.letter, {
               color: BRAND.textPrimary,
               opacity: letters[i],
-              transform: [{ translateY: letters[i]!.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+              transform: [{ translateY: letters[i]!.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
             }]}>{letter}</Animated.Text>
           ))}
+          <Animated.View pointerEvents="none" style={[styles.sweep, { transform: [{ translateX: sweepX }, { skewX: "-18deg" }] }]} />
         </View>
-        {firstLaunch.current && (
-          <View style={styles.slogan}>
-            {(["splash.slogan1", "splash.slogan2", "splash.slogan3"] as const).map((key, i) => (
-              <Animated.Text key={key} style={[typography.headline, styles.sloganLine, {
-                color: i === 2 ? BRAND.accent : BRAND.textSecondary,
-                opacity: slogan[i],
-                transform: [{ translateY: slogan[i]!.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
-              }]}>{t(key)}</Animated.Text>
-            ))}
-          </View>
-        )}
       </Animated.View>
     </Animated.View>
   );
@@ -131,11 +117,8 @@ export function IntroOverlay(): JSX.Element | null {
 const styles = StyleSheet.create({
   cover: { zIndex: 100, alignItems: "center", justifyContent: "center" },
   center: { alignItems: "center" },
-  stage: { width: RING, height: RING, alignItems: "center", justifyContent: "center" },
-  burst: { position: "absolute", width: LOGO, height: LOGO, borderRadius: LOGO / 2 },
-  ring: { position: "absolute" },
-  wordmark: { flexDirection: "row", marginTop: space.lg },
-  letter: { marginHorizontal: space.xxs },
-  slogan: { marginTop: space.lg, alignItems: "center", gap: space.xs },
-  sloganLine: { textAlign: "center" },
+  star: { position: "absolute", backgroundColor: "#DDEBFF" },
+  wordmark: { flexDirection: "row", marginTop: space.lg, overflow: "hidden", paddingHorizontal: space.xs },
+  letter: { marginHorizontal: space.xs, letterSpacing: 2 },
+  sweep: { position: "absolute", top: 0, bottom: 0, width: 36, backgroundColor: "rgba(255,255,255,0.35)" },
 });

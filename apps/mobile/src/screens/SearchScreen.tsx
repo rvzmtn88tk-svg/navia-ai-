@@ -29,7 +29,7 @@ export function SearchScreen({ navigation, route }: Props): JSX.Element {
   const insets = useSafeAreaInsets();
   const pickFor = route.params?.pickFor;
   const { home, work, recents, load, addRecent, setSlot } = usePlacesStore();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(route.params?.initialQuery ?? "");
   const [results, setResults] = useState<PlaceRef[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);

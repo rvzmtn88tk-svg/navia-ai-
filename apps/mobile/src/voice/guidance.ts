@@ -1,6 +1,7 @@
 // Turn-by-turn phrasing and announcement timing. Pure functions (no React
 // Native imports) so they are unit-tested.
 import { ordinalExit, spokenDistance, type Lang } from "../i18n/format";
+import { landmarkConfirmation, landmarkLead, type StepLandmark } from "../navigation/landmarks";
 
 export type Maneuver =
   | "depart" | "straight" | "slight_left" | "slight_right" | "left" | "right" | "sharp_left" | "sharp_right"
@@ -57,17 +58,29 @@ function onto(step: StepLike, lang: Lang): string {
   return lang === "uk" ? ` на ${streetAccusative(step.roadName)}` : ` onto ${step.roadName}`;
 }
 
+/** Action and target road as separate words, for the co-pilot's own sentences. */
+export function actionWords(step: StepLike, lang: Lang): { action: string; road?: string } {
+  const road = step.roadName && step.maneuver !== "arrive" && step.maneuver !== "roundabout" ? (lang === "uk" ? streetAccusative(step.roadName) : step.roadName) : undefined;
+  return { action: action(step, lang), ...(road ? { road } : {}) };
+}
+
 function capitalize(s: string): string {
   return s ? s[0]!.toLocaleUpperCase() + s.slice(1) : s;
 }
 
-/** "Через 300 метрів поверніть праворуч на вулицю Шевченка." */
-export function instructionPhrase(step: StepLike, distanceM: number | null, lang: Lang): string {
+/** "Через 300 метрів, після АЗС «ОККО», поверніть праворуч на вулицю Шевченка." */
+export function instructionPhrase(step: StepLike, distanceM: number | null, lang: Lang, cue?: StepLandmark | null): string {
   if (step.maneuver === "arrive" && (distanceM == null || distanceM < 30)) return lang === "uk" ? "Ви прибули." : "You have arrived.";
   const body = `${action(step, lang)}${onto(step, lang)}`;
-  if (distanceM == null) return `${capitalize(body)}.`;
-  const lead = lang === "uk" ? `Через ${spokenDistance(distanceM, lang)}` : `In ${spokenDistance(distanceM, lang)}`;
-  return `${lead} ${body}.`;
+  const lead = landmarkLead(cue, lang);
+  const confirm = landmarkConfirmation(cue, lang);
+  const tail = confirm ? ` ${confirm}` : "";
+  if (distanceM == null) return lead ? `${capitalize(lead)} ${body}.${tail}` : `${capitalize(body)}.${tail}`;
+  const head = lang === "uk" ? `Через ${spokenDistance(distanceM, lang)}` : `In ${spokenDistance(distanceM, lang)}`;
+  if (!lead) return `${head} ${body}.${tail}`;
+  // "на світлофорі" reads without commas; "після АЗС «ОККО»" is set off by them.
+  const glued = /^(на світлофорі|at the traffic lights)$/.test(lead) ? ` ${lead} ` : `, ${lead}, `;
+  return `${head}${glued}${body}.${tail}`;
 }
 
 /** Announcement stages by distance to the maneuver. */
@@ -90,14 +103,15 @@ export class GuidanceAnnouncer {
   private spoken = new Map<string, Stage>();
   private static order: Stage[] = ["far", "prepare", "now"];
 
-  next(step: StepLike | null, distanceM: number | null, mode: TravelMode, lang: Lang): string | null {
+  next(step: StepLike | null, distanceM: number | null, mode: TravelMode, lang: Lang, cue?: StepLandmark | null): string | null {
     if (!step || distanceM == null || !Number.isFinite(distanceM)) return null;
     const stage = stageFor(distanceM, mode);
     if (!stage) return null;
     const previous = this.spoken.get(step.id);
     if (previous && GuidanceAnnouncer.order.indexOf(stage) <= GuidanceAnnouncer.order.indexOf(previous)) return null;
     this.spoken.set(step.id, stage);
-    return instructionPhrase(step, stage === "now" ? null : distanceM, lang);
+    // Landmarks are named from the "prepare" stage on, when they are in sight.
+    return instructionPhrase(step, stage === "now" ? null : distanceM, lang, stage === "far" ? null : cue);
   }
 
   reset(): void {
@@ -105,11 +119,19 @@ export class GuidanceAnnouncer {
   }
 }
 
-/** Prompt used when the position is estimated (no GNSS): no exact distance. */
-export function cautiousPhrase(step: StepLike, lang: Lang): string {
-  if (step.maneuver === "arrive") return lang === "uk" ? "Приготуйтеся: місце призначення попереду." : "Get ready: your destination is ahead.";
-  const lead = lang === "uk" ? "Приготуйтеся: скоро" : "Get ready: soon";
-  return `${lead} ${action(step, lang)}${onto(step, lang)}.`;
+/** Prompt used when the position is estimated (no GNSS): no exact distance,
+ * the landmark carries the cue, and the driver is asked to confirm the turn. */
+export function cautiousPhrase(step: StepLike, lang: Lang, cue?: StepLandmark | null): string {
+  const uk = lang === "uk";
+  if (step.maneuver === "arrive") {
+    const lead = landmarkLead(cue, lang);
+    return uk ? `Приготуйтеся: місце призначення попереду${lead ? `, ${lead}` : ""}.` : `Get ready: your destination is ahead${lead ? `, ${lead}` : ""}.`;
+  }
+  const lead = landmarkLead(cue, lang);
+  const head = uk ? "Приготуйтеся: скоро" : "Get ready: soon";
+  const confirm = landmarkConfirmation(cue, lang);
+  const ask = uk ? "Коли повернете — натисніть «Я вже повернув»." : "When you've turned, tap “I've turned”.";
+  return `${head}${lead ? `, ${lead},` : ""} ${action(step, lang)}${onto(step, lang)}.${confirm ? ` ${confirm}` : ""} ${ask}`;
 }
 
 /**
