@@ -4,7 +4,7 @@
 // places. Network calls are throttled; screens only read the result.
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Location from "expo-location";
-import { useFocusEffect } from "@react-navigation/native";
+import { useNavigationState } from "@react-navigation/native";
 import type { GNSSRawSample } from "@navia/core";
 import { navigationEngine, useNaviaStore } from "./naviaController";
 import { GeolocatedAirAlertProvider } from "../providers/GeolocatedAirAlertProvider";
@@ -86,6 +86,9 @@ export function useLiveContext() {
     if (!sample) return;
     const accepted = navigationEngine.pushGnssSample(sample, Date.now());
     const state = navigationEngine.tick(Date.now());
+    // Keep the shared store current so the co-pilot and other screens see
+    // the same GNSS health as the home status.
+    if (!useNaviaStore.getState().isDemoMode) useNaviaStore.getState().refresh();
     setHealth(healthFrom(state.gnss));
     setGpsStatus("ready");
     if (!accepted || state.trustedPosition?.position.timestamp !== sample.timestamp) return;
@@ -111,15 +114,21 @@ export function useLiveContext() {
     }
   }, [onLocation]);
 
-  useFocusEffect(useCallback(() => {
+  // Keep listening while Home is covered by Search, Settings or the co-pilot
+  // (those read the same live state). Pause only during turn-by-turn
+  // navigation, which runs its own high-accuracy subscription.
+  const navigating = useNavigationState((s) => s?.routes[s.index]?.name === "Navigation");
+  useEffect(() => {
+    if (navigating) return undefined;
     void start(false);
     // Staleness is decided by the engine clock; tick it so health can drop to
     // "lost" when fixes stop arriving.
-    const tick = setInterval(() => setHealth(healthFrom(navigationEngine.tick(Date.now()).gnss)), 2_000);
+    const tick = setInterval(() => {
+      setHealth(healthFrom(navigationEngine.tick(Date.now()).gnss));
+      if (!useNaviaStore.getState().isDemoMode) useNaviaStore.getState().refresh();
+    }, 2_000);
     return () => { clearInterval(tick); sub.current?.remove(); sub.current = null; };
-  }, [start]));
-
-  useEffect(() => () => { sub.current?.remove(); }, []);
+  }, [navigating, start]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);

@@ -1,0 +1,41 @@
+// Co-pilot client. Uses the Claude-backed server function when it is
+// configured and the user is signed in; otherwise answers on-device from the
+// same structured state (and says so in the UI).
+import { config } from "../config";
+import type { CopilotState } from "./copilotState";
+
+export type CopilotTurn = { role: "user" | "assistant"; text: string };
+export type CopilotAnswer = { answer: string; source: "claude" | "local" | "refusal" };
+
+type TokenProvider = () => Promise<string | null>;
+let idTokenProvider: TokenProvider | null = null;
+
+/** Registered by the sign-in module once Firebase Auth is connected. */
+export function setCopilotTokenProvider(provider: TokenProvider | null): void {
+  idTokenProvider = provider;
+}
+
+export function remoteCopilotAvailable(): boolean {
+  return !!config.aiBackendUrl && !!idTokenProvider;
+}
+
+/** Calls the `copilot` callable function (Firebase callable HTTP protocol). */
+export async function askRemote(question: string, state: CopilotState, history: CopilotTurn[]): Promise<CopilotAnswer> {
+  const token = await idTokenProvider?.();
+  if (!config.aiBackendUrl || !token) throw new Error("copilot: not signed in or backend not configured");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(config.aiBackendUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ data: { question, state, history: history.slice(-6) } }),
+      signal: controller.signal,
+    });
+    const body = await response.json() as { result?: CopilotAnswer; error?: { message?: string } };
+    if (!response.ok || !body.result) throw new Error(body.error?.message ?? `copilot HTTP ${response.status}`);
+    return body.result;
+  } finally {
+    clearTimeout(timer);
+  }
+}

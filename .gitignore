@@ -14,3 +14,6 @@ coverage/
 **/ios/build/
 xcuserdata/
 *.xcuserstate
+
+# Cloud Functions build output
+functions/lib/

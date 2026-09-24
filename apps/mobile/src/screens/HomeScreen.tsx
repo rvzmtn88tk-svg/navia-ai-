@@ -265,7 +265,7 @@ function StatusHeader({ gpsStatus, health, accuracyM, alert, alertState, t, onGp
   const al = alertTone(alert, alertState);
   return (
     <View style={styles.statusRow}>
-      <StatusTile icon="satellite" tone={gps.tone} title={t(gps.key)} caption={accuracyM != null && gpsStatus === "ready" ? t("gps.accuracy", { meters: Math.round(accuracyM) }) : t("gps.title")} onPress={onGps} />
+      <StatusTile icon="satellite" tone={gps.tone} title={t(gps.key)} caption={accuracyM != null && gpsStatus === "ready" && health !== "lost" ? t("gps.accuracy", { meters: Math.round(accuracyM) }) : t("gps.title")} onPress={onGps} />
       <StatusTile icon="alert" tone={al.tone} title={t(al.key)} caption={alert?.locationLabel ?? t("alert.title")} onPress={onAlert} />
     </View>
   );
@@ -362,7 +362,7 @@ function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefr
         <View style={styles.flex}>
           <Crossfade contentKey={g.key}><Text variant="headline" style={{ color: toneColor(c, g.tone) }}>{t(g.key)}</Text></Crossfade>
           <Text variant="subhead" color="secondary">
-            {[accuracyM != null && gpsStatus === "ready" ? t("gps.accuracy", { meters: Math.round(accuracyM) }) : null, fixAt ? t("gps.updated", { time: formatClock(fixAt, lang) }) : null].filter(Boolean).join(" · ") || t("gps.title")}
+            {[accuracyM != null && gpsStatus === "ready" && health !== "lost" ? t("gps.accuracy", { meters: Math.round(accuracyM) }) : null, fixAt ? t("gps.updated", { time: formatClock(fixAt, lang) }) : null].filter(Boolean).join(" · ") || t("gps.title")}
           </Text>
         </View>
         <IconButton icon="refresh" tone="plain" size={40} label={t("common.retry")} onPress={onRefresh} />
