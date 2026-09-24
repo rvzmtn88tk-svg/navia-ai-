@@ -17,21 +17,24 @@ export class ExpoLocationPositionProvider {
     return status === "granted";
   }
 
-  async subscribe(onSample: (sample: GNSSRawSample) => void): Promise<PositionSubscription> {
-    const granted = await this.requestPermission();
+  async subscribe(onSample: (sample: GNSSRawSample) => void, permissionAlreadyGranted = false): Promise<PositionSubscription> {
+    const granted = permissionAlreadyGranted || await this.requestPermission();
     if (!granted) {
       throw new Error("ExpoLocationPositionProvider: location permission not granted");
     }
     const sub = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 0 },
       (loc) => {
+        const accuracyM = loc.coords.accuracy;
+        const speedMps = loc.coords.speed;
+        const headingDeg = loc.coords.heading;
         onSample({
           lat: loc.coords.latitude,
           lon: loc.coords.longitude,
           timestamp: loc.timestamp,
-          accuracyM: loc.coords.accuracy ?? null,
-          speedMps: loc.coords.speed ?? null,
-          headingDeg: loc.coords.heading ?? null,
+          accuracyM: accuracyM != null && Number.isFinite(accuracyM) && accuracyM >= 0 ? accuracyM : null,
+          speedMps: speedMps != null && Number.isFinite(speedMps) && speedMps >= 0 ? speedMps : null,
+          headingDeg: headingDeg != null && Number.isFinite(headingDeg) && headingDeg >= 0 && headingDeg < 360 ? headingDeg : null,
         });
       }
     );

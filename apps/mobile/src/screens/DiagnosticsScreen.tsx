@@ -5,29 +5,84 @@
 // number for a field that has no real value yet (renders "—" instead, via
 // DiagnosticsEngine.snapshot()'s honest nulls).
 import React, { useEffect, useState } from "react";
-import { View, Text, ScrollView, StyleSheet, Switch, Pressable } from "react-native";
+import { View, ScrollView, StyleSheet, Switch, Pressable } from "react-native";
 import { DiagnosticsEngine, type DiagnosticsSnapshot } from "@navia/core";
 import { navigationEngine, demoEngine, useNaviaStore } from "../engine/naviaController";
+import { AppText as Text } from "../components/AppText";
 import { config } from "../config";
+import { Accelerometer, Gyroscope, Magnetometer } from "expo-sensors";
+import { useAppSettings } from "../settings/AppSettings";
 
 const diagnosticsEngine = new DiagnosticsEngine();
+type SensorAvailability = { accelerometer: boolean; gyroscope: boolean; magnetometer: boolean };
 
-function Row({ label, value }: { label: string; value: string }): JSX.Element {
+function Row({ label, value, p }: { label: string; value: string; p: ReturnType<typeof useAppSettings>["palette"] }): JSX.Element {
   return (
-    <View style={styles.row}>
-      <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value}>{value}</Text>
+    <View style={[styles.row, { borderBottomColor: p.border }]}>
+      <Text style={[styles.label, { color: p.muted }]}>{label}</Text>
+      <Text style={[styles.value, { color: p.text }]}>{value}</Text>
     </View>
   );
 }
-function Section({ title }: { title: string }): JSX.Element {
-  return <Text style={styles.section}>{title}</Text>;
+function Section({ title, p }: { title: string; p: ReturnType<typeof useAppSettings>["palette"] }): JSX.Element {
+  return <Text style={[styles.section, { color: p.accent }]}>{title}</Text>;
 }
 const fmt = (v: unknown, suffix = ""): string => (v == null ? "—" : `${v}${suffix}`);
 
+const STATE_LABELS: Record<string, string> = {
+  NORMAL: "Норма",
+  DEGRADED: "Сигнал погіршено",
+  LOST: "Сигнал втрачено",
+  HIGH: "Висока",
+  MEDIUM: "Середня",
+  LOW: "Низька",
+  UNKNOWN: "Невідомо",
+  IDLE: "Очікування",
+  ROUTING: "Побудова маршруту",
+  ACTIVE: "Навігація активна",
+  GNSS_DEGRADED: "Слабкий сигнал GNSS",
+  GNSS_LOST: "GNSS втрачено",
+  POSITION_UNCERTAIN: "Положення неточне",
+  OFFLINE: "Офлайн",
+  OFF_ROUTE: "Поза маршрутом",
+  RECOVERING: "Відновлення",
+  ARRIVED: "Прибули",
+  GNSS: "GPS",
+  DEAD_RECKONING: "Інерціальна навігація",
+  MAP_MATCH: "Прив’язка до карти",
+  FUSED: "Об’єднані дані",
+  VALHALLA: "Valhalla",
+  ONLINE: "Онлайн",
+};
+
+const STATE_LABELS_EN: Record<string, string> = {
+  NORMAL: "Normal", DEGRADED: "Weak signal", LOST: "Lost", HIGH: "High", MEDIUM: "Medium", LOW: "Low", UNKNOWN: "Unknown",
+  IDLE: "Idle", ROUTING: "Building route", ACTIVE: "Guidance active", GNSS_DEGRADED: "Weak GPS", GNSS_LOST: "GPS lost",
+  POSITION_UNCERTAIN: "Position uncertain", OFFLINE: "Offline", OFF_ROUTE: "Off route", RECOVERING: "Recovering", ARRIVED: "Arrived",
+  GNSS: "GPS", DEAD_RECKONING: "Dead reckoning", MAP_MATCH: "Map matching", FUSED: "Fused", VALHALLA: "Valhalla", ONLINE: "Online",
+};
+
+const localizeState = (value: string | null | undefined, en = false): string =>
+  value == null ? "—" : (en ? STATE_LABELS_EN[value] : STATE_LABELS[value]) ?? value;
+
 export function DiagnosticsScreen(): JSX.Element {
+  const { palette: p, language } = useAppSettings();
+  const en = language === "en";
   const { isDemoMode, setDemoMode, state, route, refresh } = useNaviaStore();
   const [snapshot, setSnapshot] = useState<DiagnosticsSnapshot | null>(null);
+  const [sensorAvailability, setSensorAvailability] = useState<SensorAvailability>({ accelerometer: false, gyroscope: false, magnetometer: false });
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      Accelerometer.isAvailableAsync().catch(() => false),
+      Gyroscope.isAvailableAsync().catch(() => false),
+      Magnetometer.isAvailableAsync().catch(() => false),
+    ]).then(([accelerometer, gyroscope, magnetometer]) => {
+      if (active) setSensorAvailability({ accelerometer, gyroscope, magnetometer });
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -49,97 +104,98 @@ export function DiagnosticsScreen(): JSX.Element {
           routeDistanceRemainingM: r ? s.routeRemainingM : null,
           confidence: s.confidence,
           confidenceBand: s.confidenceBand,
-          sensorsAvailable: { gnss: s.gnss !== "LOST", accelerometer: true, gyroscope: true, magnetometer: true },
+          sensorsAvailable: { gnss: s.gnss !== "LOST", ...sensorAvailability },
           networkAvailable: s.networkAvailable,
           offlinePackageState: "not_downloaded",
         })
       );
     }, 1000);
     return () => clearInterval(id);
-  }, [isDemoMode, refresh]);
+  }, [isDemoMode, refresh, sensorAvailability]);
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={[styles.container, { backgroundColor: p.background }]}>
       <View style={styles.demoToggleRow}>
-        <Text style={styles.demoToggleLabel}>DEMO MODE</Text>
+        <Text style={[styles.demoToggleLabel, { color: p.text }]}>{en ? "DEMO MODE" : "ДЕМО-РЕЖИМ"}</Text>
         <Switch value={isDemoMode} onValueChange={setDemoMode} />
       </View>
       <Text style={styles.demoToggleHint}>
         {isDemoMode
-          ? "Демо: синтетичні GNSS/IMU-семпли через ті самі production engines. НЕ реальний GPS."
-          : "Реальний режим: дані з реальних GPS/сенсорів пристрою."}
+          ? (en ? "Demo: synthetic GPS and motion samples through the same navigation engine. Not real GPS." : "Демо: синтетичні GNSS/IMU-семпли через ті самі системи навігації. НЕ реальний GPS.")
+          : (en ? "Live mode: position comes from the phone's GPS and sensors." : "Реальний режим: дані з GPS і сенсорів телефону.")}
       </Text>
 
       {isDemoMode && (
-        <View style={styles.demoControls}>
-          <Section title="Demo controls" />
+          <View style={[styles.demoControls, { backgroundColor: p.surfaceRaised }]}>
+          <Section title={en ? "Demo controls" : "Керування деморежимом"} p={p} />
           <View style={styles.demoButtonRow}>
-            <DemoButton label="GNSS degrade" onPress={() => demoEngine.simulateGnssDegradation()} />
-            <DemoButton label="GNSS loss" onPress={() => demoEngine.simulateGnssLoss()} />
-            <DemoButton label="Restore GNSS" onPress={() => demoEngine.restoreGnss()} />
+            <DemoButton label={en ? "Weaken GPS" : "Погіршити сигнал GNSS"} onPress={() => demoEngine.simulateGnssDegradation()} p={p} />
+            <DemoButton label={en ? "Lose GPS" : "Зімітувати втрату GNSS"} onPress={() => demoEngine.simulateGnssLoss()} p={p} />
+            <DemoButton label={en ? "Restore GPS" : "Відновити GNSS"} onPress={() => demoEngine.restoreGnss()} p={p} />
           </View>
           <View style={styles.demoButtonRow}>
-            <DemoButton label="GPS jump" onPress={() => demoEngine.simulateGpsJump()} />
-            <DemoButton label="Wrong heading" onPress={() => demoEngine.simulateWrongHeading()} />
+            <DemoButton label={en ? "GPS jump" : "Зімітувати стрибок GPS"} onPress={() => demoEngine.simulateGpsJump()} p={p} />
+            <DemoButton label={en ? "Wrong heading" : "Зімітувати хибний напрямок"} onPress={() => demoEngine.simulateWrongHeading()} p={p} />
           </View>
           <View style={styles.demoButtonRow}>
-            <DemoButton label="Off-route" onPress={() => demoEngine.simulateOffRoute()} />
-            <DemoButton label="Clear off-route" onPress={() => demoEngine.clearOffRoute()} />
+            <DemoButton label={en ? "Go off route" : "З’їзд із маршруту"} onPress={() => demoEngine.simulateOffRoute()} p={p} />
+            <DemoButton label={en ? "Clear off-route" : "Скинути відхилення"} onPress={() => demoEngine.clearOffRoute()} p={p} />
           </View>
         </View>
       )}
 
       {!snapshot ? (
-        <Text style={styles.value}>Немає активної навігаційної сесії.</Text>
+        <Text style={[styles.value, { color: p.text }]}>{en ? "No active navigation session." : "Немає активної навігаційної сесії."}</Text>
       ) : (
         <>
-          <Section title="GPS" />
-          <Row label="Accuracy" value={fmt(snapshot.gpsAccuracyM, " m")} />
-          <Row label="Speed" value={fmt(snapshot.gpsSpeedMps, " m/s")} />
-          <Row label="Heading" value={fmt(snapshot.gpsHeadingDeg, "°")} />
+          <Section title="GPS" p={p} />
+          <Row label={en ? "GPS accuracy" : "Точність GPS"} value={fmt(snapshot.gpsAccuracyM, en ? " m" : " м")} p={p} />
+          <Row label={en ? "Speed" : "Швидкість"} value={fmt(snapshot.gpsSpeedMps, en ? " m/s" : " м/с")} p={p} />
+          <Row label={en ? "Heading" : "Напрямок"} value={fmt(snapshot.gpsHeadingDeg, "°")} p={p} />
 
-          <Section title="GNSS" />
-          <Row label="State" value={snapshot.gnssState} />
-          <Row label="Anomaly score" value={fmt(snapshot.anomalyScore)} />
-          <Row label="Trusted fix age" value={fmt(snapshot.trustedPositionAgeMs, " ms")} />
-          <Row label="Dead reckoning age" value={fmt(snapshot.deadReckoningAgeMs, " ms")} />
+          <Section title="GNSS" p={p} />
+          <Row label={en ? "Status" : "Стан"} value={localizeState(snapshot.gnssState, en)} p={p} />
+          <Row label={en ? "Anomaly score" : "Оцінка аномалії"} value={fmt(snapshot.anomalyScore)} p={p} />
+          <Row label={en ? "Age of last trusted fix" : "Вік надійного GPS-заміру"} value={fmt(snapshot.trustedPositionAgeMs, en ? " ms" : " мс")} p={p} />
+          <Row label={en ? "Dead-reckoning time" : "Час інерційного визначення"} value={fmt(snapshot.deadReckoningAgeMs, en ? " ms" : " мс")} p={p} />
 
-          <Section title="Position" />
-          <Row label="Source" value={state.position?.source ?? "—"} />
-          <Row label="Confidence" value={`${snapshot.confidence.toFixed(2)} (${snapshot.confidenceBand})`} />
+          <Section title={en ? "Position" : "Позиція"} p={p} />
+          <Row label={en ? "Source" : "Джерело"} value={localizeState(state.position?.source, en)} p={p} />
+          <Row label={en ? "Confidence" : "Надійність"} value={`${snapshot.confidence.toFixed(2)} (${localizeState(snapshot.confidenceBand, en)})`} p={p} />
 
-          <Section title="Sensors" />
-          <Row label="Accelerometer" value={snapshot.sensorsAvailable.accelerometer ? "available" : "unavailable"} />
-          <Row label="Gyroscope" value={snapshot.sensorsAvailable.gyroscope ? "available" : "unavailable"} />
-          <Row label="Fusion" value={state.position ? state.position.source : "—"} />
+          <Section title={en ? "Sensors" : "Датчики"} p={p} />
+          <Row label={en ? "Accelerometer" : "Акселерометр"} value={snapshot.sensorsAvailable.accelerometer ? (en ? "available" : "доступний") : (en ? "unavailable" : "недоступний")} p={p} />
+          <Row label={en ? "Gyroscope" : "Гіроскоп"} value={snapshot.sensorsAvailable.gyroscope ? (en ? "available" : "доступний") : (en ? "unavailable" : "недоступний")} p={p} />
+          <Row label={en ? "Magnetometer" : "Магнітометр"} value={snapshot.sensorsAvailable.magnetometer ? (en ? "available" : "доступний") : (en ? "unavailable" : "недоступний")} p={p} />
+          <Row label={en ? "Sensor fusion" : "Об’єднання даних"} value={localizeState(state.position?.source, en)} p={p} />
 
-          <Section title="Map" />
-          <Row label="Current road" value={fmt(snapshot.currentRoadName)} />
-          <Row label="Map match score" value={fmt(snapshot.mapMatchScore)} />
-          <Row label="Route deviation" value={state.offRoute ? "OFF ROUTE" : "on route"} />
+          <Section title={en ? "Map" : "Карта"} p={p} />
+          <Row label={en ? "Current road" : "Поточна дорога"} value={fmt(snapshot.currentRoadName)} p={p} />
+          <Row label={en ? "Map matching" : "Прив’язка до карти"} value={fmt(snapshot.mapMatchScore)} p={p} />
+          <Row label={en ? "Route deviation" : "Відхилення від маршруту"} value={state.offRoute ? (en ? "off route" : "поза маршрутом") : (en ? "on route" : "на маршруті")} p={p} />
 
-          <Section title="Routing" />
-          <Row label="Provider" value={route?.source ?? "—"} />
-          <Row label="Route status" value={route ? "active" : "none"} />
-          <Row label="Remaining" value={fmt(snapshot.routeDistanceRemainingM, " m")} />
-          <Row label="Valhalla endpoint" value={config.valhallaUrl ?? "not configured"} />
+          <Section title={en ? "Routing" : "Маршрутизація"} p={p} />
+          <Row label={en ? "Route source" : "Джерело маршруту"} value={localizeState(route?.source, en)} p={p} />
+          <Row label={en ? "Route status" : "Стан маршруту"} value={route ? (en ? "active" : "активний") : (en ? "none" : "відсутній")} p={p} />
+          <Row label={en ? "Distance remaining" : "Залишок маршруту"} value={fmt(snapshot.routeDistanceRemainingM, en ? " m" : " м")} p={p} />
+          <Row label={en ? "Valhalla server" : "Сервер Valhalla"} value={config.valhallaUrl ?? (en ? "not configured" : "не налаштовано")} p={p} />
 
-          <Section title="Network" />
-          <Row label="Status" value={snapshot.networkAvailable ? "online" : "offline"} />
+          <Section title={en ? "Network" : "Мережа"} p={p} />
+          <Row label={en ? "Status" : "Стан"} value={snapshot.networkAvailable ? (en ? "connected" : "є з’єднання") : (en ? "offline" : "немає з’єднання")} p={p} />
 
-          <Section title="App" />
-          <Row label="Mode" value={isDemoMode ? "DEMO" : "REAL"} />
-          <Row label="Navigation mode" value={state.mode} />
+          <Section title={en ? "App" : "Застосунок"} p={p} />
+          <Row label={en ? "Mode" : "Режим"} value={isDemoMode ? (en ? "Demo" : "Демо") : (en ? "Live" : "Реальний")} p={p} />
+          <Row label={en ? "Navigation mode" : "Режим навігації"} value={localizeState(state.mode, en)} p={p} />
         </>
       )}
     </ScrollView>
   );
 }
 
-function DemoButton({ label, onPress }: { label: string; onPress: () => void }): JSX.Element {
+function DemoButton({ label, onPress, p }: { label: string; onPress: () => void; p: ReturnType<typeof useAppSettings>["palette"] }): JSX.Element {
   return (
-    <Pressable style={styles.demoButton} onPress={onPress}>
-      <Text style={styles.demoButtonText}>{label}</Text>
+    <Pressable style={[styles.demoButton, { backgroundColor: p.surface, borderColor: p.border }]} onPress={onPress}>
+      <Text style={[styles.demoButtonText, { color: p.accent }]}>{label}</Text>
     </Pressable>
   );
 }

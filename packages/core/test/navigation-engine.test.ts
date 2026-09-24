@@ -15,6 +15,8 @@ const provider = new DemoRoutingProvider(demoGraph);
 
 test("NavigationEngine: with no GNSS pushed yet, reports LOST and no position (never fabricates 0,0)", async () => {
   const engine = new NavigationEngine({ routingProvider: provider });
+  assert.equal(engine.getState().gnss, "LOST", "initial state must not advertise a healthy fix before the first tick");
+  assert.equal(engine.getState().position, null);
   const state = engine.tick(1000);
   assert.equal(state.gnss, "LOST");
   assert.equal(state.position, null);

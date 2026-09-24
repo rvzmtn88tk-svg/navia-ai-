@@ -1,11 +1,5 @@
-// Voice I/O adapter — spec section 17 ("VOICE"). Text-to-speech via
-// expo-speech (well-established, stable API); speech-to-text is left as a
-// documented not-implemented method, since Expo's built-in APIs don't cover
-// STT and a third-party module choice (e.g. expo-speech-recognition) needs
-// picking against real device testing this sandbox cannot do — see
-// LIMITATIONS.md. TTS itself is UNBUILT/UNTESTED here for the same reason
-// (no device/simulator to actually hear it), but the wiring is standard.
 import * as Speech from "expo-speech";
+import { ExpoSpeechRecognitionModule } from "expo-speech-recognition";
 
 export class ExpoSpeechVoiceProvider {
   async speak(text: string, options: { language?: string } = {}): Promise<void> {
@@ -26,12 +20,55 @@ export class ExpoSpeechVoiceProvider {
     return Speech.isSpeakingAsync();
   }
 
-  /** Not implemented in this pass — see file header. */
-  startListening(_onResult: (text: string) => void): never {
-    throw new Error(
-      "ExpoSpeechVoiceProvider.startListening is not implemented: speech-to-text needs a " +
-      "concrete native module choice validated on a real device, which this sandbox has no " +
-      "way to test. Wire in a chosen STT module (e.g. expo-speech-recognition) here."
-    );
+  async startListening(onResult: (text: string) => void | Promise<void>, options: { language?: string } = {}): Promise<void> {
+    const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (!permission.granted) {
+      throw new Error("Надайте доступ до мікрофона й розпізнавання мовлення в налаштуваннях iPhone.");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let finalTranscript = "";
+      let resultTask: Promise<void> = Promise.resolve();
+      let settled = false;
+      const cleanup = () => {
+        resultSubscription.remove();
+        errorSubscription.remove();
+        endSubscription.remove();
+      };
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve();
+      };
+
+      const resultSubscription = ExpoSpeechRecognitionModule.addListener("result", (event) => {
+        if (!event.isFinal) return;
+        finalTranscript = event.results[0]?.transcript?.trim() ?? "";
+        if (finalTranscript) resultTask = Promise.resolve(onResult(finalTranscript));
+      });
+      const errorSubscription = ExpoSpeechRecognitionModule.addListener("error", (event) => {
+        finish(new Error(event.message || "Не вдалося розпізнати команду."));
+      });
+      const endSubscription = ExpoSpeechRecognitionModule.addListener("end", () => {
+        if (!finalTranscript) {
+          finish(new Error("Не почули команду. Спробуйте сказати її ще раз."));
+          return;
+        }
+        void resultTask.then(() => finish()).catch((error: unknown) => finish(error as Error));
+      });
+
+      try {
+        ExpoSpeechRecognitionModule.start({
+          lang: options.language ?? "uk-UA",
+          interimResults: false,
+          maxAlternatives: 1,
+          continuous: false,
+        });
+      } catch (error) {
+        finish(error as Error);
+      }
+    });
   }
 }

@@ -16,9 +16,11 @@ type NominatimResult = {
   importance?: number;
 };
 
-// Biases results toward Kyiv + Kyiv Oblast without excluding results
-// elsewhere (Nominatim's viewbox without bounded=1 is a soft bias, not a hard filter).
-const KYIV_OBLAST_VIEWBOX = "29.2,51.6,32.2,49.9"; // left,top,right,bottom
+const SEARCH_TIMEOUT_MS = 12_000;
+
+// Search the Kyiv/oblast bounding area. Nominatim's bounded viewbox is a
+// rectangular filter, so the bounds include a small fringe around the oblast.
+const KYIV_OBLAST_VIEWBOX = "29.1,51.6,32.3,49.0"; // left,top,right,bottom
 
 export class OnlineGeocoderProvider implements GeocoderProvider {
   constructor(private baseUrl: string = config.geocoderUrl) {}
@@ -26,15 +28,22 @@ export class OnlineGeocoderProvider implements GeocoderProvider {
   async search(query: string, opts: { limit?: number } = {}): Promise<GeocodeResult[]> {
     const q = query.trim();
     if (q.length === 0) return [];
+    if (q.length > 250) throw new Error("OnlineGeocoderProvider: search text is too long.");
 
     const url = new URL(`${this.baseUrl.replace(/\/$/, "")}/search`);
     url.searchParams.set("q", q);
     url.searchParams.set("format", "jsonv2");
-    url.searchParams.set("limit", String(opts.limit ?? 8));
+    const limit = Number.isFinite(opts.limit) ? Math.max(1, Math.min(10, Math.floor(opts.limit!))) : 8;
+    url.searchParams.set("limit", String(limit));
     url.searchParams.set("viewbox", KYIV_OBLAST_VIEWBOX);
+    url.searchParams.set("bounded", "1");
+    url.searchParams.set("countrycodes", "ua");
     url.searchParams.set("addressdetails", "0");
 
     let response: Response;
+    let payload: unknown;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
     try {
       response = await fetch(url.toString(), {
         headers: {
@@ -43,21 +52,29 @@ export class OnlineGeocoderProvider implements GeocoderProvider {
           "User-Agent": "NAVIA/0.1 (navigation app; see repository README)",
           Accept: "application/json",
         },
+        signal: controller.signal,
       });
+      payload = await response.json();
     } catch (err) {
       throw new Error(`OnlineGeocoderProvider: network request failed (${(err as Error).message}). Endpoint: ${this.baseUrl}`);
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (!response.ok) {
       throw new Error(`OnlineGeocoderProvider: geocoding endpoint returned ${response.status} ${response.statusText}`);
     }
 
-    const results = (await response.json()) as NominatimResult[];
-    return results.map((r) => ({
-      label: r.display_name,
-      location: { lat: parseFloat(r.lat), lon: parseFloat(r.lon) },
-      source: "online" as const,
-      ...(r.importance != null ? { confidence: Math.max(0, Math.min(1, r.importance)) } : {}),
-    }));
+    if (!Array.isArray(payload)) throw new Error("OnlineGeocoderProvider: geocoding response is not a result list.");
+    return (payload as NominatimResult[]).flatMap((result) => {
+      const lat = Number.parseFloat(result.lat), lon = Number.parseFloat(result.lon);
+      if (typeof result.display_name !== "string" || !Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) return [];
+      return [{
+        label: result.display_name,
+        location: { lat, lon },
+        source: "online" as const,
+        ...(result.importance != null && Number.isFinite(result.importance) ? { confidence: Math.max(0, Math.min(1, result.importance)) } : {}),
+      }];
+    });
   }
 }

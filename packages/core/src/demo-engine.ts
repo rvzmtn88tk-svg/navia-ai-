@@ -264,7 +264,7 @@ export class DemoEngine {
       mode: this.stateMachine.getMode(),
       position: null,
       trustedPosition: null,
-      gnss: "NORMAL",
+      gnss: "LOST",
       confidence: 0, confidenceBand: "UNKNOWN",
       speedMps: null, headingDeg: null,
       routeProgressM: 0, routeRemainingM: this.route?.distanceM ?? 0,
@@ -288,7 +288,7 @@ export class DemoEngine {
 
 function idleState(): NavigationState {
   return {
-    mode: "IDLE", position: null, trustedPosition: null, gnss: "NORMAL",
+    mode: "IDLE", position: null, trustedPosition: null, gnss: "LOST",
     confidence: 0, confidenceBand: "UNKNOWN", speedMps: null, headingDeg: null,
     routeProgressM: 0, routeRemainingM: 0, nextStep: null, nearbyLandmarks: [],
     offRoute: false, networkAvailable: true, offlineMapAvailable: false,

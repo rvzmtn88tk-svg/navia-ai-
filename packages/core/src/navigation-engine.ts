@@ -45,7 +45,9 @@ export type NavigationEngineOptions = {
 
 function idleState(): NavigationState {
   return {
-    mode: "IDLE", position: null, trustedPosition: null, gnss: "NORMAL",
+    // Until the first accepted fix arrives, no location signal can be called
+    // healthy. This state is exposed before tick() on initial screen render.
+    mode: "IDLE", position: null, trustedPosition: null, gnss: "LOST",
     confidence: 0, confidenceBand: "UNKNOWN", speedMps: null, headingDeg: null,
     routeProgressM: 0, routeRemainingM: 0, nextStep: null, nextStepDistanceM: null, etaSeconds: null, nearbyLandmarks: [],
     offRoute: false, networkAvailable: true, offlineMapAvailable: false,

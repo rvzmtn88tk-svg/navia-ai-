@@ -16,12 +16,14 @@ import { create } from "zustand";
 import {
   NavigationEngine, DemoEngine, DeterministicDemoAIProvider,
   DEMO_KYIV_TO_BORYSPIL_GRAPH, DEMO_ORIGIN, DEMO_DESTINATION, DEMO_POIS,
-  type NavigationState, type Route, type LatLon,
+  type NavigationState, type Route, type LatLon, type GNSSRawSample,
 } from "@navia/core";
 import { OnlineValhallaProvider } from "../providers/OnlineValhallaProvider";
+import type { GeolocatedAirAlert } from "../providers/GeolocatedAirAlertProvider";
+import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
 
 const idleState: NavigationState = {
-  mode: "IDLE", position: null, trustedPosition: null, gnss: "NORMAL",
+  mode: "IDLE", position: null, trustedPosition: null, gnss: "LOST",
   confidence: 0, confidenceBand: "UNKNOWN", speedMps: null, headingDeg: null,
   routeProgressM: 0, routeRemainingM: 0, nextStep: null, nearbyLandmarks: [],
   offRoute: false, networkAvailable: true, offlineMapAvailable: false,
@@ -42,6 +44,12 @@ type NaviaStore = {
   setDemoMode: (v: boolean) => void;
   state: NavigationState;
   route: Route | null;
+  currentFix: GNSSRawSample | null;
+  setCurrentFix: (fix: GNSSRawSample | null) => void;
+  alert: GeolocatedAirAlert | null;
+  setAlert: (alert: GeolocatedAirAlert | null) => void;
+  airThreatSummary: AirThreatSummary | null;
+  setAirThreatSummary: (summary: AirThreatSummary | null) => void;
   destination: LatLon | null;
   setDestination: (d: LatLon | null) => void;
   /** Session-only (not persisted across app restarts — no AsyncStorage
@@ -57,6 +65,12 @@ export const useNaviaStore = create<NaviaStore>((set, get) => ({
   setDemoMode: (v) => set({ isDemoMode: v }),
   state: idleState,
   route: null,
+  currentFix: null,
+  setCurrentFix: (fix) => set({ currentFix: fix }),
+  alert: null,
+  setAlert: (alert) => set({ alert }),
+  airThreatSummary: null,
+  setAirThreatSummary: (airThreatSummary) => set({ airThreatSummary }),
   destination: null,
   setDestination: (d) => set({ destination: d }),
   recentDestinations: [],

@@ -12,7 +12,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#0b1220"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "ua.navia.app",
@@ -20,6 +22,7 @@
         "NSLocationWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації у фоновому режимі під час поїздки.",
         "NSMicrophoneUsageDescription": "NAVIA використовує мікрофон для голосових команд.",
+        "NSSpeechRecognitionUsageDescription": "NAVIA розпізнає ваші українські голосові команди для керування навігацією.",
         "NSCameraUsageDescription": "NAVIA використовує камеру для розпізнавання орієнтирів (Camera Vision)."
       }
     },
@@ -33,7 +36,7 @@
         "CAMERA"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon-foreground.png",
         "backgroundColor": "#0b1220"
       }
     },
@@ -42,15 +45,24 @@
       "expo-sensors",
       "expo-sqlite",
       [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "NAVIA використовує мікрофон для голосових команд.",
+          "speechRecognitionPermission": "NAVIA розпізнає ваші українські голосові команди для керування навігацією."
+        }
+      ],
+      [
         "@maplibre/maplibre-react-native",
         {
-          "android": { "unstable_useVendoredDependencies": true }
+          "android": {
+            "unstable_useVendoredDependencies": true
+          }
         }
       ]
     ],
     "extra": {
       "eas": {
-        "projectId": "REPLACE_WITH_REAL_EAS_PROJECT_ID"
+        "projectId": "b6ec6218-706a-4c50-a184-091dc5465a0a"
       }
     }
   }

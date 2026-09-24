@@ -21,6 +21,7 @@ test("DemoEngine: simulateCameraDetection ties a detection to a real nearby POI"
 
 test("DemoEngine: reset() clears simulated conditions and telemetry", async () => {
   const engine = new DemoEngine({ graph: demoGraph, origin: { lat: 50.4501, lon: 30.5234 }, destination: { lat: 50.4501, lon: 30.5366 } });
+  assert.equal(engine.getState().gnss, "LOST", "demo must wait for synthetic fixes before declaring a healthy signal");
   await engine.start();
   engine.simulateGnssLoss();
   engine.tick(1);
@@ -29,6 +30,7 @@ test("DemoEngine: reset() clears simulated conditions and telemetry", async () =
   assert.equal(engine.getTelemetry().getEvents().length, 0);
   assert.equal(engine.getRoute(), null);
   assert.equal(engine.getState().mode, "IDLE");
+  assert.equal(engine.getState().gnss, "LOST");
 });
 
 test("DemoEngine: askAI answers using only real context data", async () => {

@@ -8,3 +8,9 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Native build output and CocoaPods
+**/ios/Pods/
+**/ios/build/
+xcuserdata/
+*.xcuserstate
