@@ -9,7 +9,7 @@ import type { GNSSRawSample } from "@navia/core";
 import { navigationEngine, useNaviaStore } from "./naviaController";
 import { GeolocatedAirAlertProvider } from "../providers/GeolocatedAirAlertProvider";
 import { AirThreatSummaryProvider } from "../providers/AirThreatSummaryProvider";
-import { NearbyPlacesProvider, type NearbyPlace } from "../providers/NearbyPlacesProvider";
+import { NearbyPlacesProvider, type FetchCategory, type NearbyPlace } from "../providers/NearbyPlacesProvider";
 
 export type GpsStatus = "checking" | "permission" | "searching" | "ready" | "error";
 export type GnssHealth = "stable" | "unstable" | "lost";
@@ -50,6 +50,8 @@ export function useLiveContext() {
   const [places, setPlaces] = useState<NearbyPlace[]>([]);
   const [placesState, setPlacesState] = useState<LoadState>("idle");
   const [refreshing, setRefreshing] = useState(false);
+  const [byCategory, setByCategory] = useState<Partial<Record<FetchCategory, { state: LoadState; places: NearbyPlace[] }>>>({});
+  const shelterRequested = useRef(false);
   const sub = useRef<Location.LocationSubscription | null>(null);
   const lastAlertAt = useRef(0);
   const lastPlacesAt = useRef(0);
@@ -81,6 +83,20 @@ export function useLiveContext() {
     }
   }, [setAlert, setThreat]);
 
+  /** Loads one category on demand (chips, nearest shelter). */
+  const loadCategory = useCallback(async (category: FetchCategory, force = false) => {
+    const fix = useNaviaStore.getState().currentFix;
+    if (!fix) return;
+    setByCategory((prev) => ({ ...prev, [category]: { state: prev[category]?.places.length ? "ready" : "loading", places: prev[category]?.places ?? [] } }));
+    try {
+      const region = useNaviaStore.getState().alert?.region;
+      const found = await placesProvider.fetchCategory({ lat: fix.lat, lon: fix.lon }, category, { includeKyivOfficialData: region === "м. Київ", force });
+      setByCategory((prev) => ({ ...prev, [category]: { state: "ready", places: found } }));
+    } catch {
+      setByCategory((prev) => ({ ...prev, [category]: { state: prev[category]?.places.length ? "ready" : "error", places: prev[category]?.places ?? [] } }));
+    }
+  }, []);
+
   const onLocation = useCallback((loc: Location.LocationObject) => {
     const sample = toSample(loc);
     if (!sample) return;
@@ -95,7 +111,9 @@ export function useLiveContext() {
     setCurrentFix(sample);
     void loadAlert(sample);
     void loadPlaces(sample);
-  }, [loadAlert, loadPlaces, setCurrentFix]);
+    // Shelters are always kept ready for the "Nearest shelter" action.
+    if (!shelterRequested.current) { shelterRequested.current = true; setTimeout(() => void loadCategory("shelter"), 1500); }
+  }, [loadAlert, loadCategory, loadPlaces, setCurrentFix]);
 
   const start = useCallback(async (ask: boolean) => {
     let permission = await Location.getForegroundPermissionsAsync().catch(() => ({ status: "denied" as const, canAskAgain: false }));
@@ -141,5 +159,5 @@ export function useLiveContext() {
     }
   }, [loadAlert, loadPlaces, start]);
 
-  return { gpsStatus, health, alertState, places, placesState, refreshing, refresh, requestPermission: () => start(true) };
+  return { gpsStatus, health, alertState, places, placesState, byCategory, loadCategory, refreshing, refresh, requestPermission: () => start(true) };
 }

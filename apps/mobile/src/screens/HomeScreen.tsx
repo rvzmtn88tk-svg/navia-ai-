@@ -11,7 +11,7 @@ import { useNaviaStore } from "../engine/naviaController";
 import { useLiveContext, type GnssHealth, type GpsStatus } from "../engine/useLiveContext";
 import { useAppSettings, type MapLayer } from "../settings/AppSettings";
 import { usePlacesStore, placeId, type PlaceRef } from "../store/placesStore";
-import { CATEGORY_META, CHIP_CATEGORIES, nearestShelter, placesFor, type ChipCategory } from "../places/categories";
+import { CATEGORY_META, CHIP_CATEGORIES, nearestShelter, type ChipCategory } from "../places/categories";
 import type { NearbyPlace, NearbyPlaceCategory } from "../providers/NearbyPlacesProvider";
 import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
 import type { GeolocatedAirAlert } from "../providers/GeolocatedAirAlertProvider";
@@ -75,8 +75,9 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   }, [navigation, route.params?.focusPlace]);
 
   const user = useMemo(() => fix ? { lat: fix.lat, lon: fix.lon, headingDeg: fix.headingDeg, accuracyM: fix.accuracyM } : null, [fix]);
-  const categoryPlaces = useMemo(() => category ? placesFor(category, live.places) : [], [category, live.places]);
-  const shelter = nearestShelter(live.places);
+  const categoryEntry = category ? live.byCategory[category] : undefined;
+  const categoryPlaces = useMemo(() => categoryEntry?.places ?? [], [categoryEntry]);
+  const shelter = nearestShelter(live.byCategory.shelter?.places ?? []);
   const alertActive = alert?.active === true;
 
   const openPlace = useCallback((place: NearbyPlace) => {
@@ -95,12 +96,19 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     if (category === next) { setCategory(null); setSnap("peek"); return; }
     setCategory(next);
     setSnap("half");
-    const nearby = placesFor(next, live.places).slice(0, 8).map((p) => p.location);
-    if (nearby.length > 0) {
-      setCameraMode("free");
-      map.current?.fitPoints(fix ? [{ lat: fix.lat, lon: fix.lon }, ...nearby] : nearby, halfSheetHeight);
-    }
+    void live.loadCategory(next);
   }
+
+  // Frame the user and the nearest results once a category has loaded.
+  const framedCategory = useRef<string | null>(null);
+  useEffect(() => {
+    if (!category || categoryPlaces.length === 0 || framedCategory.current === category) return;
+    framedCategory.current = category;
+    const nearby = categoryPlaces.slice(0, 8).map((p) => p.location);
+    setCameraMode("free");
+    map.current?.fitPoints(fix ? [{ lat: fix.lat, lon: fix.lon }, ...nearby] : nearby, halfSheetHeight);
+  }, [category, categoryPlaces]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!category) framedCategory.current = null; }, [category]);
 
   function startRoute(place: PlaceRef, mode: RouteMode) {
     setDemoMode(false);
@@ -206,7 +214,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
             <PlaceBody place={selected} t={t} mode={routeMode} onMode={setRouteMode} onRoute={() => startRoute(selected, routeMode)}
               saved={[home, work, ...custom].some((p) => p?.id === selected.id)} onSave={() => saveCustom({ id: selected.id || placeId(selected.lat, selected.lon), label: selected.label, subtitle: selected.subtitle, lat: selected.lat, lon: selected.lon })} />
           ) : category ? (
-            <CategoryList places={categoryPlaces} state={live.placesState} t={t} lang={lang} onPick={openPlace} onRetry={() => void live.refresh()} />
+            <CategoryList places={categoryPlaces} state={categoryEntry?.state ?? "loading"} t={t} lang={lang} onPick={openPlace} onRetry={() => category && void live.loadCategory(category, true)} />
           ) : (
             <>
               <GpsCard gpsStatus={live.gpsStatus} health={live.health} accuracyM={fix?.accuracyM ?? null} fixAt={fix?.timestamp ?? null} t={t} lang={lang}

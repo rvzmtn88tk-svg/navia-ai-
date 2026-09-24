@@ -38,6 +38,24 @@ const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 // an empty layer, which made the official shelter and resilience points vanish.
 const KYIV_GIS_BASE = "https://gisserver.kyivcity.gov.ua/mayno/rest/services/KYIV_API/Public_protection/MapServer";
 const SEARCH_RADIUS_M = 2600;
+
+export type FetchCategory = "shelter" | "resilience" | "fuel" | "charger" | "pharmacy" | "hospital" | "atm" | "water" | "food" | "shop";
+
+// Overpass selectors per category (kept in sync with classify()).
+const CATEGORY_QUERY: Record<FetchCategory, string[]> = {
+  shelter: ['["amenity"="shelter"]["shelter_type"~"bomb|air_raid|air-raid|civil|bunker|protective|underground",i]', '["building"="bunker"]', '["military"="bunker"]'],
+  resilience: ['["amenity"="social_facility"]["social_facility"~"shelter|warming_centre"]', '["power_supply"="point"]'],
+  fuel: ['["amenity"="fuel"]'],
+  charger: ['["amenity"="charging_station"]'],
+  pharmacy: ['["amenity"="pharmacy"]', '["shop"="chemist"]'],
+  hospital: ['["amenity"~"^(hospital|clinic|doctors)$"]'],
+  atm: ['["amenity"~"^(atm|bank)$"]'],
+  water: ['["amenity"="drinking_water"]'],
+  food: ['["amenity"~"^(restaurant|cafe|fast_food|food_court)$"]'],
+  shop: ['["shop"~"^(supermarket|convenience|mall|department_store|marketplace)$"]'],
+};
+
+const categoryCache = new Map<string, { location: LatLon; at: number; places: NearbyPlace[] }>();
 const MAX_RESULTS = 120;
 const KYIV_GIS_TIMEOUT_MS = 12_000;
 let cache: { location: LatLon; at: number; optionsKey: string; places: NearbyPlace[] } | null = null;
@@ -50,7 +68,9 @@ function distanceM(a: LatLon, b: LatLon): number {
 }
 
 function classify(tags: Record<string, string>): NearbyPlaceCategory | null {
-  if (tags.amenity === "shelter" || tags.emergency === "assembly_point" || tags.shelter_type) return "shelter";
+  // Only protective shelters count: OSM "amenity=shelter" is mostly bus stops,
+  // picnic roofs and huts, which must never be offered as a shelter.
+  if (isProtectiveShelter(tags)) return "shelter";
   if (tags.amenity === "social_facility" && /warming|shelter/i.test(tags.social_facility ?? "")) return "resilience";
   if (tags.power_supply === "point" || tags.amenity === "community_centre") return "resilience";
   if (tags.amenity === "fuel") return "fuel";
@@ -67,6 +87,13 @@ function classify(tags: Record<string, string>): NearbyPlaceCategory | null {
   if (["restaurant", "cafe", "fast_food", "food_court"].includes(tags.amenity ?? "")) return "food";
   if (["supermarket", "convenience", "mall", "department_store", "marketplace"].includes(tags.shop ?? "")) return "shop";
   return null;
+}
+
+const PROTECTIVE_SHELTER = /bomb|air_raid|air-raid|civil|bunker|protective|underground/i;
+
+export function isProtectiveShelter(tags: Record<string, string>): boolean {
+  if (tags.building === "bunker" || tags.military === "bunker" || tags.bunker_type) return true;
+  return tags.amenity === "shelter" && PROTECTIVE_SHELTER.test(tags.shelter_type ?? "");
 }
 
 function placeName(tags: Record<string, string>, category: NearbyPlaceCategory): string {
@@ -185,6 +212,47 @@ export class NearbyPlacesProvider {
     const result = [...byId.values()].sort((a, b) => a.distanceM - b.distanceM).slice(0, MAX_RESULTS);
     cache = { location, at: Date.now(), optionsKey, places: result };
     return result;
+  }
+
+  /** Places of one category, nearest first. Queried on demand so a busy city
+   * centre full of cafés cannot crowd out pharmacies or fuel. */
+  async fetchCategory(location: LatLon, category: FetchCategory, options: { includeKyivOfficialData?: boolean; force?: boolean } = {}): Promise<NearbyPlace[]> {
+    const key = `${category}:${options.includeKyivOfficialData ? "kyiv" : "osm"}`;
+    const cached = categoryCache.get(key);
+    if (!options.force && cached && Date.now() - cached.at < 90_000 && distanceM(location, cached.location) < 500) return cached.places;
+    const radius = category === "fuel" || category === "charger" || category === "hospital" ? 6000 : 3000;
+    const around = `(around:${radius},${location.lat},${location.lon})`;
+    const selectors = CATEGORY_QUERY[category].map((q) => `nwr${around}${q};`).join("");
+    const query = `[out:json][timeout:15];(${selectors});out center tags 400;`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 18_000);
+    let osm: NearbyPlace[] = [];
+    let osmError: unknown = null;
+    try {
+      const response = await fetch(OVERPASS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", Accept: "application/json", "User-Agent": "NAVIA/0.1 (navigation app)" },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`OpenStreetMap returned HTTP ${response.status}.`);
+      const data = await response.json() as OverpassResponse;
+      osm = parseOverpass(data.elements ?? [], location).filter((p) => p.category === category);
+    } catch (error) {
+      osmError = error;
+    } finally {
+      clearTimeout(timeout);
+    }
+    let official: NearbyPlace[] = [];
+    if (options.includeKyivOfficialData && (category === "shelter" || category === "resilience")) {
+      official = await this.queryKyivLayer(location, category === "shelter" ? 0 : 1, category);
+    }
+    if (osmError && osm.length === 0 && official.length === 0) throw osmError;
+    const byId = new Map<string, NearbyPlace>();
+    for (const place of [...official, ...osm]) byId.set(place.id, place);
+    const places = [...byId.values()].sort((a, b) => a.distanceM - b.distanceM).slice(0, 40);
+    categoryCache.set(key, { location, at: Date.now(), places });
+    return places;
   }
 
   private async queryKyivLayer(location: LatLon, layer: number, type: "shelter" | "resilience"): Promise<NearbyPlace[]> {

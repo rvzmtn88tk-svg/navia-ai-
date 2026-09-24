@@ -3,9 +3,9 @@ import type { StringKey } from "../i18n";
 import type { NearbyPlace, NearbyPlaceCategory } from "../providers/NearbyPlacesProvider";
 
 /** Home-screen category chips, in display order. */
-export type ChipCategory = "shelter" | "resilience" | "fuel" | "charger" | "pharmacy" | "hospital" | "atm" | "water" | "food";
+export type ChipCategory = "shelter" | "resilience" | "fuel" | "charger" | "pharmacy" | "shop" | "hospital" | "atm" | "water" | "food";
 
-export const CHIP_CATEGORIES: ChipCategory[] = ["shelter", "resilience", "fuel", "charger", "pharmacy", "hospital", "atm", "water", "food"];
+export const CHIP_CATEGORIES: ChipCategory[] = ["shelter", "resilience", "fuel", "pharmacy", "shop", "hospital", "charger", "atm", "water", "food"];
 
 type Meta = { icon: IconName; label: StringKey; color: string };
 
