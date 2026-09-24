@@ -150,8 +150,10 @@ export function HomeScreen({ navigation }: Props): JSX.Element {
       const first = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       onLocation(first);
       if (!locationSub.current) {
+        // No distance filter: with one, iOS sends nothing while the phone stands
+        // still, the engine sees the fix go stale and reports GNSS lost.
         locationSub.current = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 20 },
+          { accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 0 },
           onLocation,
         );
       }
