@@ -28,6 +28,8 @@ export type StateMachineInput = {
   /** RoutingProvider resolved a route; fires ROUTING -> ACTIVE and (after a
    * confirmed off-route reroute) OFF_ROUTE -> ROUTING -> ACTIVE. */
   routeReady: boolean;
+  /** Identity of the sensor observation; repeated UI ticks do not count as new fixes. */
+  sampleId?: string | number;
 };
 
 export type StateMachineConfig = {
@@ -50,6 +52,7 @@ export class NavigationStateMachine {
   private degradedStreak = 0;
   private lostStreak = 0;
   private recoveryEngine: RecoveryEngine;
+  private lastSampleId: string | number | null = null;
 
   constructor(config: Partial<StateMachineConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config, recovery: { ...DEFAULT_CONFIG.recovery, ...config.recovery } };
@@ -60,8 +63,16 @@ export class NavigationStateMachine {
     return this.mode;
   }
 
+  reset(): void {
+    this.mode = "IDLE";
+    this.lastSampleId = null;
+    this.resetStreaks();
+  }
+
   tick(input: StateMachineInput): NavigationMode {
     const isGoodSample = input.gnssIntegrity === "NORMAL" && input.confidenceBand !== "UNKNOWN";
+    const newSample = input.sampleId === undefined || input.sampleId !== this.lastSampleId;
+    if (input.sampleId !== undefined && newSample) this.lastSampleId = input.sampleId;
 
     switch (this.mode) {
       case "IDLE":
@@ -75,7 +86,7 @@ export class NavigationStateMachine {
       case "ACTIVE": {
         if (input.hasArrived) { this.mode = "ARRIVED"; break; }
         if (input.offRouteConfirmed) { this.mode = "OFF_ROUTE"; break; }
-        this.trackDegradation(input);
+        if (newSample) this.trackDegradation(input);
         break;
       }
 
@@ -90,8 +101,8 @@ export class NavigationStateMachine {
       case "GNSS_LOST":
       case "POSITION_UNCERTAIN": {
         // Escalate further if it's getting worse; otherwise look for recovery.
-        this.trackDegradation(input);
-        if (GNSS_DEGRADING_MODES.includes(this.mode) && isGoodSample) {
+        if (newSample) this.trackDegradation(input);
+        if (newSample && GNSS_DEGRADING_MODES.includes(this.mode) && isGoodSample) {
           this.mode = "RECOVERING";
           this.recoveryEngine.reset();
           this.recoveryEngine.update(true);
@@ -100,6 +111,7 @@ export class NavigationStateMachine {
       }
 
       case "RECOVERING": {
+        if (!newSample) break;
         if (!isGoodSample) {
           // Recovery attempt failed — drop back to the state that matches
           // current conditions rather than pretending we're still healing.

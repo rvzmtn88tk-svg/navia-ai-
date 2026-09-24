@@ -15,14 +15,14 @@
 // not a property of the last fix itself, so tick(nowMs) (called on a
 // regular clock by the caller, independent of when fixes arrive) is what
 // actually declares GNSS_LOST once `staleAfterMs` has passed since the last
-// sample, and keeps advancing a dead-reckoned position in the meantime.
+// sample. The current mobile path does not integrate IMU into displacement,
+// so the engine retains the last trusted point briefly and never invents travel.
 
 import type {
   LatLon, NavigationState, GNSSIntegrityState, ConfidenceBand, TimestampMs, IMUSample,
 } from "./types";
 import type { GNSSRawSample, GNSSConfig } from "./gnss-monitor";
 import { GNSSMonitor } from "./gnss-monitor";
-import { deadReckon } from "./dead-reckoning";
 import { calculateConfidence } from "./confidence";
 import { SensorFusionEngine } from "./sensor-fusion";
 import type { Route, RoutingProvider } from "./route-engine";
@@ -34,6 +34,7 @@ import { TelemetryLogger } from "./telemetry-logger";
 const DEFAULT_GNSS_CONFIG: GNSSConfig = {
   maxPlausibleSpeedMps: 45, maxJumpM: 150, maxFreshAgeMs: 6000, accuracyGoodM: 10, accuracyBadM: 80,
 };
+const GNSS_LOST_CONFIRM_MS = 3_000;
 
 export type NavigationEngineOptions = {
   routingProvider: RoutingProvider;
@@ -46,7 +47,7 @@ function idleState(): NavigationState {
   return {
     mode: "IDLE", position: null, trustedPosition: null, gnss: "NORMAL",
     confidence: 0, confidenceBand: "UNKNOWN", speedMps: null, headingDeg: null,
-    routeProgressM: 0, routeRemainingM: 0, nextStep: null, nearbyLandmarks: [],
+    routeProgressM: 0, routeRemainingM: 0, nextStep: null, nextStepDistanceM: null, etaSeconds: null, nearbyLandmarks: [],
     offRoute: false, networkAvailable: true, offlineMapAvailable: false,
     lastTrustedFixAt: null, updatedAt: 0,
   };
@@ -66,6 +67,7 @@ function baseSmInput(overrides: Partial<{
 export class NavigationEngine {
   private routingProvider: RoutingProvider;
   private gnssMonitor: GNSSMonitor;
+  private gnssMaxFreshAgeMs: number;
   private staleAfterMs: number;
   private fusion = new SensorFusionEngine();
   private progressEngine = new RouteProgressEngine();
@@ -74,16 +76,27 @@ export class NavigationEngine {
   private telemetry = new TelemetryLogger(20_000);
 
   private route: Route | null = null;
+  /** Latest received sample (used only to determine whether the stream has stopped). */
   private lastGnssRaw: GNSSRawSample | null = null;
+  /** Last sample that passed the integrity checks; rejected fixes never replace it. */
+  private lastTrustedGnssRaw: GNSSRawSample | null = null;
   private lastGnssIntegrity: { trusted: boolean; anomalyScore: number; freshnessScore: number } | null = null;
+  private displayedGnss: GNSSIntegrityState = "LOST";
+  private lastDisplayedFixTimestamp: string | number | null = null;
+  private degradedFixStreak = 0;
+  private recoveryFixStreak = 0;
+  private lostSinceMs: number | null = null;
   private lastTrustedPosition: NavigationState["trustedPosition"] = null;
   private lastImuSample: IMUSample | null = null;
   private networkAvailable = true;
   private currentState: NavigationState = idleState();
+  private routeRevision = 0;
 
   constructor(options: NavigationEngineOptions) {
     this.routingProvider = options.routingProvider;
-    this.gnssMonitor = new GNSSMonitor({ ...DEFAULT_GNSS_CONFIG, ...options.gnssConfig });
+    const gnssConfig = { ...DEFAULT_GNSS_CONFIG, ...options.gnssConfig };
+    this.gnssMonitor = new GNSSMonitor(gnssConfig);
+    this.gnssMaxFreshAgeMs = gnssConfig.maxFreshAgeMs;
     this.staleAfterMs = options.staleAfterMs ?? 6000;
   }
 
@@ -97,9 +110,21 @@ export class NavigationEngine {
    * "don't switch to DemoRoutingProvider and call it real") if the
    * provider fails (e.g. Valhalla endpoint unreachable). */
   async requestRoute(origin: LatLon, destination: LatLon): Promise<Route> {
+    const revision = ++this.routeRevision;
     const route = await this.routingProvider.route({ origin, destination });
+    if (revision !== this.routeRevision) throw new Error("NavigationEngine: route request was cancelled or superseded.");
     this.route = route;
     this.offRouteDetector.reset();
+    this.currentState = {
+      ...this.currentState,
+      mode: "ACTIVE",
+      routeProgressM: 0,
+      routeRemainingM: route.distanceM,
+      nextStep: route.steps[0] ?? null,
+      nextStepDistanceM: null,
+      etaSeconds: route.durationS,
+      offRoute: false,
+    };
     this.telemetry.log("ROUTE_UPDATE", { distanceM: route.distanceM, source: route.source }, Date.now());
     this.stateMachine.tick(baseSmInput({ routeRequested: true }));
     this.stateMachine.tick(baseSmInput({ routeReady: true }));
@@ -107,7 +132,22 @@ export class NavigationEngine {
   }
 
   clearRoute(): void {
+    this.routeRevision++;
     this.route = null;
+    this.lastGnssRaw = null;
+    this.lastTrustedGnssRaw = null;
+    this.lastGnssIntegrity = null;
+    this.displayedGnss = "LOST";
+    this.lastDisplayedFixTimestamp = null;
+    this.degradedFixStreak = 0;
+    this.recoveryFixStreak = 0;
+    this.lostSinceMs = null;
+    this.lastTrustedPosition = null;
+    this.lastImuSample = null;
+    this.progressEngine = new RouteProgressEngine();
+    this.offRouteDetector.reset();
+    this.stateMachine.reset();
+    this.currentState = idleState();
   }
 
   pushImuSample(sample: IMUSample): void {
@@ -120,20 +160,24 @@ export class NavigationEngine {
   /** Feed one real GNSS fix (from ExpoLocationPositionProvider). Runs
    * GNSSMonitor immediately; the resulting NavigationState comes from the
    * next tick() call, same clock-driven design as staleness detection. */
-  pushGnssSample(sample: GNSSRawSample): void {
-    const integrity = this.gnssMonitor.evaluate(this.lastGnssRaw, sample, sample.timestamp);
+  pushGnssSample(sample: GNSSRawSample, nowMs = sample.timestamp): boolean {
+    const previousFix = this.lastTrustedGnssRaw;
+    const isPreviousFixRecent = previousFix != null && nowMs - previousFix.timestamp <= this.gnssMaxFreshAgeMs;
+    const baseline = previousFix && (sample.timestamp <= previousFix.timestamp || isPreviousFixRecent) ? previousFix : null;
+    const integrity = this.gnssMonitor.evaluate(baseline, sample, nowMs);
     this.lastGnssRaw = sample;
     this.lastGnssIntegrity = integrity;
     this.telemetry.log("GNSS_FIX", { accuracyM: sample.accuracyM, trusted: integrity.trusted }, sample.timestamp);
+    if (integrity.trusted) this.lastTrustedGnssRaw = sample;
+    return integrity.trusted;
   }
 
   /** Advance the engine's state to `nowMs`. Call this on a regular clock
    * (e.g. every ~1s) independent of when GNSS fixes arrive — this is what
-   * actually detects GNSS_LOST via staleness and keeps a dead-reckoned
-   * position moving between fixes. */
+   * detects GNSS_LOST via staleness and updates the route/status state. */
   tick(nowMs: TimestampMs = Date.now()): NavigationState {
     const ageMs = this.lastGnssRaw ? nowMs - this.lastGnssRaw.timestamp : Infinity;
-    const isStale = ageMs > this.staleAfterMs;
+    const isStale = ageMs < -1_500 || ageMs > this.staleAfterMs;
 
     const gnssIntegrityState: GNSSIntegrityState = !this.lastGnssRaw
       ? "LOST"
@@ -143,81 +187,96 @@ export class NavigationEngine {
           ? "NORMAL"
           : "DEGRADED";
 
+    const freshTrustedFix = gnssIntegrityState === "NORMAL";
+    const displaySampleId = gnssIntegrityState === "LOST"
+      ? `lost:${Math.floor(nowMs / 1000)}`
+      : this.lastGnssRaw?.timestamp ?? null;
+    if (gnssIntegrityState === "LOST") {
+      this.recoveryFixStreak = 0;
+      this.degradedFixStreak = 0;
+      if (this.displayedGnss === "NORMAL") this.displayedGnss = "DEGRADED";
+      if (this.lostSinceMs == null) this.lostSinceMs = nowMs - Math.max(0, ageMs - this.staleAfterMs);
+      if (nowMs - this.lostSinceMs >= GNSS_LOST_CONFIRM_MS) this.displayedGnss = "LOST";
+    } else if (gnssIntegrityState === "DEGRADED") {
+      this.lostSinceMs = null;
+      this.recoveryFixStreak = 0;
+      if (displaySampleId !== this.lastDisplayedFixTimestamp) {
+        this.lastDisplayedFixTimestamp = displaySampleId;
+        this.degradedFixStreak++;
+      }
+      if (this.displayedGnss === "LOST" && this.lastTrustedPosition) this.displayedGnss = "DEGRADED";
+      if (this.displayedGnss === "NORMAL" && this.degradedFixStreak >= 2) this.displayedGnss = "DEGRADED";
+    } else {
+      this.lostSinceMs = null;
+      this.degradedFixStreak = 0;
+      if (displaySampleId !== this.lastDisplayedFixTimestamp) {
+        this.lastDisplayedFixTimestamp = displaySampleId;
+        if (this.displayedGnss !== "NORMAL") this.recoveryFixStreak++;
+      }
+      if (!this.lastTrustedPosition) this.displayedGnss = "NORMAL";
+      else if (this.recoveryFixStreak >= 3) {
+        this.displayedGnss = "NORMAL";
+        this.recoveryFixStreak = 0;
+      }
+    }
+
     if (gnssIntegrityState === "LOST" && this.currentState.gnss !== "LOST") {
       this.telemetry.log("GNSS_LOST", { ageMs }, nowMs);
     }
 
-    // Position: fresh trusted GNSS -> fuse with DR; stale/no GNSS -> pure DR
-    // from the last trusted fix; nothing yet -> no position at all (honest,
-    // not a fabricated 0,0).
+    // Rejected fixes never move the map. This app path does not yet integrate
+    // IMU data into a motion estimate, so GNSS loss keeps a short-lived last
+    // known fix and never invents a dead-reckoned position.
     let fusedPosition: LatLon | null = null;
     let fusedSpeedMps: number | null = null;
     let fusedHeadingDeg: number | null = null;
     let positionSource: "GNSS" | "DEAD_RECKONING" | "FUSED" | null = null;
 
-    if (this.lastGnssRaw && !isStale && this.lastGnssIntegrity) {
+    if (this.lastGnssRaw && !isStale && this.lastGnssIntegrity?.trusted) {
       const gnssQuality = 1 - this.lastGnssIntegrity.anomalyScore;
-      const dr = this.lastTrustedPosition
-        ? deadReckon({
-            position: this.lastTrustedPosition.position,
-            speedMps: this.lastGnssRaw.speedMps ?? 0,
-            headingDeg: this.lastGnssRaw.headingDeg ?? 0,
-            dtSeconds: Math.max(0, (this.lastGnssRaw.timestamp - this.lastTrustedPosition.position.timestamp) / 1000),
-          })
-        : { lat: this.lastGnssRaw.lat, lon: this.lastGnssRaw.lon };
       const fused = this.fusion.fuse({
         gnss: {
           position: { lat: this.lastGnssRaw.lat, lon: this.lastGnssRaw.lon },
           speedMps: this.lastGnssRaw.speedMps, headingDeg: this.lastGnssRaw.headingDeg,
           timestamp: this.lastGnssRaw.timestamp, quality: gnssQuality,
         },
-        deadReckoned: { position: dr, speedMps: this.lastGnssRaw.speedMps, headingDeg: this.lastGnssRaw.headingDeg },
+        deadReckoned: null,
       });
       fusedPosition = fused.position;
       fusedSpeedMps = fused.speedMps;
       fusedHeadingDeg = fused.headingDeg;
       positionSource = fused.source;
-      if (this.lastGnssIntegrity.trusted) {
+      if (this.lastTrustedGnssRaw?.timestamp === this.lastGnssRaw.timestamp && this.lastTrustedPosition?.position.timestamp !== this.lastGnssRaw.timestamp) {
         this.lastTrustedPosition = {
-          position: { ...fused.position, timestamp: nowMs, accuracyM: this.lastGnssRaw.accuracyM, source: "GNSS" },
-          confidence: 0, band: "UNKNOWN", source: "GNSS", // confidence filled in below once computed
+          position: { ...fused.position, timestamp: this.lastGnssRaw.timestamp, accuracyM: this.lastGnssRaw.accuracyM, source: "GNSS" },
+          confidence: 0, band: "UNKNOWN", source: "GNSS",
         };
       }
-    } else if (this.lastTrustedPosition) {
-      // Stale or lost — pure dead reckoning forward from the last trusted fix.
-      const dtSeconds = Math.max(0, (nowMs - this.lastTrustedPosition.position.timestamp) / 1000);
-      fusedPosition = deadReckon({
-        position: this.lastTrustedPosition.position,
-        speedMps: this.lastGnssRaw?.speedMps ?? 0,
-        headingDeg: this.lastGnssRaw?.headingDeg ?? this.currentState.headingDeg ?? 0,
-        dtSeconds,
-      });
-      fusedSpeedMps = this.lastGnssRaw?.speedMps ?? null;
-      fusedHeadingDeg = this.lastGnssRaw?.headingDeg ?? this.currentState.headingDeg;
-      positionSource = "DEAD_RECKONING";
     }
 
-    const gnssQuality = this.lastGnssIntegrity ? 1 - this.lastGnssIntegrity.anomalyScore : 0;
+    const gnssQuality = gnssIntegrityState === "NORMAL" && this.lastGnssIntegrity ? 1 - this.lastGnssIntegrity.anomalyScore : 0;
     const freshness = gnssIntegrityState === "LOST" ? 0 : (this.lastGnssIntegrity?.freshnessScore ?? 0);
     const route = this.route;
     let distanceOffRouteM = 0;
-    if (route && fusedPosition) distanceOffRouteM = distanceFromRouteCorridorM(route, fusedPosition);
+    const hasFreshTrustedPosition = freshTrustedFix && fusedPosition != null;
+    if (route && fusedPosition && hasFreshTrustedPosition) distanceOffRouteM = distanceFromRouteCorridorM(route, fusedPosition);
 
     const confidence = calculateConfidence({
       gnssQuality, freshness,
-      sensorAgreement: this.lastImuSample ? 0.85 : 0.5, // no live sensor data yet -> honestly lower, not faked high
-      mapMatchQuality: gnssIntegrityState === "LOST" ? 0.3 : route ? 0.85 : 0.5,
-      routeConsistency: route ? Math.max(0, 1 - distanceOffRouteM / 200) : 0.5,
+      sensorAgreement: 0.5, // IMU is subscribed but is not yet integrated into motion estimates.
+      mapMatchQuality: 0.5, // This engine does not perform road map matching yet.
+      routeConsistency: route && hasFreshTrustedPosition ? Math.max(0, 1 - distanceOffRouteM / 200) : 0.5,
     });
 
-    if (this.lastTrustedPosition && this.lastTrustedPosition.confidence === 0) {
-      this.lastTrustedPosition = { ...this.lastTrustedPosition, confidence: confidence.value, band: confidence.band };
+    const pendingTrustedEstimate = this.lastTrustedPosition;
+    if (pendingTrustedEstimate && pendingTrustedEstimate.position.timestamp === this.lastGnssRaw?.timestamp && pendingTrustedEstimate.confidence === 0) {
+      this.lastTrustedPosition = { ...pendingTrustedEstimate, confidence: confidence.value, band: confidence.band };
     }
 
-    const progress = route && fusedPosition ? this.progressEngine.computeProgress(route, fusedPosition, fusedSpeedMps) : null;
-    const offRouteConfirmed = route && fusedPosition
+    const progress = route && fusedPosition && hasFreshTrustedPosition ? this.progressEngine.computeProgress(route, fusedPosition, fusedSpeedMps) : null;
+    const offRouteConfirmed = route && fusedPosition && hasFreshTrustedPosition
       ? this.offRouteDetector.update({ distanceFromRouteM: distanceOffRouteM, roadMismatch: false, headingMismatchDeg: null, timestamp: nowMs })
-      : false;
+      : this.currentState.offRoute;
     if (offRouteConfirmed && !this.currentState.offRoute) this.telemetry.log("OFF_ROUTE", { distanceOffRouteM }, nowMs);
 
     const hasArrived = progress != null && progress.distanceRemainingM < 10;
@@ -229,23 +288,28 @@ export class NavigationEngine {
       hasArrived,
       routeRequested: false,
       routeReady: false,
+      sampleId: displaySampleId ?? `none:${Math.floor(nowMs / 1000)}`,
     });
     if (mode === "RECOVERING" && this.currentState.mode !== "RECOVERING") this.telemetry.log("RECOVERY", {}, nowMs);
 
     this.currentState = {
       mode,
-      position: fusedPosition && positionSource
-        ? { position: { ...fusedPosition, timestamp: nowMs, accuracyM: this.lastGnssRaw?.accuracyM ?? null, source: positionSource }, confidence: confidence.value, band: confidence.band, source: positionSource }
-        : null,
+      position: hasFreshTrustedPosition && fusedPosition && positionSource
+        ? { position: { ...fusedPosition, timestamp: this.lastGnssRaw!.timestamp, accuracyM: this.lastGnssRaw!.accuracyM, source: positionSource }, confidence: confidence.value, band: confidence.band, source: positionSource }
+        : this.lastTrustedPosition && nowMs - this.lastTrustedPosition.position.timestamp <= 20_000
+          ? { ...this.lastTrustedPosition, confidence: confidence.value, band: confidence.band }
+          : null,
       trustedPosition: this.lastTrustedPosition,
-      gnss: gnssIntegrityState,
+      gnss: this.displayedGnss,
       confidence: confidence.value,
       confidenceBand: confidence.band,
       speedMps: fusedSpeedMps,
       headingDeg: fusedHeadingDeg,
-      routeProgressM: progress?.distanceCompletedM ?? 0,
-      routeRemainingM: progress?.distanceRemainingM ?? (route?.distanceM ?? 0),
-      nextStep: progress?.nextStep ?? route?.steps[0] ?? null,
+      routeProgressM: progress?.distanceCompletedM ?? this.currentState.routeProgressM,
+      routeRemainingM: progress?.distanceRemainingM ?? this.currentState.routeRemainingM,
+      nextStep: progress?.nextStep ?? this.currentState.nextStep ?? route?.steps[0] ?? null,
+      nextStepDistanceM: progress?.nextStepDistanceM ?? this.currentState.nextStepDistanceM ?? null,
+      etaSeconds: progress?.etaSeconds ?? this.currentState.etaSeconds ?? (route?.durationS ?? null),
       nearbyLandmarks: [],
       offRoute: offRouteConfirmed,
       networkAvailable: this.networkAvailable,

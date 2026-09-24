@@ -124,6 +124,10 @@ export type NavigationState = {
   routeProgressM: number;
   routeRemainingM: number;
   nextStep: RouteStep | null;
+  /** Computed live distance to the next maneuver, not the original leg length. */
+  nextStepDistanceM?: number | null;
+  /** Computed ETA from route duration and current progress/speed. */
+  etaSeconds?: number | null;
   nearbyLandmarks: Landmark[];
   offRoute: boolean;
   networkAvailable: boolean;

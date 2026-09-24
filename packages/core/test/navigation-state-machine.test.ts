@@ -83,6 +83,20 @@ test("state machine: a relapse during RECOVERING drops back to a degraded state,
   assert.equal(mode, "GNSS_LOST");
 });
 
+test("state machine: repeating one sensor sample does not advance degradation or recovery hysteresis", () => {
+  const sm = new NavigationStateMachine({ degradedConfirmSamples: 2, lostConfirmSamples: 1, recovery: { confirmSamples: 3 } });
+  sm.tick(baseInput({ routeRequested: true }));
+  sm.tick(baseInput({ routeReady: true }));
+  assert.equal(sm.tick(baseInput({ gnssIntegrity: "DEGRADED", sampleId: "bad-1" })), "ACTIVE");
+  assert.equal(sm.tick(baseInput({ gnssIntegrity: "DEGRADED", sampleId: "bad-1" })), "ACTIVE");
+  assert.equal(sm.tick(baseInput({ gnssIntegrity: "DEGRADED", sampleId: "bad-2" })), "GNSS_DEGRADED");
+
+  assert.equal(sm.tick(baseInput({ gnssIntegrity: "NORMAL", sampleId: "good-1" })), "RECOVERING");
+  assert.equal(sm.tick(baseInput({ gnssIntegrity: "NORMAL", sampleId: "good-1" })), "RECOVERING");
+  assert.equal(sm.tick(baseInput({ gnssIntegrity: "NORMAL", sampleId: "good-2" })), "RECOVERING");
+  assert.equal(sm.tick(baseInput({ gnssIntegrity: "NORMAL", sampleId: "good-3" })), "ACTIVE");
+});
+
 test("state machine: ACTIVE -> OFF_ROUTE -> ROUTING -> ACTIVE on confirmed off-route + reroute", () => {
   const sm = new NavigationStateMachine();
   sm.tick(baseInput({routeRequested: true}));
