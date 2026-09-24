@@ -27,3 +27,4 @@ export * from "./e2e-simulation";
 export * from "./navigation-engine";
 export * from "./demo-data";
 export * from "./map-matcher";
+export * from "./route-dead-reckoning";

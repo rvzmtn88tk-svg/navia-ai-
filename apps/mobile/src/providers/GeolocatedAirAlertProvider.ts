@@ -13,6 +13,14 @@ export type GeolocatedAirAlert = {
   source: string;
   sourceUrl: string;
   detail?: string;
+  /** Where the alert applies: your district (raion/city) or the whole oblast. */
+  scope?: "district" | "city" | "region";
+  /** Threat level reported by the source (e.g. "yellow", "red"). */
+  level?: string;
+  /** Source-provided reasons, e.g. "Дронова загроза (жовтий рівень)". */
+  reasons?: string[];
+  /** Other districts of your oblast under alert (when yours is not). */
+  otherDistrictsActive?: number;
 };
 
 type GeoPosition = [number, number];
@@ -184,6 +192,7 @@ async function fetchKyivCityAlert(): Promise<GeolocatedAirAlert> {
       updatedAt: Date.now(),
       source: "Kyiv Digital",
       sourceUrl: KYIV_ALERT_SOURCE,
+      ...(state === 1 ? { scope: "city" as const } : {}),
     };
   } finally {
     clearTimeout(timeout);
@@ -262,6 +271,8 @@ export class GeolocatedAirAlertProvider {
       : data.oblasts?.find((entry) => sameAdministrativeUnit(entry.name, region) || sameAdministrativeUnit(entry.oblast, region));
     const canConfirmAbsence = boundariesAvailable ? Boolean(districtKey) : Boolean(district);
     const active = matchingRaion || matchingOblast ? true : canConfirmAbsence ? false : null;
+    const match = matchingRaion ?? matchingOblast;
+    const otherDistrictsActive = !match ? (data.raions ?? []).filter((entry) => sameAdministrativeUnit(entry.oblast, region)).length : 0;
 
     return {
       active,
@@ -274,6 +285,10 @@ export class GeolocatedAirAlertProvider {
       source: "NEPTUN",
       sourceUrl: NEPTUN_SOURCE,
       ...(!canConfirmAbsence && !matchingRaion && !matchingOblast ? { detail: "Район за GPS не визначився — відсутність тривоги тут підтвердити не можна." } : {}),
+      ...(matchingRaion ? { scope: "district" as const } : matchingOblast ? { scope: "region" as const } : {}),
+      ...(match?.level ? { level: match.level } : {}),
+      ...(match?.reasons?.length ? { reasons: match.reasons.slice(0, 4) } : {}),
+      ...(otherDistrictsActive > 0 ? { otherDistrictsActive } : {}),
     };
   }
 

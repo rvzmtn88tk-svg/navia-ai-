@@ -142,6 +142,11 @@ export type NavigationState = {
   networkAvailable: boolean;
   offlineMapAvailable: boolean;
   lastTrustedFixAt: TimestampMs | null;
+  /** How the shown position is produced while a route is active: GNSS, dead
+   * reckoning along the route, or a user-placed start. */
+  positionMode?: "GNSS" | "DEAD_RECKONING" | "MANUAL" | null;
+  /** Along-route uncertainty in metres while not on GNSS (grows over time). */
+  positionUncertaintyM?: number | null;
   updatedAt: TimestampMs;
 };
 
@@ -158,6 +163,9 @@ export type NavigationEvent = {
     | "RECOVERY"
     | "LANDMARK"
     | "VOICE"
-    | "ALERT";
+    | "ALERT"
+    | "DEAD_RECKONING"
+    | "SPOOF_SUSPECT"
+    | "MANUAL_POSITION";
   payload: Record<string, unknown>;
 };

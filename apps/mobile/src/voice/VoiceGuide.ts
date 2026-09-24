@@ -60,12 +60,16 @@ export type SpeakOptions = { lang: Lang; gender: VoiceGender; interrupt?: boolea
 export async function speak(text: string, { lang, gender, interrupt = true }: SpeakOptions): Promise<void> {
   await ensureAudioMode();
   const voice = await pickVoice(lang, gender);
+  // iOS ships no male Ukrainian voice. Until the neural server voice is
+  // connected, "male" lowers the pitch of the available voice.
+  const lowered = gender === "male" && !(await hasGenderVoice(lang, "male"));
   if (interrupt) Speech.stop();
   await new Promise<void>((resolve) => {
     Speech.speak(text, {
       language: lang === "uk" ? "uk-UA" : "en-US",
       voice: voice?.identifier,
       rate: lang === "uk" ? 0.98 : 1,
+      pitch: lowered ? 0.72 : 1,
       onDone: () => resolve(),
       onStopped: () => resolve(),
       onError: () => resolve(),

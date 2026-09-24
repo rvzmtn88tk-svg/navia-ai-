@@ -33,7 +33,6 @@ function legacyPalette(c: ThemeColors): AppPalette {
   };
 }
 const darkPalette = legacyPalette(palettes.dark);
-const lightPalette = legacyPalette(palettes.light);
 
 type SettingsContextValue = {
   themePreference: ThemePreference;
@@ -45,6 +44,7 @@ type SettingsContextValue = {
   language: AppLanguage;
   displayName: string;
   introSoundEnabled: boolean;
+  briefingEnabled: boolean;
   ready: boolean;
   onboardingComplete: boolean;
   mapLayer: MapLayer;
@@ -55,6 +55,7 @@ type SettingsContextValue = {
   setLanguage: (value: AppLanguage) => void;
   setDisplayName: (value: string) => void;
   setIntroSoundEnabled: (value: boolean) => void;
+  setBriefingEnabled: (value: boolean) => void;
   completeOnboarding: () => void;
   resetOnboarding: () => void;
 };
@@ -64,6 +65,7 @@ const THEME_KEY = "navia.preference.theme.v1";
 const LANGUAGE_KEY = "navia.preference.language.v1";
 const DISPLAY_NAME_KEY = "navia.profile.display-name.v1";
 const INTRO_SOUND_KEY = "navia.preference.intro-sound.v1";
+const BRIEFING_KEY = "navia.preference.briefing.v1";
 const ONBOARDING_KEY = "navia.onboarding.complete.v1";
 const MAP_LAYER_KEY = "navia.preference.map-layer.v1";
 const VOICE_GENDER_KEY = "navia.preference.voice-gender.v1";
@@ -74,6 +76,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [language, setAppLanguage] = useState<AppLanguage>("uk");
   const [displayName, setDisplayNameState] = useState("");
   const [introSoundEnabled, setIntroSoundState] = useState(true);
+  const [briefingEnabled, setBriefingState] = useState(true);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [ready, setReady] = useState(false);
   const [mapLayer, setMapLayerState] = useState<MapLayer>("standard");
@@ -89,7 +92,8 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       Storage.getItemAsync(ONBOARDING_KEY).catch(() => null),
       Storage.getItemAsync(MAP_LAYER_KEY).catch(() => null),
       Storage.getItemAsync(VOICE_GENDER_KEY).catch(() => null),
-    ]).then(([storedTheme, storedLanguage, storedName, storedSound, storedOnboarding, storedLayer, storedVoice]) => {
+      Storage.getItemAsync(BRIEFING_KEY).catch(() => null),
+    ]).then(([storedTheme, storedLanguage, storedName, storedSound, storedOnboarding, storedLayer, storedVoice, storedBriefing]) => {
       if (!active) return;
       if (storedTheme === "system" || storedTheme === "light" || storedTheme === "dark") setTheme(storedTheme);
       if (storedLanguage === "uk" || storedLanguage === "en") setAppLanguage(storedLanguage);
@@ -98,6 +102,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       setOnboardingComplete(storedOnboarding === "yes");
       if (storedLayer === "standard" || storedLayer === "satellite" || storedLayer === "terrain") setMapLayerState(storedLayer);
       if (storedVoice === "female" || storedVoice === "male") setVoiceGenderState(storedVoice);
+      if (storedBriefing === "no") setBriefingState(false);
       setReady(true);
     });
     return () => { active = false; };
@@ -107,12 +112,15 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const value = useMemo<SettingsContextValue>(() => ({
     themePreference,
     isDark,
-    scheme: isDark ? "dark" : "light",
-    colors: isDark ? palettes.dark : palettes.light,
-    palette: isDark ? darkPalette : lightPalette,
+    // NAVIA chrome is always the navy brand palette; the theme setting picks
+    // the day or night map underneath.
+    scheme: "dark",
+    colors: palettes.dark,
+    palette: darkPalette,
     language,
     displayName,
     introSoundEnabled,
+    briefingEnabled,
     ready,
     onboardingComplete,
     mapLayer,
@@ -138,6 +146,10 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       setDisplayNameState(normalized);
       void Storage.setItemAsync(DISPLAY_NAME_KEY, normalized).catch(() => {});
     },
+    setBriefingEnabled: (next) => {
+      setBriefingState(next);
+      void Storage.setItemAsync(BRIEFING_KEY, next ? "yes" : "no").catch(() => {});
+    },
     setIntroSoundEnabled: (next) => {
       setIntroSoundState(next);
       void Storage.setItemAsync(INTRO_SOUND_KEY, next ? "yes" : "no").catch(() => {});
@@ -150,7 +162,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       setOnboardingComplete(false);
       void Storage.setItemAsync(ONBOARDING_KEY, "no").catch(() => {});
     },
-  }), [displayName, introSoundEnabled, isDark, language, mapLayer, onboardingComplete, ready, themePreference, voiceGender]);
+  }), [briefingEnabled, displayName, introSoundEnabled, isDark, language, mapLayer, onboardingComplete, ready, themePreference, voiceGender]);
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }

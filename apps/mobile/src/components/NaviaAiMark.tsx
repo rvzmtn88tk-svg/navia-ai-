@@ -1,26 +1,62 @@
-import React from "react";
-import { StyleSheet, View } from "react-native";
+// NAVIA co-pilot symbol: the NAVIA logo at the centre with a satellite on a
+// tilted orbit. The satellite circles slowly at rest and speeds up while the
+// co-pilot is thinking or speaking.
+import React, { useEffect, useRef } from "react";
+import { Animated, Easing, StyleSheet, View } from "react-native";
+import Svg, { Ellipse, Path, Rect } from "react-native-svg";
 import { BrandMark } from "./BrandMark";
+import { useColors } from "./ui";
 
-/** NAVIA's compass core with a small orbital satellite; used only for the AI navigator. */
-export function NaviaAiMark({ size = 44 }: { size?: number }): JSX.Element {
-  const core = size * 0.76;
+export function NaviaAiMark({ size = 44, active = false }: { size?: number; active?: boolean }): JSX.Element {
+  const c = useColors();
+  const spin = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    spin.stopAnimation((value) => {
+      spin.setValue(value % 1);
+      const remaining = 1 - (value % 1);
+      const period = active ? 1600 : 9000;
+      Animated.sequence([
+        Animated.timing(spin, { toValue: 1, duration: remaining * period, easing: Easing.linear, useNativeDriver: true }),
+      ]).start(({ finished }) => {
+        if (!finished) return;
+        spin.setValue(0);
+        Animated.loop(Animated.timing(spin, { toValue: 1, duration: period, easing: Easing.linear, useNativeDriver: true })).start();
+      });
+    });
+    return () => spin.stopAnimation();
+  }, [active, spin]);
+
+  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+  const orbitW = size;
+  const orbitH = size * 0.42;
+  const sat = Math.max(8, size * 0.2);
+
   return (
-    <View accessible accessibilityLabel="NAVIA AI Navigator" style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
-      <View pointerEvents="none" style={[styles.orbit, { width: size * 0.96, height: size * 0.48, borderRadius: size, transform: [{ rotate: "-38deg" }] }]} />
-      <BrandMark size={core} />
-      <View style={[styles.satellite, { right: size * 0.03, top: size * 0.11 }]}>
-        <View style={styles.panel} />
-        <View style={styles.satelliteCore} />
-        <View style={styles.panel} />
+    <View accessible accessibilityLabel="NAVIA" style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+      {/* Orbit, tilted */}
+      <View style={[StyleSheet.absoluteFill, styles.center, { transform: [{ rotate: "-28deg" }] }]} pointerEvents="none">
+        <Svg width={orbitW} height={orbitH}>
+          <Ellipse cx={orbitW / 2} cy={orbitH / 2} rx={orbitW / 2 - 1} ry={orbitH / 2 - 1} stroke={c.brandTeal} strokeOpacity={0.7} strokeWidth={1.2} fill="none" />
+        </Svg>
+      </View>
+      <BrandMark size={size * 0.74} />
+      {/* Satellite travelling on the (squashed, tilted) orbit */}
+      <View style={[StyleSheet.absoluteFill, styles.center, { transform: [{ rotate: "-28deg" }, { scaleY: orbitH / orbitW }] }]} pointerEvents="none">
+        <Animated.View style={{ width: orbitW, height: orbitW, transform: [{ rotate }] }}>
+          <View style={{ position: "absolute", top: -sat / 2, left: orbitW / 2 - sat / 2, transform: [{ scaleY: orbitW / orbitH }] }}>
+            <Svg width={sat} height={sat} viewBox="0 0 20 20">
+              <Rect x="1" y="7" width="5" height="6" rx="1" fill={c.brandTeal} />
+              <Rect x="14" y="7" width="5" height="6" rx="1" fill={c.brandTeal} />
+              <Path d="M10 5.5 14 10 10 14.5 6 10Z" fill={c.brandOrange} />
+            </Svg>
+          </View>
+        </Animated.View>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  orbit: { position: "absolute", borderWidth: 1.4, borderColor: "#62e2d3", opacity: 0.88 },
-  satellite: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 1 },
-  satelliteCore: { width: 5, height: 5, borderRadius: 1, backgroundColor: "#f4c76b", transform: [{ rotate: "45deg" }] },
-  panel: { width: 3, height: 6, borderRadius: 1, backgroundColor: "#62e2d3" },
+  center: { alignItems: "center", justifyContent: "center" },
 });

@@ -26,4 +26,10 @@ export const config = {
   airAlertApiUrl: readEnv("EXPO_PUBLIC_NAVIA_AIR_ALERT_API_URL"),
   /** MapTiler key for satellite/terrain layers; null means those layers are unavailable. */
   mapTilerKey: readEnv("EXPO_PUBLIC_NAVIA_MAPTILER_KEY"),
+  /** Firebase Web API key (a public project identifier, not a secret). */
+  firebaseApiKey: readEnv("EXPO_PUBLIC_FIREBASE_API_KEY"),
+  /** Google OAuth iOS client ID from the Firebase project. */
+  googleIosClientId: readEnv("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID"),
+  /** Sign in with Apple needs a paid Apple Developer team; the build adds the entitlement only when this is "1". */
+  appleSignInEnabled: readEnv("EXPO_PUBLIC_NAVIA_APPLE_SIGNIN") === "1",
 } as const;

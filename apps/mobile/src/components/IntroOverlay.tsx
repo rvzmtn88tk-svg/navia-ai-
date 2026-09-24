@@ -37,7 +37,7 @@ export function IntroOverlay(): JSX.Element | null {
     let sound: Audio.Sound | null = null;
     let disposed = false;
     if (introSoundEnabled) {
-      void Audio.Sound.createAsync(require("../../assets/navia-intro.wav"), { shouldPlay: true, volume: 0.45 })
+      void Audio.Sound.createAsync(require("../../assets/navia-intro.wav"), { shouldPlay: true, volume: 0.7 })
         .then((loaded) => { if (disposed) void loaded.sound.unloadAsync(); else sound = loaded.sound; })
         .catch(() => {});
     }

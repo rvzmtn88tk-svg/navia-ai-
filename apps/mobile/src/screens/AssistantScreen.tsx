@@ -17,6 +17,7 @@ import { answerLocally } from "../ai/localCopilot";
 import { speak, stopSpeaking } from "../voice/VoiceGuide";
 import { useT } from "../i18n";
 import { Chip, IconButton, StatusPill, Text, TextField, useColors } from "../components/ui";
+import { NaviaAiMark } from "../components/NaviaAiMark";
 import { radius, space } from "../theme/tokens";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Assistant">;
@@ -112,6 +113,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={[styles.screen, { backgroundColor: c.background }]} keyboardVerticalOffset={insets.top + 44}>
       <View style={styles.badgeRow}>
+        <NaviaAiMark size={56} active={busy || listening} />
         <StatusPill tone={remote ? "success" : "neutral"} icon="sparkle" label={remote ? "Claude" : lang === "uk" ? "Локальний режим" : "On-device mode"} />
       </View>
       <FlatList
@@ -144,7 +146,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: space.md },
   flex: { flex: 1 },
-  badgeRow: { paddingTop: space.sm, alignItems: "flex-start" },
+  badgeRow: { paddingTop: space.sm, flexDirection: "row", alignItems: "center", gap: space.sm },
   messages: { paddingVertical: space.md, gap: space.xs },
   bubble: { maxWidth: "86%", paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.lg },
   user: { alignSelf: "flex-end", borderBottomRightRadius: radius.sm / 2 },

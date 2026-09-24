@@ -1,6 +1,6 @@
 // NAVIA base components. Built only on design tokens; screens compose these
 // instead of styling raw React Native primitives.
-import React, { useRef } from "react";
+import React, { createContext, useContext, useRef } from "react";
 import {
   ActivityIndicator, Animated, Pressable, StyleSheet, Text as RNText, TextInput as RNTextInput, View,
   type PressableProps, type StyleProp, type TextInputProps, type TextProps, type TextStyle, type ViewStyle,
@@ -10,8 +10,17 @@ import { useAppSettings } from "../settings/AppSettings";
 import { elevation, hairline, iconSize, radius, space, touchTarget, typography, type ThemeColors, type TypographyVariant } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
 
+const ColorsOverrideContext = createContext<ThemeColors | null>(null);
+
+/** Renders children with a fixed palette (e.g. NAVIA navy chrome over a light map). */
+export function ColorsOverride({ colors, children }: { colors: ThemeColors; children: React.ReactNode }): JSX.Element {
+  return <ColorsOverrideContext.Provider value={colors}>{children}</ColorsOverrideContext.Provider>;
+}
+
 export function useColors(): ThemeColors {
-  return useAppSettings().colors;
+  const override = useContext(ColorsOverrideContext);
+  const settings = useAppSettings().colors;
+  return override ?? settings;
 }
 
 type ColorRole = "primary" | "secondary" | "muted" | "accent" | "onAccent" | "critical" | "warning" | "success" | "onCritical";

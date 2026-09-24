@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GuidanceAnnouncer, instructionPhrase, stageFor, streetAccusative } from "../src/voice/guidance";
+import { GuidanceAnnouncer, alertPhrase, instructionPhrase, stageFor, streetAccusative } from "../src/voice/guidance";
 
 test("streetAccusative: feminine street nouns and agreeing adjectives", () => {
   assert.equal(streetAccusative("вулиця Хрещатик"), "вулицю Хрещатик");
@@ -42,4 +42,15 @@ test("GuidanceAnnouncer: each stage once, never backwards on GPS jitter", () => 
   assert.equal(a.next(step, 420, "car", "uk"), null, "jitter back into the far band stays silent");
   assert.equal(a.next(step, 70, "car", "uk"), "Поверніть праворуч на вулицю Хрещатик.");
   assert.equal(a.next(step, 40, "car", "uk"), null);
+});
+
+test("cautiousPhrase: no distance while the position is estimated", () => {
+  const { cautiousPhrase } = require("../src/voice/guidance") as typeof import("../src/voice/guidance");
+  assert.equal(cautiousPhrase({ id: "x", maneuver: "right", roadName: "вулиця Хрещатик" }, "uk"), "Приготуйтеся: скоро поверніть праворуч на вулицю Хрещатик.");
+});
+
+test("alertPhrase names the scope and ending", () => {
+  assert.match(alertPhrase(true, "region", "uk"), /по всій області/);
+  assert.match(alertPhrase(true, undefined, "uk"), /у вашому районі/);
+  assert.match(alertPhrase(false, "district", "en"), /ended/);
 });

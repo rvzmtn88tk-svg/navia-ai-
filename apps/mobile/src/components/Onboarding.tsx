@@ -15,6 +15,7 @@ const BRAND = palettes.dark;
 const PAGES: { icon: IconName; tint: string; title: StringKey; body: StringKey }[] = [
   { icon: "search", tint: BRAND.accent, title: "onboarding.map.title", body: "onboarding.map.body" },
   { icon: "satellite", tint: BRAND.success, title: "onboarding.gps.title", body: "onboarding.gps.body" },
+  { icon: "shield", tint: BRAND.warning, title: "onboarding.jam.title", body: "onboarding.jam.body" },
   { icon: "shelter", tint: BRAND.critical, title: "onboarding.safety.title", body: "onboarding.safety.body" },
   { icon: "sparkle", tint: BRAND.brandOrange, title: "onboarding.copilot.title", body: "onboarding.copilot.body" },
 ];
@@ -62,7 +63,17 @@ export function Onboarding({ onDone }: { onDone: () => void }): JSX.Element {
                 <Icon name={p.icon} size={72} color={p.tint} strokeWidth={1.6} />
               </Animated.View>
               <Text variant="largeTitle" color={{ custom: BRAND.textPrimary }} style={styles.center}>{t(p.title)}</Text>
-              <Text variant="body" color={{ custom: BRAND.textSecondary }} style={[styles.center, styles.body]}>{t(p.body)}</Text>
+              {p.title === "onboarding.gps.title" ? (
+                <View style={[styles.body, styles.legend]}>
+                  <Text variant="body" color={{ custom: BRAND.textSecondary }} style={styles.center}>{t("onboarding.gps.intro")}</Text>
+                  {([[BRAND.success, "onboarding.gps.green"], [BRAND.warning, "onboarding.gps.yellow"], [BRAND.critical, "onboarding.gps.red"]] as const).map(([color, key]) => (
+                    <View key={key} style={[styles.legendRow, { backgroundColor: BRAND.surfaceElevated }]}>
+                      <View style={[styles.legendDot, { backgroundColor: color, shadowColor: color }]} />
+                      <Text variant="bodyStrong" color={{ custom: BRAND.textPrimary }} style={styles.flex}>{t(key)}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : <Text variant="body" color={{ custom: BRAND.textSecondary }} style={[styles.center, styles.body]}>{t(p.body)}</Text>}
             </View>
           );
         })}
@@ -94,6 +105,10 @@ const styles = StyleSheet.create({
   art: { width: 160, height: 160, borderRadius: radius.xl * 2, alignItems: "center", justifyContent: "center", borderWidth: 2, marginBottom: space.lg },
   center: { textAlign: "center" },
   body: { maxWidth: 340 },
+  legend: { alignSelf: "stretch", alignItems: "stretch", gap: space.xs },
+  legendRow: { flexDirection: "row", alignItems: "center", gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.lg },
+  legendDot: { width: 18, height: 18, borderRadius: 9, shadowOpacity: 0.8, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } },
+  flex: { flex: 1 },
   dots: { flexDirection: "row", justifyContent: "center", gap: 0, marginBottom: space.lg },
   dot: { width: 24, height: 8, borderRadius: 4 },
   actions: { paddingHorizontal: space.md, gap: space.xs },

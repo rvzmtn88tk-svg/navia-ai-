@@ -58,7 +58,8 @@
             "unstable_useVendoredDependencies": true
           }
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "extra": {
       "eas": {

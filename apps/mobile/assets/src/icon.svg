@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="75%">
+      <stop offset="0" stop-color="#12233A"/>
+      <stop offset="0.6" stop-color="#0A1422"/>
+      <stop offset="1" stop-color="#050A12"/>
+    </radialGradient>
+    <linearGradient id="ring" gradientUnits="userSpaceOnUse" x1="250" y1="220" x2="800" y2="800">
+      <stop offset="0" stop-color="#3FE0DA"/>
+      <stop offset="0.5" stop-color="#3FE0DA"/>
+      <stop offset="1" stop-color="#FF9A3D"/>
+    </linearGradient>
+    <linearGradient id="route" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3FE0DA"/>
+      <stop offset="1" stop-color="#FF9A3D"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7DF2EC"/>
+      <stop offset="1" stop-color="#16B5B0"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFC27A"/>
+      <stop offset="1" stop-color="#F0761F"/>
+    </linearGradient>
+    <linearGradient id="leftShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0E7F7B"/>
+      <stop offset="1" stop-color="#0A5E5B"/>
+    </linearGradient>
+    <linearGradient id="rightShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#C85A14"/>
+      <stop offset="1" stop-color="#96400C"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="14" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softglow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="#050A12"/>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- Map: streets and blocks -->
+  <g stroke="#1E3550" stroke-width="16" fill="none" stroke-linecap="round" opacity="0.9">
+    <path d="M-20 300 C 180 280, 260 180, 420 -20"/>
+    <path d="M140 1044 C 170 820, 90 700, 150 520 C 190 400, 110 330, -20 330"/>
+    <path d="M-20 700 C 200 690, 300 760, 380 1044"/>
+    <path d="M620 1044 C 640 900, 760 860, 1044 880"/>
+    <path d="M1044 520 C 900 560, 860 680, 900 1044"/>
+    <path d="M560 -20 C 580 90, 700 140, 1044 120"/>
+  </g>
+  <g fill="#132840" opacity="0.85">
+    <rect x="60" y="80" width="90" height="70" rx="8"/><rect x="190" y="60" width="70" height="90" rx="8"/>
+    <rect x="720" y="220" width="110" height="70" rx="8"/><rect x="880" y="250" width="90" height="100" rx="8"/>
+    <rect x="40" y="780" width="80" height="110" rx="8"/><rect x="760" y="920" width="120" height="70" rx="8"/>
+    <rect x="880" y="660" width="90" height="80" rx="8"/><rect x="240" y="880" width="90" height="90" rx="8"/>
+  </g>
+  <!-- Glowing route coming in from the top right -->
+  <path d="M700 -20 C 690 120, 860 160, 860 300 C 860 420, 980 460, 1044 560" fill="none" stroke="url(#route)" stroke-width="14" stroke-linecap="round" filter="url(#softglow)" opacity="0.95"/>
+  <!-- Ring with four ticks -->
+  <g filter="url(#glow)">
+    <circle cx="512" cy="500" r="300" fill="#07101C" fill-opacity="0.55" stroke="url(#ring)" stroke-width="14"/>
+    <g stroke="url(#ring)" stroke-width="14" stroke-linecap="round">
+      <line x1="512" y1="170" x2="512" y2="230"/>
+      <line x1="512" y1="770" x2="512" y2="830"/>
+      <line x1="182" y1="500" x2="242" y2="500"/>
+      <line x1="782" y1="500" x2="842" y2="500"/>
+    </g>
+  </g>
+  <!-- Arrow: teal left half, orange right half, with folded shading -->
+  <g filter="url(#softglow)">
+    <path d="M512 250 L 318 700 L 512 590 Z" fill="url(#left)"/>
+    <path d="M512 250 L 706 700 L 512 590 Z" fill="url(#right)"/>
+    <path d="M318 700 L 512 590 L 512 640 Z" fill="url(#leftShade)"/>
+    <path d="M706 700 L 512 590 L 512 640 Z" fill="url(#rightShade)"/>
+  </g>
+</svg>

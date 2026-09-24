@@ -33,15 +33,27 @@ test("NavigationEngine: a trusted GNSS fix produces a real position and NORMAL g
   assert.equal(state.mode, "ACTIVE");
 });
 
-test("NavigationEngine: stale GNSS is marked lost and never extrapolated into an unverified dead-reckoned position", async () => {
+test("NavigationEngine: stale GNSS on an active route is shown as an honest dead-reckoned estimate, never as GNSS", async () => {
   const engine = new NavigationEngine({ routingProvider: provider, staleAfterMs: 5000 });
   await engine.requestRoute({ lat: 50.4501, lon: 30.5234 }, { lat: 50.4501, lon: 30.5366 });
   engine.pushGnssSample({ lat: 50.4501, lon: 30.5234, timestamp: 0, accuracyM: 5, speedMps: 10, headingDeg: 90 });
   engine.tick(0);
   // 8s later, no new fix — past the 5s staleness and 3s red-state confirmation thresholds.
   const state = engine.tick(8000);
+  assert.equal(state.gnss, "LOST", "GNSS status stays honest");
+  assert.ok(state.position != null);
+  assert.equal(state.position!.source, "DEAD_RECKONING", "the estimate is labelled as dead reckoning, not GNSS");
+  assert.equal(state.positionMode, "DEAD_RECKONING");
+  assert.ok((state.positionUncertaintyM ?? 0) > 5, "uncertainty is reported and exceeds the last fix accuracy");
+  assert.notEqual(state.confidenceBand, "HIGH", "never high confidence without GNSS");
+});
+
+test("NavigationEngine: without a route, stale GNSS keeps only the last real fix briefly (no invented travel)", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider, staleAfterMs: 5000 });
+  engine.pushGnssSample({ lat: 50.4501, lon: 30.5234, timestamp: 0, accuracyM: 5, speedMps: 10, headingDeg: 90 });
+  engine.tick(0);
+  const state = engine.tick(8000);
   assert.equal(state.gnss, "LOST");
-  assert.ok(state.position != null, "last known fix is retained briefly with explicit lost GNSS status");
   assert.equal(state.position!.source, "GNSS");
   assert.equal(state.position!.position.timestamp, 0, "position timestamp remains the timestamp of the real fix");
 });

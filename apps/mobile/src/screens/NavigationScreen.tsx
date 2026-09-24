@@ -2,16 +2,17 @@
 // into the engine, reads NavigationState back and renders it; route progress,
 // off-route detection and GNSS health all live in @navia/core.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Linking, StyleSheet, View } from "react-native";
+import { Animated, Linking, StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeepAwake } from "expo-keep-awake";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import type { GNSSRawSample, IMUSample, RouteStep } from "@navia/core";
+import { haversineMeters, initialBearing, positionAtDistance, type GNSSRawSample, type IMUSample, type RouteStep } from "@navia/core";
 import type { RootStackParamList, RouteMode } from "../navigation/RootNavigator";
 import { demoEngine, navigationEngine, useNaviaStore } from "../engine/naviaController";
 import { ExpoLocationPositionProvider } from "../providers/ExpoLocationPositionProvider";
 import { ExpoSensorsMotionProvider } from "../providers/ExpoSensorsMotionProvider";
 import { useAppSettings } from "../settings/AppSettings";
+import { NaviaAiMark } from "../components/NaviaAiMark";
 import { NaviaMap, type CameraMode, type NaviaMapHandle } from "../map/NaviaMap";
 import { useMapStyle } from "../map/mapStyles";
 import { splitRoute } from "../map/routeSplit";
@@ -20,7 +21,9 @@ import { Icon } from "../components/Icon";
 import { Button, IconButton, Segmented, StatusPill, Text, Touchable, useColors } from "../components/ui";
 import { Appear, Crossfade } from "../components/Crossfade";
 import { formatClock, formatDistance, formatDuration, useT, type Translate } from "../i18n";
-import { GuidanceAnnouncer, instructionPhrase, type StepLike } from "../voice/guidance";
+import { GuidanceAnnouncer, alertPhrase, cautiousPhrase, instructionPhrase, resiliencePhrase, type StepLike } from "../voice/guidance";
+import { saveRouteOffline, type OfflineProgress } from "../map/offlineRoute";
+import { config } from "../config";
 import { speak, stopSpeaking } from "../voice/VoiceGuide";
 import { easing, elevation, iconSize, motion, radius, space, type ThemeColors } from "../theme/tokens";
 
@@ -35,8 +38,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const c = useColors();
   const { t, lang } = useT();
   const insets = useSafeAreaInsets();
-  const { isDark, mapLayer, voiceGender } = useAppSettings();
-  const style = useMapStyle(mapLayer, isDark);
+  const { isDark, mapLayer, voiceGender, briefingEnabled } = useAppSettings();
+  const style = useMapStyle(mapLayer, isDark, 0, true);
+  const { height: screenH } = useWindowDimensions();
   const state = useNaviaStore((s) => s.state);
   const route = useNaviaStore((s) => s.route);
   const isDemo = useNaviaStore((s) => s.isDemoMode);
@@ -49,6 +53,10 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const [routeError, setRouteError] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [noFix, setNoFix] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [offline, setOffline] = useState<OfflineProgress>({ state: "idle", percent: 0 });
+  const startFromRef = useRef<((p: { lat: number; lon: number }) => void) | null>(null);
   const map = useRef<NaviaMapHandle>(null);
   const announcer = useRef(new GuidanceAnnouncer()).current;
   const phaseRef = useRef(phase);
@@ -67,6 +75,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     let tick: ReturnType<typeof setInterval> | null = null;
     let routeRequested = false;
     let rerouting = false;
+    setNoFix(false);
     let lastRerouteAt = 0;
     setRouteError(null);
     if (demo) demoEngine.reset(); else navigationEngine.clearRoute();
@@ -101,6 +110,16 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
         return;
       }
       if (cancelled) { positionSub.remove(); motionSub?.remove(); return; }
+      // No trusted fix soon → offer to start from the last stable position or a point the user sets.
+      const noFixTimer = setTimeout(() => { if (!cancelled && !routeRequested) setNoFix(true); }, 8_000);
+      startFromRef.current = (p) => {
+        if (routeRequested) return;
+        routeRequested = true;
+        clearTimeout(noFixTimer);
+        setNoFix(false);
+        navigationEngine.setManualPosition(p);
+        void requestRoute(p);
+      };
       tick = setInterval(() => {
         navigationEngine.tick(Date.now());
         refresh();
@@ -148,8 +167,20 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
 
   // ——— Derived state ———
   const position = state.position?.position ?? null;
-  const user = useMemo(() => position ? { lat: position.lat, lon: position.lon, headingDeg: state.headingDeg, accuracyM: position.accuracyM ?? null } : null,
-    [position?.lat, position?.lon, state.headingDeg, position?.accuracyM]); // eslint-disable-line react-hooks/exhaustive-deps
+  // While on the route, draw the puck on the line and point the camera along
+  // the road ahead (not the compass), like a car navigator.
+  const progressM = Math.round(state.routeProgressM);
+  const snap = useMemo(() => {
+    if (phase !== "navigating" || !route || state.offRoute || route.geometry.length < 2) return null;
+    const here = positionAtDistance(route.geometry, progressM);
+    const ahead = positionAtDistance(route.geometry, progressM + 30);
+    return { here, bearing: haversineMeters(here, ahead) > 2 ? initialBearing(here, ahead) : null };
+  }, [phase, route, state.offRoute, progressM]);
+  const user = useMemo(() => {
+    if (!position) return null;
+    const at = snap?.here ?? position;
+    return { lat: at.lat, lon: at.lon, headingDeg: snap?.bearing ?? state.headingDeg, accuracyM: position.accuracyM ?? null };
+  }, [position?.lat, position?.lon, snap, state.headingDeg, position?.accuracyM]); // eslint-disable-line react-hooks/exhaustive-deps
   const progressBucket = Math.round(state.routeProgressM / 5);
   const split = useMemo(() => route ? splitRoute(route.geometry, phase === "navigating" ? state.routeProgressM : 0) : { traveled: [], remaining: [] },
     [route, phase, progressBucket]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -159,8 +190,13 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     const i = route.steps.findIndex((s) => s.id === nextStep.id);
     return i >= 0 ? route.steps[i + 1] ?? null : null;
   }, [route, nextStep]);
-  const positionReliable = state.gnss !== "LOST" && state.confidenceBand !== "UNKNOWN";
-  const arrived = phase === "navigating" && (state.mode === "ARRIVED" || (!!route && state.routeRemainingM < 30));
+  const estimated = state.positionMode === "DEAD_RECKONING" || state.positionMode === "MANUAL";
+  const uncertaintyM = state.positionUncertaintyM ?? null;
+  const positionReliable = !estimated && state.gnss !== "LOST" && state.confidenceBand !== "UNKNOWN";
+  // Without GNSS the app never declares arrival by itself; the driver confirms.
+  const arrived = phase === "navigating" && (state.mode === "ARRIVED" || (!!route && state.routeRemainingM < 30 && state.positionMode === "GNSS"));
+  const lastFix = !isDemo ? navigationEngine.getLastTrustedFix() : null;
+  const lastFixAgeMin = lastFix ? Math.round((Date.now() - lastFix.timestamp) / 60_000) : null;
 
   // Fit the whole route once it arrives in overview.
   useEffect(() => {
@@ -177,10 +213,43 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   // ——— Voice guidance ———
   const speakText = useCallback((text: string) => { void speak(text, { lang, gender: voiceGender }); }, [lang, voiceGender]);
   useEffect(() => {
-    if (phase !== "navigating" || !nextStep || !positionReliable) return;
-    const text = announcer.next(nextStep as StepLike, state.nextStepDistanceM ?? null, mode, lang);
-    if (text) speakText(text);
-  }, [phase, nextStep?.id, state.nextStepDistanceM, positionReliable, mode, lang, speakText]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (phase !== "navigating" || !nextStep) return;
+    if (positionReliable) {
+      const text = announcer.next(nextStep as StepLike, state.nextStepDistanceM ?? null, mode, lang);
+      if (text) speakText(text);
+      return;
+    }
+    // Estimated position: one cautious prompt per maneuver once it could be close.
+    const reach = (state.nextStepDistanceM ?? Infinity) - (uncertaintyM ?? 0);
+    if (estimated && reach <= (mode === "walk" ? 60 : 400) && cautiousSpoken.current !== nextStep.id) {
+      cautiousSpoken.current = nextStep.id;
+      speakText(cautiousPhrase(nextStep as StepLike, lang));
+    }
+  }, [phase, nextStep?.id, state.nextStepDistanceM, positionReliable, estimated, uncertaintyM, mode, lang, speakText]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Spoken resilience transitions: degrading → lost (route guidance) → recovered.
+  const cautiousSpoken = useRef<string | null>(null);
+  const resilience = useRef<"ok" | "degraded" | "lost">("ok");
+  useEffect(() => {
+    if (phase !== "navigating" || isDemo) return;
+    const now = estimated ? "lost" : state.gnss === "DEGRADED" ? "degraded" : "ok";
+    const prev = resilience.current;
+    if (now === prev) return;
+    resilience.current = now;
+    if (now === "lost") speakText(resiliencePhrase("lost", lang));
+    else if (now === "degraded" && prev === "ok") speakText(resiliencePhrase("degraded", lang));
+    else if (now === "ok" && prev === "lost") speakText(resiliencePhrase("recovered", lang));
+  }, [phase, estimated, state.gnss, isDemo, lang, speakText]);
+  // Proactive: announce an air alert starting or ending during the trip.
+  const alertNow = useNaviaStore((s) => s.alert);
+  const alertSpoken = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (phase !== "navigating" || isDemo || alertNow?.active == null) return;
+    if (alertSpoken.current === null) { alertSpoken.current = alertNow.active; if (!alertNow.active) return; }
+    else if (alertSpoken.current === alertNow.active) return;
+    alertSpoken.current = alertNow.active;
+    speakText(alertPhrase(alertNow.active, alertNow.scope, lang));
+  }, [phase, isDemo, alertNow?.active, alertNow?.scope, lang, speakText]); // eslint-disable-line react-hooks/exhaustive-deps
   const offRouteSpoken = useRef(false);
   useEffect(() => {
     if (phase !== "navigating") return;
@@ -192,6 +261,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   // ——— Actions ———
   function start() {
     announcer.reset();
+    // Keep the map of this route on the phone in case the network drops.
+    if (route && !isDemo) void saveRouteOffline(route.geometry, config.mapStyleUrl, setOffline);
     setPhase("navigating");
     setCameraMode("navigate");
     Animated.timing(transition, { toValue: 1, duration: motion.normal, easing: easing.standard, useNativeDriver: true }).start();
@@ -212,7 +283,10 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const overviewLift = transition.interpolate({ inputRange: [0, 1], outputRange: [0, -24] });
 
   const topInset = insets.top + space.xs + (isDemo ? space.lg : 0);
-  const padding = useMemo(() => ({ top: topInset + 150, bottom: 150 + insets.bottom }), [topInset, insets.bottom]);
+  // During navigation the puck sits low on screen so most of the view shows the road ahead.
+  const padding = useMemo(() => phase === "navigating"
+    ? { top: Math.round(screenH * 0.45), bottom: 110 + insets.bottom }
+    : { top: topInset + 150, bottom: 150 + insets.bottom }, [phase, screenH, topInset, insets.bottom]);
 
   return (
     <View style={[styles.screen, { backgroundColor: c.background }]}>
@@ -229,6 +303,12 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           destination={destination}
           padding={padding}
         />
+      )}
+
+      {picking && (
+        <View pointerEvents="none" style={styles.crosshair}>
+          <Icon name="pin" size={44} color={c.accent} strokeWidth={2.4} />
+        </View>
       )}
 
       {isDemo && (
@@ -254,6 +334,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
               <StateBlock title={t("route.failed")} body={t("route.failedHint")} debug={__DEV__ ? routeError : undefined} action={t("common.retry")} onAction={() => setRetry((n) => n + 1)} />
             ) : route ? (
               <>
+                {briefingEnabled && !isDemo && <Briefing distanceM={route.distanceM} gnss={state.gnss} t={t} lang={lang} c={c} />}
                 <View style={styles.summaryRow}>
                   <Text variant="title" color="success">{formatDuration(route.durationS, lang)}</Text>
                   <Text variant="headline" color="secondary">{formatDistance(route.distanceM, lang)}</Text>
@@ -261,6 +342,22 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
                 </View>
                 <Button label={t("route.start")} icon="locateFilled" onPress={start} />
               </>
+            ) : noFix && !picking ? (
+              <View style={styles.loading}>
+                <Text variant="headline" color="warning">{t("resilient.noFixTitle")}</Text>
+                <Text variant="callout" color="secondary">{t("resilient.noFixBody")}</Text>
+                {lastFix && lastFixAgeMin != null && lastFixAgeMin <= 10 && (
+                  <Button label={t("resilient.fromLastFix", { minutes: Math.max(1, lastFixAgeMin) })} icon="clock" onPress={() => startFromRef.current?.(lastFix.position)} />
+                )}
+                <Button label={t("resilient.pickOnMap")} icon="pin" variant="secondary" onPress={() => setPicking(true)} />
+              </View>
+            ) : picking ? (
+              <View style={styles.loading}>
+                <Text variant="callout" color="secondary">{t("resilient.pickHint")}</Text>
+                <Button label={t("resilient.pickConfirm")} icon="locateFilled" onPress={() => {
+                  void map.current?.getCenter().then((p) => { if (p) { setPicking(false); startFromRef.current?.(p); } });
+                }} />
+              </View>
             ) : (
               <View style={styles.loading}>
                 <Text variant="headline">{t("route.preparing")}</Text>
@@ -274,8 +371,27 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       {phase === "navigating" && (
         <>
           <Appear from={-24} style={[styles.maneuverWrap, { top: topInset }]}>
-            <ManeuverCard step={nextStep} distanceM={state.nextStepDistanceM ?? null} following={followingStep} reliable={positionReliable} offRoute={state.offRoute} t={t} lang={lang} c={c} />
+            <ManeuverCard step={nextStep} distanceM={state.nextStepDistanceM ?? null} following={followingStep} reliable={positionReliable} estimated={estimated} uncertaintyM={uncertaintyM} offRoute={state.offRoute} t={t} lang={lang} c={c} />
+            {estimated && (
+              <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
+                <Icon name="satellite" size={iconSize.md} color={c.warning} />
+                <View style={styles.flex}>
+                  <Text variant="subhead" color="warning">{state.positionMode === "MANUAL" ? t("resilient.bannerManual") : t("resilient.banner")}</Text>
+                  {uncertaintyM != null && <Text variant="caption" color="secondary">{t("resilient.uncertainty", { meters: uncertaintyM })}</Text>}
+                </View>
+              </Appear>
+            )}
+            {estimated && nextStep && (state.nextStepDistanceM ?? Infinity) <= Math.max(150, (uncertaintyM ?? 0) * 1.5) && (
+              <Button style={styles.confirmButton} icon="check" variant="secondary"
+                label={nextStep.maneuver === "arrive" ? t("resilient.confirmArrive") : t("resilient.confirmTurn")}
+                onPress={() => {
+                  if (nextStep.maneuver === "arrive") { setPhase("arrived"); return; }
+                  navigationEngine.confirmManeuverReached();
+                  refresh();
+                }} />
+            )}
           </Appear>
+          <SpeedBadge speedMps={state.gnss === "NORMAL" ? state.speedMps : null} bottom={insets.bottom + 104} t={t} c={c} />
           {cameraMode === "free" && (
             <View style={[styles.recenter, { bottom: insets.bottom + 120 }]}>
               <Button label={t("route.recenter")} icon="locateFilled" variant="secondary" onPress={() => setCameraMode("navigate")} />
@@ -287,7 +403,10 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
               <Text variant="subhead" color="secondary">
                 {formatDistance(state.routeRemainingM, lang)} · {state.etaSeconds != null ? formatClock(Date.now() + state.etaSeconds * 1000, lang) : "—"}
               </Text>
+              {offline.state === "saving" && <Text variant="caption" color="muted">{t("offline.saving", { percent: offline.percent })}</Text>}
+              {offline.state === "saved" && <Text variant="caption" color="success">{t("offline.saved")}</Text>}
             </View>
+            {alertNow?.active && <StatusPill tone="critical" icon="alert" label={t("alert.active")} />}
             <GpsPill gnss={state.gnss} t={t} />
             <Button label={t("route.end")} variant="critical" onPress={end} style={styles.endButton} />
           </Appear>
@@ -310,8 +429,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   );
 }
 
-function ManeuverCard({ step, distanceM, following, reliable, offRoute, t, lang, c }: {
-  step: RouteStep | null; distanceM: number | null; following: RouteStep | null; reliable: boolean; offRoute: boolean; t: Translate; lang: "uk" | "en"; c: ThemeColors;
+function ManeuverCard({ step, distanceM, following, reliable, estimated, uncertaintyM, offRoute, t, lang, c }: {
+  step: RouteStep | null; distanceM: number | null; following: RouteStep | null; reliable: boolean; estimated: boolean; uncertaintyM: number | null; offRoute: boolean; t: Translate; lang: "uk" | "en"; c: ThemeColors;
 }): JSX.Element | null {
   if (!step) return null;
   const maneuverLabel = step.maneuver === "roundabout" && step.roundaboutExit ? t("maneuver.roundaboutExit", { exit: step.roundaboutExit }) : t(`maneuver.${step.maneuver}` as Parameters<Translate>[0]);
@@ -325,9 +444,14 @@ function ManeuverCard({ step, distanceM, following, reliable, offRoute, t, lang,
             {offRoute ? (
               <Text variant="maneuverStreet" color={{ custom: fg }}>{t("route.offRoute")}</Text>
             ) : <>
-              <Text variant="maneuverDistance" color={{ custom: fg }}>{reliable && distanceM != null ? formatDistance(distanceM, lang) : maneuverLabel}</Text>
-              <Text variant="maneuverStreet" color={{ custom: c.onManeuverSecondary }} numberOfLines={2}>{step.roadName || maneuverLabel}</Text>
-              {!reliable && <Text variant="subhead" color={{ custom: c.onManeuverSecondary }}>{t("gps.explainLost")}</Text>}
+              <Text variant="maneuverDistance" color={{ custom: fg }}>
+                {distanceM == null ? maneuverLabel
+                  : reliable ? formatDistance(distanceM, lang)
+                    : estimated && uncertaintyM != null && uncertaintyM < distanceM * 0.5 ? `≈ ${formatDistance(distanceM, lang)}`
+                      : estimated ? t("resilient.soon") : maneuverLabel}
+              </Text>
+              <Text variant="maneuverStreet" color={{ custom: c.onManeuverSecondary }} numberOfLines={2}>{step.roadName ? `${capitalize(maneuverLabel)} · ${step.roadName}` : capitalize(maneuverLabel)}</Text>
+              {!reliable && !estimated && <Text variant="subhead" color={{ custom: c.onManeuverSecondary }}>{t("gps.explainLost")}</Text>}
             </>}
           </View>
         </View>
@@ -338,6 +462,48 @@ function ManeuverCard({ step, distanceM, following, reliable, offRoute, t, lang,
           <Text variant="subhead" color={{ custom: fg }} numberOfLines={1}>{t("route.then", { maneuver: t(`maneuver.${following.maneuver}` as Parameters<Translate>[0]) })}</Text>
         </View>
       )}
+    </View>
+  );
+}
+
+// Pre-trip briefing from live state only (alert, GPS, offline map, length).
+function Briefing({ distanceM, gnss, t, lang, c }: { distanceM: number; gnss: string; t: Translate; lang: "uk" | "en"; c: ThemeColors }): JSX.Element {
+  const alert = useNaviaStore((s) => s.alert);
+  const lines: { tone: "critical" | "warning" | "success" | "neutral"; text: string }[] = [];
+  if (alert?.active) {
+    const where = t(alert.scope === "region" ? "alert.activeIn.region" : alert.scope === "city" ? "alert.activeIn.city" : "alert.activeIn.district").replace(/^Тривога |^Alert /, "");
+    lines.push({ tone: "critical", text: t("briefing.alertActive", { where }) });
+  } else if (alert?.active === false) {
+    lines.push(alert.otherDistrictsActive ? { tone: "warning", text: t("briefing.alertOther", { count: alert.otherDistrictsActive }) } : { tone: "success", text: t("briefing.alertClear") });
+  }
+  lines.push(gnss === "NORMAL" ? { tone: "success", text: t("briefing.gpsStable") } : { tone: "warning", text: t("briefing.gpsWeak") });
+  lines.push({ tone: "neutral", text: t("briefing.offline") });
+  if (distanceM > 50_000) lines.push({ tone: "neutral", text: t("briefing.long", { distance: formatDistance(distanceM, lang) }) });
+  const dot = (tone: string) => tone === "critical" ? c.critical : tone === "warning" ? c.warning : tone === "success" ? c.success : c.brandTeal;
+  return (
+    <View style={[styles.briefing, { backgroundColor: c.surfaceMuted }]}>
+      <View style={styles.briefingHead}><NaviaAiMark size={28} /><Text variant="subhead" color="secondary">{t("briefing.title")}</Text></View>
+      {lines.map((l) => (
+        <View key={l.text} style={styles.briefingRow}>
+          <View style={[styles.briefingDot, { backgroundColor: dot(l.tone) }]} />
+          <Text variant="callout" style={styles.flex}>{l.text}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toLocaleUpperCase() + text.slice(1);
+}
+
+function SpeedBadge({ speedMps, bottom, t, c }: { speedMps: number | null; bottom: number; t: Translate; c: ThemeColors }): JSX.Element {
+  const kmh = speedMps != null && speedMps >= 0 ? Math.round(speedMps * 3.6) : null;
+  return (
+    <View accessibilityLabel={kmh != null ? `${kmh} ${t("nav.speedUnit")}` : t("nav.speedUnit")}
+      style={[styles.speed, { bottom, backgroundColor: c.surfaceElevated, borderColor: c.border }, elevation(2, c)]}>
+      <Text variant="numeric" style={styles.speedValue}>{kmh ?? "—"}</Text>
+      <Text variant="caption" color="muted">{t("nav.speedUnit")}</Text>
     </View>
   );
 }
@@ -377,4 +543,13 @@ const styles = StyleSheet.create({
   tripBar: { position: "absolute", left: 0, right: 0, bottom: 0, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, paddingHorizontal: space.md, paddingTop: space.md, flexDirection: "row", alignItems: "center", gap: space.sm },
   endButton: { minHeight: 44, paddingHorizontal: space.md },
   arrivedHead: { flexDirection: "row", alignItems: "center", gap: space.md },
+  resilientBanner: { marginTop: space.xs, flexDirection: "row", alignItems: "center", gap: space.sm, padding: space.sm, borderRadius: radius.lg, borderWidth: 1 },
+  confirmButton: { marginTop: space.xs },
+  briefing: { borderRadius: radius.lg, padding: space.sm, gap: space.xs },
+  briefingHead: { flexDirection: "row", alignItems: "center", gap: space.xs },
+  briefingRow: { flexDirection: "row", alignItems: "flex-start", gap: space.xs },
+  briefingDot: { width: 8, height: 8, borderRadius: 4, marginTop: 7 },
+  speed: { position: "absolute", left: space.md, width: 68, height: 68, borderRadius: 34, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  speedValue: { fontSize: 24, lineHeight: 28 },
+  crosshair: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", paddingBottom: 44 },
 });

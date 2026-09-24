@@ -20,6 +20,9 @@ import { layerAvailable, useMapStyle } from "../map/mapStyles";
 import { BottomSheet, type SheetSnap } from "../components/BottomSheet";
 import { Crossfade } from "../components/Crossfade";
 import { BrandMark } from "../components/BrandMark";
+import { AlertStatus, alertHeadline, type AlertTone } from "../components/AlertStatus";
+import { SafetyPanel } from "../components/SafetyPanel";
+import { NaviaAiMark } from "../components/NaviaAiMark";
 import { Icon, type IconName } from "../components/Icon";
 import { Button, Card, Chip, Divider, IconButton, ListRow, SectionLabel, Segmented, Text, TextField, Touchable, useColors } from "../components/ui";
 import { formatClock, formatDistance, useT, type Translate } from "../i18n";
@@ -54,6 +57,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   const [selected, setSelected] = useState<SelectedPlace | null>(null);
   const [routeMode, setRouteMode] = useState<RouteMode>("car");
   const [layersOpen, setLayersOpen] = useState(false);
+  const [safetyOpen, setSafetyOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [styleRetry, setStyleRetry] = useState(0);
   const sheetVisible = useRef(new Animated.Value(PEEK_H + insets.bottom)).current;
@@ -68,9 +72,8 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     if (!focus) return;
     setCategory(null);
     setSelected(focus);
-    setCameraMode("free");
     setSnap("half");
-    map.current?.flyTo(focus, 16, halfSheetHeight);
+    focusOn(focus, 16);
     navigation.setParams({ focusPlace: undefined });
   }, [navigation, route.params?.focusPlace]);
 
@@ -80,15 +83,21 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   const shelter = nearestShelter(live.byCategory.shelter?.places ?? []);
   const alertActive = alert?.active === true;
 
+  // Leave follow mode first, then fly on the next frame, so a GPS update in
+  // between cannot pull the camera back to the user.
+  const focusOn = useCallback((point: { lat: number; lon: number }, zoom: number) => {
+    setCameraMode("free");
+    setTimeout(() => map.current?.flyTo(point, zoom, halfSheetHeight), 60);
+  }, [halfSheetHeight]);
+
   const openPlace = useCallback((place: NearbyPlace) => {
     setSelected({
       id: place.id, label: place.name, subtitle: place.address, lat: place.location.lat, lon: place.location.lon,
       category: place.category, hours: place.openingHours, source: place.source, distanceM: place.distanceM,
     });
-    setCameraMode("free");
     setSnap("half");
-    map.current?.flyTo(place.location, 16.5, halfSheetHeight);
-  }, [halfSheetHeight]);
+    focusOn(place.location, 16.5);
+  }, [focusOn]);
 
 
   function selectCategory(next: ChipCategory) {
@@ -114,6 +123,11 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     setDemoMode(false);
     usePlacesStore.getState().addRecent(place);
     navigation.navigate("Navigation", { destinationLat: place.lat, destinationLon: place.lon, destinationLabel: place.label, mode });
+  }
+
+  function openSafety(next: boolean) {
+    setSafetyOpen(next);
+    if (next) { void live.loadCategory("shelter"); void live.loadCategory("resilience"); }
   }
 
   function askCopilot(text?: string, voice?: boolean) {
@@ -175,6 +189,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
               selected={category === cat} onPress={() => selectCategory(cat)} />
           ))}
         </ScrollView>
+        <StatusBeacons gpsStatus={live.gpsStatus} health={live.health} alert={alert} t={t} onPress={() => setSnap("half")} />
         {Math.abs(bearing) > 1 && (
           <View style={styles.compassRow} pointerEvents="box-none">
             <Touchable accessibilityRole="button" accessibilityLabel="N" onPress={() => map.current?.resetNorth()}
@@ -187,6 +202,10 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
 
       {/* Floating controls above the sheet */}
       <Animated.View style={[styles.rightRail, { bottom: controlsBottom, opacity: controlsOpacity }]} pointerEvents={snap === "full" ? "none" : "box-none"}>
+        <Touchable accessibilityRole="button" accessibilityLabel={t("copilot.title")} onPress={() => askCopilot("", true)}
+          style={[styles.copilotFab, { backgroundColor: c.surfaceElevated, borderColor: c.brandTeal }, elevation(3, c)]}>
+          <NaviaAiMark size={40} />
+        </Touchable>
         <IconButton icon="layers" label={t("home.layers")} onPress={() => setLayersOpen(true)} />
         <IconButton icon={cameraMode === "free" ? "locate" : "locateFilled"} label={t("home.locate")}
           onPress={() => { if (!fix) void live.requestPermission(); setCameraMode("follow"); map.current?.recenter(); }} />
@@ -201,8 +220,10 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
       <BottomSheet snap={snap} onSnapChange={setSnap} peekHeight={PEEK_H} fullTop={fullTop} visibleHeight={sheetVisible}
         header={selected ? <PlaceHeader place={selected} t={t} lang={lang} onClose={closeContext} />
           : category ? <CategoryHeader category={category} count={categoryPlaces.length} t={t} onClose={closeContext} />
-            : <StatusHeader gpsStatus={live.gpsStatus} health={live.health} accuracyM={fix?.accuracyM ?? null} alert={alert} alertState={live.alertState}
-              t={t} onGps={() => setSnap("half")} onAlert={() => setSnap("half")} />}
+            : <View style={styles.savedRow}>
+                <SavedTile icon="home" label={t("saved.home")} place={home} onPress={() => home ? startRoute(home, "car") : navigation.navigate("Search", { pickFor: "home" })} />
+                <SavedTile icon="work" label={t("saved.work")} place={work} onPress={() => work ? startRoute(work, "car") : navigation.navigate("Search", { pickFor: "work" })} />
+              </View>}
       >
         <ScrollView
           contentContainerStyle={styles.sheetContent}
@@ -219,18 +240,13 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
             <>
               <GpsCard gpsStatus={live.gpsStatus} health={live.health} accuracyM={fix?.accuracyM ?? null} fixAt={fix?.timestamp ?? null} t={t} lang={lang}
                 onAllow={() => void live.requestPermission()} onRefresh={() => void live.refresh()} />
-              <AlertCard alert={alert} threat={threat} state={live.alertState} t={t} lang={lang} />
+              <AlertStatus alert={alert} threat={threat} loading={live.alertState === "loading"} />
               <CopilotCard question={question} onChange={setQuestion} onSend={() => askCopilot()} onVoice={() => askCopilot("", true)} onPrompt={(q) => askCopilot(q)} t={t} />
-              <SectionLabel style={styles.sectionGap}>{t("saved.title")}</SectionLabel>
-              <View style={styles.savedRow}>
-                <SavedTile icon="home" label={t("saved.home")} place={home} onPress={() => home ? startRoute(home, "car") : navigation.navigate("Search", { pickFor: "home" })} />
-                <SavedTile icon="work" label={t("saved.work")} place={work} onPress={() => work ? startRoute(work, "car") : navigation.navigate("Search", { pickFor: "work" })} />
-              </View>
-              {custom.slice(0, 5).map((p) => <ListRow key={p.id} icon="star" title={p.label} subtitle={p.subtitle} onPress={() => { setSelected(p); setSnap("half"); map.current?.flyTo(p, 16, halfSheetHeight); setCameraMode("free"); }} />)}
+              {custom.slice(0, 5).map((p) => <ListRow key={p.id} icon="star" title={p.label} subtitle={p.subtitle} onPress={() => { setSelected(p); setSnap("half"); focusOn(p, 16); }} />)}
               {recents.length > 0 && <SectionLabel style={styles.sectionGap}>{t("recent.title")}</SectionLabel>}
               {recents.slice(0, 5).map((p, i) => <View key={p.id}>
                 {i > 0 && <Divider inset={52} />}
-                <ListRow icon="clock" iconTint={c.textSecondary} title={p.label} subtitle={p.subtitle} onPress={() => { setSelected(p); setSnap("half"); map.current?.flyTo(p, 16, halfSheetHeight); setCameraMode("free"); }} />
+                <ListRow icon="clock" iconTint={c.textSecondary} title={p.label} subtitle={p.subtitle} onPress={() => { setSelected(p); setSnap("half"); focusOn(p, 16); }} />
               </View>)}
               <Pressable onPress={() => navigation.navigate("Sources")} accessibilityRole="link" style={styles.sources}>
                 <Icon name="info" size={iconSize.sm} color={c.textMuted} />
@@ -245,6 +261,11 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
         </ScrollView>
       </BottomSheet>
 
+      <SafetyPanel open={safetyOpen} onOpenChange={openSafety} alert={alert} threat={threat} alertLoading={live.alertState === "loading"}
+        shelters={live.byCategory.shelter?.places ?? []} resilience={live.byCategory.resilience?.places ?? []}
+        sheltersLoading={live.byCategory.shelter?.state !== "ready" && live.byCategory.shelter?.state !== "error"}
+        position={fix ? { lat: fix.lat, lon: fix.lon } : null}
+        onRoute={(p) => { setSafetyOpen(false); startRoute({ id: p.id, label: p.name, lat: p.location.lat, lon: p.location.lon }, "walk"); }} />
       <LayersModal open={layersOpen} value={mapLayer} onClose={() => setLayersOpen(false)} onPick={(layer) => { setMapLayer(layer); setLayersOpen(false); }} t={t} c={c} />
     </View>
   );
@@ -259,37 +280,45 @@ function gpsTone(status: GpsStatus, health: GnssHealth): { tone: "success" | "wa
   return health === "stable" ? { tone: "success", key: "gps.stable" } : health === "unstable" ? { tone: "warning", key: "gps.unstable" } : { tone: "critical", key: "gps.lost" };
 }
 
-function alertTone(alert: GeolocatedAirAlert | null, state: string): { tone: "success" | "warning" | "critical" | "neutral"; key: Parameters<Translate>[0] } {
-  if (!alert) return { tone: "neutral", key: state === "loading" ? "alert.checking" : "alert.waiting" };
-  if (alert.active === true) return { tone: "critical", key: "alert.active" };
-  if (alert.active === false) return { tone: "success", key: "alert.clear" };
-  return { tone: "neutral", key: "alert.unknown" };
+function alertTone(alert: GeolocatedAirAlert | null, state: string): { tone: AlertTone; key: Parameters<Translate>[0] } {
+  return alertHeadline(alert, state === "loading");
 }
 
-function StatusHeader({ gpsStatus, health, accuracyM, alert, alertState, t, onGps, onAlert }: {
-  gpsStatus: GpsStatus; health: GnssHealth; accuracyM: number | null; alert: GeolocatedAirAlert | null; alertState: string; t: Translate; onGps: () => void; onAlert: () => void;
+// Two quiet indicators on the map. They stay dim while all is well and light
+// up when GPS degrades or an alert covers the user's location. Details live in
+// the pulled-up sheet.
+function StatusBeacons({ gpsStatus, health, alert, t, onPress }: {
+  gpsStatus: GpsStatus; health: GnssHealth; alert: GeolocatedAirAlert | null; t: Translate; onPress: () => void;
 }): JSX.Element {
   const gps = gpsTone(gpsStatus, health);
-  const al = alertTone(alert, alertState);
+  const al = alertTone(alert, "");
   return (
-    <View style={styles.statusRow}>
-      <StatusTile icon="satellite" tone={gps.tone} title={t(gps.key)} caption={accuracyM != null && gpsStatus === "ready" && health !== "lost" ? t("gps.accuracy", { meters: Math.round(accuracyM) }) : t("gps.title")} onPress={onGps} />
-      <StatusTile icon="alert" tone={al.tone} title={t(al.key)} caption={alert?.locationLabel ?? t("alert.title")} onPress={onAlert} />
+    <View style={styles.beacons} pointerEvents="box-none">
+      <Beacon icon="satellite" tone={gps.tone === "success" ? "neutral" : gps.tone} label={t(gps.key)} onPress={onPress} />
+      <Beacon icon="alert" tone={al.tone === "success" ? "neutral" : al.tone} label={t(al.key)} onPress={onPress} />
     </View>
   );
 }
 
-function StatusTile({ icon, tone, title, caption, onPress }: { icon: IconName; tone: "success" | "warning" | "critical" | "neutral"; title: string; caption: string; onPress: () => void }): JSX.Element {
+function Beacon({ icon, tone, label, onPress }: { icon: IconName; tone: AlertTone; label: string; onPress: () => void }): JSX.Element {
   const c = useColors();
-  const fg = toneColor(c, tone);
-  const bg = toneSoft(c, tone);
+  const lit = tone === "critical" || tone === "warning";
+  const fg = lit ? toneColor(c, tone) : c.textMuted;
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!lit) { pulse.stopAnimation(); pulse.setValue(0); return; }
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [lit, pulse]);
   return (
-    <Touchable accessibilityRole="button" accessibilityLabel={`${title}. ${caption}`} onPress={onPress} style={[styles.tile, { backgroundColor: c.surfaceMuted }]}>
-      <View style={[styles.tileIcon, { backgroundColor: bg }]}><Icon name={icon} size={iconSize.md} color={fg} /></View>
-      <View style={styles.tileText}>
-        <Crossfade contentKey={title}><Text variant="subhead" style={{ color: fg }} numberOfLines={1}>{title}</Text></Crossfade>
-        <Text variant="caption" color="muted" numberOfLines={1}>{caption}</Text>
-      </View>
+    <Touchable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
+      style={[styles.beacon, { backgroundColor: c.surfaceElevated, borderColor: lit ? fg : c.border }, elevation(2, c)]}>
+      {lit && <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.beaconGlow, { backgroundColor: fg, opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.4] }) }]} />}
+      <Icon name={icon} size={iconSize.md} color={fg} />
     </Touchable>
   );
 }
@@ -382,39 +411,13 @@ function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefr
   );
 }
 
-function AlertCard({ alert, threat, state, t, lang }: { alert: GeolocatedAirAlert | null; threat: AirThreatSummary | null; state: string; t: Translate; lang: "uk" | "en" }): JSX.Element {
-  const c = useColors();
-  const a = alertTone(alert, state);
-  const sameRegion = threat && alert && threat.region === alert.region;
-  const kinds = sameRegion ? threat.threatKinds.map((k) => t((`alert.kind.${k}` in KIND_KEYS ? `alert.kind.${k}` : "alert.kind.other") as Parameters<Translate>[0])).join(", ") : "";
-  const summary = !sameRegion ? null : threat.state === "reported" ? t("alert.region.reported", { kinds }) : threat.state === "advisory" ? t("alert.region.advisory", { kinds }) : threat.state === "none" ? t("alert.region.none") : t("alert.region.unavailable");
-  const meta = [alert?.locationLabel, alert?.active && alert.since ? t("alert.since", { time: formatClock(alert.since, lang) }) : null, alert?.updatedAt ? t("alert.checked", { time: formatClock(alert.updatedAt, lang) }) : null].filter(Boolean).join(" · ");
-  return (
-    <Card style={[styles.card, alert?.active === true && { borderColor: c.critical, backgroundColor: c.criticalSoft }]}>
-      <View style={styles.cardHead}>
-        <Icon name="alert" size={iconSize.lg} color={toneColor(c, a.tone)} />
-        <View style={styles.flex}>
-          <Crossfade contentKey={a.key}><Text variant="headline" style={{ color: toneColor(c, a.tone) }}>{t(a.key)}</Text></Crossfade>
-          {meta ? <Text variant="subhead" color="secondary" numberOfLines={2}>{meta}</Text> : null}
-        </View>
-      </View>
-      {summary && <Text variant="callout" color="secondary">{summary}</Text>}
-    </Card>
-  );
-}
-
-const KIND_KEYS: Record<string, true> = {
-  "alert.kind.uav": true, "alert.kind.fpv": true, "alert.kind.recon": true, "alert.kind.kab": true, "alert.kind.cruise_missile": true,
-  "alert.kind.ballistic_missile": true, "alert.kind.missile": true, "alert.kind.aircraft": true, "alert.kind.other": true,
-};
-
 function CopilotCard({ question, onChange, onSend, onVoice, onPrompt, t }: { question: string; onChange: (v: string) => void; onSend: () => void; onVoice: () => void; onPrompt: (q: string) => void; t: Translate }): JSX.Element {
   const c = useColors();
   const prompts = [t("copilot.prompt.gps"), t("copilot.prompt.shelter"), t("copilot.prompt.fuel")];
   return (
     <Card style={styles.card}>
       <View style={styles.cardHead}>
-        <Icon name="sparkle" size={iconSize.lg} color={c.accent} />
+        <NaviaAiMark size={36} />
         <Text variant="headline" style={styles.flex}>{t("copilot.title")}</Text>
       </View>
       <View style={[styles.composer, { backgroundColor: c.surfaceMuted }]}>
@@ -493,9 +496,13 @@ const styles = StyleSheet.create({
   searchText: { flex: 1 },
   chipsScroll: { marginTop: space.xs, flexGrow: 0 },
   chips: { gap: space.xs, paddingHorizontal: space.md, paddingVertical: space.xxs },
+  beacons: { flexDirection: "row", gap: space.xs, paddingHorizontal: space.md, marginTop: space.sm },
+  beacon: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  beaconGlow: { borderRadius: 20 },
   compassRow: { alignItems: "flex-end", paddingHorizontal: space.md, marginTop: space.sm },
   compass: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-  rightRail: { position: "absolute", right: space.md, gap: space.sm },
+  rightRail: { position: "absolute", right: space.md, gap: space.sm, alignItems: "center" },
+  copilotFab: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center", borderWidth: 1.5 },
   leftRail: { position: "absolute", left: space.md },
   statusRow: { flexDirection: "row", gap: space.xs, paddingHorizontal: space.md, paddingBottom: space.sm },
   tile: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: space.xs, padding: space.xs, borderRadius: radius.lg },

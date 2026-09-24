@@ -148,6 +148,17 @@ export function useLiveContext() {
     return () => { clearInterval(tick); sub.current?.remove(); sub.current = null; };
   }, [navigating, start]);
 
+  // During navigation the GPS subscription is paused here, but the alert must
+  // stay current: re-check it every minute from the latest known position.
+  useEffect(() => {
+    if (!navigating) return undefined;
+    const every = setInterval(() => {
+      const fix = useNaviaStore.getState().state.position?.position ?? useNaviaStore.getState().currentFix;
+      if (fix) void loadAlert({ lat: fix.lat, lon: fix.lon, timestamp: Date.now(), accuracyM: null, speedMps: null, headingDeg: null }, true);
+    }, 60_000);
+    return () => clearInterval(every);
+  }, [navigating, loadAlert]);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {

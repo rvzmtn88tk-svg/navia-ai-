@@ -1,3 +1,4 @@
+import { useAuth } from "../auth/AuthProvider";
 import React, { useEffect, useState } from "react";
 import { Linking, ScrollView, StyleSheet, Switch, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
@@ -12,10 +13,11 @@ import { radius, space } from "../theme/tokens";
 export function SettingsScreen(): JSX.Element {
   const c = useColors();
   const { t, lang } = useT();
+  const auth = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const {
     language, setLanguage, themePreference, setThemePreference, displayName, setDisplayName,
-    introSoundEnabled, setIntroSoundEnabled, voiceGender, setVoiceGender, resetOnboarding,
+    introSoundEnabled, setIntroSoundEnabled, briefingEnabled, setBriefingEnabled, voiceGender, setVoiceGender, resetOnboarding,
   } = useAppSettings();
   const [maleAvailable, setMaleAvailable] = useState(true);
   const [previewing, setPreviewing] = useState(false);
@@ -39,10 +41,16 @@ export function SettingsScreen(): JSX.Element {
 
       <SectionLabel style={styles.sectionGap}>{t("settings.account")}</SectionLabel>
       <Card style={styles.stack}>
-        <Button label={t("settings.signInApple")} icon="user" variant="secondary" disabled onPress={() => {}} />
-        <Button label={t("settings.signInGoogle")} icon="globe" variant="secondary" disabled onPress={() => {}} />
-        <Button label={t("settings.signInEmail")} icon="send" variant="secondary" disabled onPress={() => {}} />
-        <Text variant="caption" color="muted">{t("settings.accountUnavailable")}</Text>
+        {auth.user ? <>
+          <Text variant="bodyStrong">{t("settings.signedInAs", { name: auth.user.displayName ?? auth.user.email ?? (auth.user.provider === "apple" ? "Apple" : "Google") })}</Text>
+          <Text variant="caption" color="muted">{t("settings.signedInHint")}</Text>
+          <Button label={t("settings.signOut")} variant="secondary" onPress={() => void auth.signOut()} />
+        </> : <>
+          <Button label={t("settings.signInApple")} icon="user" variant="secondary" disabled={!auth.appleAvailable || auth.busy} onPress={() => void auth.signInWithApple()} />
+          <Button label={t("settings.signInGoogle")} icon="globe" variant="secondary" disabled={!auth.googleAvailable || auth.busy} loading={auth.busy} onPress={() => void auth.signInWithGoogle()} />
+          {(!auth.appleAvailable || !auth.googleAvailable) && <Text variant="caption" color="muted">{t("settings.accountUnavailable")}</Text>}
+          {auth.error && <Text variant="caption" color="critical">{t("settings.signInFailed")}</Text>}
+        </>}
       </Card>
 
       <SectionLabel style={styles.sectionGap}>{t("settings.appearance")}</SectionLabel>
@@ -60,12 +68,15 @@ export function SettingsScreen(): JSX.Element {
           value={voiceGender} onChange={setVoiceGender}
           options={[{ value: "female", label: t("settings.voice.female") }, { value: "male", label: t("settings.voice.male") + (maleAvailable ? "" : " *") }]}
         />
+        {voiceGender === "male" && !maleAvailable && <Text variant="caption" color="muted">{t("settings.voice.maleInterim")}</Text>}
         <Button label={t("settings.voice.preview")} icon="volume" variant="secondary" loading={previewing} onPress={() => void preview()} />
       </Card>
 
       <SectionLabel style={styles.sectionGap}>NAVIA</SectionLabel>
       <Card style={styles.list}>
         <ListRow icon="volume" title={t("settings.sound")} trailing={<Switch value={introSoundEnabled} onValueChange={setIntroSoundEnabled} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("settings.sound")} />} />
+        <Divider inset={52} />
+        <ListRow icon="route" title={t("settings.briefing")} subtitle={t("settings.briefingHint")} trailing={<Switch value={briefingEnabled} onValueChange={setBriefingEnabled} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("settings.briefing")} />} />
         <Divider inset={52} />
         <ListRow icon="sparkle" title={t("settings.replayOnboarding")} onPress={() => { resetOnboarding(); navigation.navigate("Home"); }} />
         <Divider inset={52} />

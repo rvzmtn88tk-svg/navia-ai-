@@ -21,6 +21,8 @@ export type NaviaMapHandle = {
   flyTo: (point: LatLon, zoom?: number, bottomPadding?: number) => void;
   fitPoints: (points: LatLon[], bottomPadding?: number) => void;
   resetNorth: () => void;
+  /** Map centre (used for "I am here" placement). */
+  getCenter: () => Promise<LatLon | null>;
 };
 
 type Props = {
@@ -54,6 +56,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
   } = props;
   const c = useColors();
   const camera = useRef<MapLibreGL.CameraRef | null>(null);
+  const mapView = useRef<MapLibreGL.MapViewRef | null>(null);
   const zoom = useRef(user ? FOLLOW_ZOOM : 12);
   const bearing = useRef(0);
   const lastUser = useRef<UserPosition | null>(user);
@@ -110,6 +113,10 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
       camera.current?.fitBounds([maxLon, maxLat], [minLon, minLat], [padding.top + 32, 48, (bottomPadding ?? padding.bottom) + 32, 48], motion.camera);
     },
     resetNorth: () => camera.current?.setCamera({ heading: 0, pitch: 0, animationDuration: motion.normal, animationMode: "easeTo" }),
+    getCenter: async () => {
+      const center = await mapView.current?.getCenter().catch(() => null);
+      return center ? { lon: center[0]!, lat: center[1]! } : null;
+    },
   }), [cameraMode, cameraPadding, moveToUser, padding.bottom, padding.top]);
 
   const routeShape = useMemo(() => lineFeature(routeGeometry), [routeGeometry]);
@@ -121,6 +128,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
     // animation is running, so the touch itself is the signal.)
     <View style={StyleSheet.absoluteFill} onTouchMove={onUserGesture}>
       <MapLibreGL.MapView
+        ref={mapView}
         style={StyleSheet.absoluteFill}
         mapStyle={mapStyle}
         logoEnabled={false}

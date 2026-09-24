@@ -104,3 +104,33 @@ export class GuidanceAnnouncer {
     this.spoken.clear();
   }
 }
+
+/** Prompt used when the position is estimated (no GNSS): no exact distance. */
+export function cautiousPhrase(step: StepLike, lang: Lang): string {
+  if (step.maneuver === "arrive") return lang === "uk" ? "Приготуйтеся: місце призначення попереду." : "Get ready: your destination is ahead.";
+  const lead = lang === "uk" ? "Приготуйтеся: скоро" : "Get ready: soon";
+  return `${lead} ${action(step, lang)}${onto(step, lang)}.`;
+}
+
+/**
+ * Spoken status changes for resilient navigation. Each transition is spoken
+ * once: signal degrading, GNSS lost (switching to route guidance), recovered.
+ */
+export type ResilienceEvent = "degraded" | "lost" | "recovered";
+
+export function resiliencePhrase(event: ResilienceEvent, lang: Lang): string {
+  const uk = lang === "uk";
+  switch (event) {
+    case "degraded": return uk ? "Сигнал GPS нестабільний. Я стежу за позицією." : "GPS signal is unstable. I'm watching your position.";
+    case "lost": return uk ? "Сигнал GPS втрачено. Продовжуйте маршрутом — я веду за датчиками, позиція приблизна." : "GPS signal lost. Keep following the route — I'm guiding from motion sensors; the position is approximate.";
+    case "recovered": return uk ? "GPS відновлено. Позицію підтверджено." : "GPS restored. Position confirmed.";
+  }
+}
+
+/** Spoken notice when an air alert starts or ends at the user's location. */
+export function alertPhrase(active: boolean, scope: "district" | "city" | "region" | undefined, lang: Lang): string {
+  const uk = lang === "uk";
+  if (!active) return uk ? "Тривогу у вашому районі скасовано." : "The air alert for your area has ended.";
+  const where = scope === "region" ? (uk ? "по всій області" : "across the oblast") : scope === "city" ? (uk ? "у місті" : "in the city") : (uk ? "у вашому районі" : "in your district");
+  return uk ? `Увага! Повітряна тривога ${where}. Дотримуйтеся офіційних сигналів.` : `Attention! Air alert ${where}. Follow official signals.`;
+}
