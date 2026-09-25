@@ -372,8 +372,10 @@ export class NearbyPlacesProvider {
       }
       if (osm.length >= 3) break;
     }
-    if (error && osm.length === 0) {
-      try { osm = await this.nominatimCategory(location, category); error = null; } catch { /* keep the Overpass error */ }
+    // Nominatim fallback only where it has a matching category; an empty
+    // answer does not clear the failure (the list may simply be incomplete).
+    if (error && osm.length === 0 && NOMINATIM_PHRASE[category]) {
+      try { osm = await this.nominatimCategory(location, category); } catch { /* keep the Overpass error */ }
     }
     return { osm, error: osm.length > 0 ? null : error };
   }

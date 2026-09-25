@@ -49,7 +49,7 @@
     {
       "step": "arrive",
       "passed": true,
-      "detail": "mode=ARRIVED routeRemainingM=3 ticksUsed=3007"
+      "detail": "mode=ARRIVED routeRemainingM=3 ticksUsed=3005"
     }
   ],
   "finalMode": "ARRIVED",
@@ -234,17 +234,17 @@
     },
     {
       "timestamp": 27000,
-      "type": "GNSS_LOST",
+      "type": "GNSS_DEGRADED",
       "payload": {}
     },
     {
       "timestamp": 28000,
-      "type": "GNSS_LOST",
+      "type": "GNSS_DEGRADED",
       "payload": {}
     },
     {
       "timestamp": 29000,
-      "type": "GNSS_LOST",
+      "type": "GNSS_DEGRADED",
       "payload": {}
     },
     {
@@ -271,7 +271,7 @@
     },
     {
       "timestamp": 33000,
-      "type": "RECOVERY",
+      "type": "GNSS_DEGRADED",
       "payload": {}
     },
     {
@@ -283,7 +283,7 @@
     },
     {
       "timestamp": 34000,
-      "type": "RECOVERY",
+      "type": "GNSS_DEGRADED",
       "payload": {}
     },
     {
@@ -294,11 +294,21 @@
       }
     },
     {
+      "timestamp": 35000,
+      "type": "RECOVERY",
+      "payload": {}
+    },
+    {
       "timestamp": 36000,
       "type": "GNSS_FIX",
       "payload": {
         "accuracyM": 5
       }
+    },
+    {
+      "timestamp": 36000,
+      "type": "RECOVERY",
+      "payload": {}
     },
     {
       "timestamp": 37000,
