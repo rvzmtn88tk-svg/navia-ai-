@@ -50,8 +50,6 @@ type Props = {
   view3d?: boolean;
   /** Called after every rendered frame (dev FPS meter). */
   onFrame?: () => void;
-  /** Marker follows the phone's compass when slow (see sensors/fuseHeading). */
-  compassHeading?: boolean;
 };
 
 const KYIV: LatLon = { lat: 50.4501, lon: 30.5234 };
@@ -72,7 +70,7 @@ export function autoNavZoom(speedMps: number | null | undefined): number {
 export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function NaviaMap(props, ref) {
   const {
     mapStyle, user, quality, cameraMode, onUserGesture, onBearingChange, routeGeometry = [], traveledGeometry = [],
-    destination, places = [], selectedPlaceId, onPlacePress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame, compassHeading = false,
+    destination, places = [], selectedPlaceId, onPlacePress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame,
   } = props;
   const view3dRef = useRef(view3d);
   view3dRef.current = view3d;
@@ -260,7 +258,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           </MapLibreGL.MarkerView>
         )}
 
-        {user && <UserPuck position={user} quality={quality} billboard={view3d && cameraMode === "navigate"} compass={compassHeading} speedMps={speedMps ?? null} />}
+        {user && <UserPuck position={user} quality={quality} billboard={view3d && cameraMode === "navigate"} speedMps={speedMps ?? null} />}
       </MapLibreGL.MapView>
     </View>
   );

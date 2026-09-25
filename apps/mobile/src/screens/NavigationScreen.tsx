@@ -360,7 +360,6 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           padding={padding}
           speedMps={state.speedMps}
           view3d={nav3d}
-          compassHeading={mode === "walk"}
           {...(__DEV__ ? { onFrame: fps.onFrame } : {})}
         />
       )}

@@ -188,7 +188,6 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           onBearingChange={setBearing}
           places={categoryPlaces}
           searchCircle={categoryEntry?.radiusM != null && fix ? { center: { lat: fix.lat, lon: fix.lon }, radiusM: categoryEntry.radiusM } : null}
-          compassHeading
           speedMps={fix?.speedMps ?? null}
           selectedPlaceId={selected?.id}
           onPlacePress={openPlace}

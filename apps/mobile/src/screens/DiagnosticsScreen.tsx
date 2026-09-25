@@ -7,7 +7,7 @@
 import { regionPackage } from "../offline/regionPackage";
 import { isSimulatedOffline } from "../offline/network";
 import type { OfflinePackageStatus } from "@navia/core";
-import { compassAvailable, headingLatencySummary, resetHeadingLatency, runSyntheticSpin } from "../sensors/deviceHeading";
+import { compassAvailable, gyroAvailable, headingLatencySummary, lastHeading, resetHeadingLatency, runSyntheticSpin, subscribeHeading } from "../sensors/deviceHeading";
 import React, { useEffect, useState } from "react";
 import { View, ScrollView, StyleSheet, Switch, Pressable } from "react-native";
 import { DiagnosticsEngine, type DiagnosticsSnapshot } from "@navia/core";
@@ -152,7 +152,7 @@ export function DiagnosticsScreen(): JSX.Element {
         </View>
       )}
 
-      {__DEV__ && <HeadingLatencyTest p={p} en={en} />}
+      <HeadingLatencyTest p={p} en={en} />
 
       {!snapshot ? (
         <Text style={[styles.value, { color: p.text }]}>{en ? "No active navigation session." : "Немає активної навігаційної сесії."}</Text>
@@ -229,26 +229,33 @@ const styles = StyleSheet.create({
   demoButtonText: { color: "#c4b5fd", fontSize: 12, fontWeight: "600" },
 });
 
-/** Dev: compass availability and the measured compass → marker latency
- * (synthetic 30 Hz rotation through the same code path as the real compass). */
+/** Heading source of "me on the map" and the measured sensor → marker latency
+ * (synthetic in-place rotation through the same fusion and marker path). */
 function HeadingLatencyTest({ p, en }: { p: ReturnType<typeof useAppSettings>["palette"]; en: boolean }): JSX.Element {
   const [result, setResult] = useState<string>("");
+  const [live, setLive] = useState(lastHeading());
+  useEffect(() => subscribeHeading(setLive), []);
   const run = async () => {
     resetHeadingLatency();
-    setResult(en ? "Running…" : "Вимірюю…");
-    await runSyntheticSpin(3000, 30);
+    setResult(en ? "Rotating in place for 3 s…" : "Обертання на місці 3 с…");
+    await runSyntheticSpin(3000, 60);
     await new Promise<void>((r) => { setTimeout(() => r(), 200); });
     const s = headingLatencySummary();
-    setResult(s.n === 0
-      ? (en ? "No marker on screen to measure (open the map)." : "На мапі немає позначки для виміру (відкрийте мапу).")
-      : `n=${s.n} · p50 ${s.p50} ms · p95 ${s.p95} ms · max ${s.max} ms`);
+    const line = s.n === 0
+      ? (en ? "No marker on screen to measure (open the map first)." : "На мапі немає позначки (спершу відкрийте мапу).")
+      : `n=${s.n} · p50 ${s.p50} ms · p95 ${s.p95} ms · max ${s.max} ms · ${en ? "max marker error" : "макс. відхилення позначки"} ${s.maxErrorDeg?.toFixed(1)}°`;
+    if (__DEV__) console.log(`[heading-test] ${line}`);
+    setResult(line);
   };
-  const avail = compassAvailable();
+  const yes = en ? "available" : "доступний", no = en ? "not available" : "недоступний";
   return (
     <View style={[styles.demoControls, { backgroundColor: p.surfaceRaised }]}>
-      <Section title={en ? "Compass → marker latency" : "Компас → позначка: затримка"} p={p} />
-      <Row label={en ? "Compass" : "Компас"} value={avail == null ? "—" : avail ? (en ? "available" : "доступний") : (en ? "not available (simulator?)" : "недоступний (симулятор?)")} p={p} />
-      <DemoButton label={en ? "Measure (synthetic 30 Hz spin)" : "Виміряти (синтетичне обертання 30 Гц)"} onPress={() => void run()} p={p} />
+      <Section title={en ? "My heading on the map" : "Мій напрямок на мапі"} p={p} />
+      <Row label={en ? "Source" : "Джерело"} value={live?.source ?? "—"} p={p} />
+      <Row label={en ? "Heading" : "Напрямок"} value={live?.deg != null ? `${Math.round(live.deg)}°` : "—"} p={p} />
+      <Row label={en ? "Compass" : "Компас"} value={compassAvailable() === "ok" ? yes : compassAvailable() === "silent" ? (en ? "no readings (simulator?)" : "немає показань (симулятор?)") : compassAvailable() === "unavailable" ? no : "—"} p={p} />
+      <Row label={en ? "Gyroscope" : "Гіроскоп"} value={gyroAvailable() == null ? "—" : gyroAvailable() ? yes : no} p={p} />
+      <DemoButton label={en ? "Measure latency (rotate in place, 60°/s)" : "Виміряти затримку (обертання на місці 60°/с)"} onPress={() => void run()} p={p} />
       {result ? <Text style={[styles.value, { color: p.text }]}>{result}</Text> : null}
     </View>
   );

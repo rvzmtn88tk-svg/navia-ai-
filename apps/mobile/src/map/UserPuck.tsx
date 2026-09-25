@@ -6,8 +6,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import MapLibreGL from "@maplibre/maplibre-react-native";
 import { useColors } from "../components/ui";
 import type { UserPosition } from "./NaviaMap";
-import { fuseHeading } from "../sensors/fuseHeading";
-import { lastHeading, recordHeadingLatency, subscribeHeading, type HeadingReading } from "../sensors/deviceHeading";
+import { feedCourse, lastHeading, recordHeadingLatency, subscribeHeading, type HeadingReading } from "../sensors/deviceHeading";
 
 export type PuckQuality = "good" | "degraded" | "lost";
 
@@ -49,24 +48,20 @@ export function useGlide(target: UserPosition): UserPosition {
   return { ...current, headingDeg: target.headingDeg };
 }
 
-/** Marker heading from the phone's compass (walking/standing) or the GPS
- * course (driving), updated per compass event without re-rendering screens. */
-function useMarkerHeading(useCompass: boolean, courseDeg: number | null, speedMps: number | null): number | null {
-  const [reading, setReading] = useState<HeadingReading | null>(() => (useCompass ? lastHeading() : null));
+/** Marker heading: compass + gyroscope fused (see sensors/headingFusion),
+ * GPS course only as a fallback when the phone has no compass. Applied per
+ * sensor event (≈30 Hz) with no animation, without re-rendering screens. */
+function useMarkerHeading(courseDeg: number | null, speedMps: number | null): number | null {
+  const [reading, setReading] = useState<HeadingReading | null>(() => lastHeading());
   const pendingAt = useRef<number | null>(null);
+  useEffect(() => subscribeHeading((r) => { pendingAt.current = r.at; setReading(r); }), []);
+  useEffect(() => { feedCourse(courseDeg, speedMps); }, [courseDeg, speedMps]);
+  const deg = reading?.deg ?? courseDeg;
+  // Latency: sensor event → this marker's new heading committed.
   useEffect(() => {
-    if (!useCompass) return undefined;
-    return subscribeHeading((r) => { pendingAt.current = r.at; setReading(r); });
-  }, [useCompass]);
-  const fused = fuseHeading({
-    compassDeg: reading?.deg ?? null, compassAt: reading?.at ?? null, compassAccuracyDeg: reading?.accuracyDeg ?? null,
-    courseDeg, speedMps, nowMs: Date.now(),
-  });
-  // Latency: compass event → this marker's new heading committed.
-  useEffect(() => {
-    if (pendingAt.current != null) { recordHeadingLatency(Date.now() - pendingAt.current); pendingAt.current = null; }
-  }, [reading]);
-  return fused.deg ?? courseDeg;
+    if (pendingAt.current != null) { recordHeadingLatency(Date.now() - pendingAt.current, deg); pendingAt.current = null; }
+  }, [reading]); // eslint-disable-line react-hooks/exhaustive-deps
+  return deg;
 }
 
 function usePulse(): number {
@@ -82,13 +77,13 @@ function usePulse(): number {
 /** `billboard`: in 3D the disc and arrow face the screen (not laid flat on
  * the tilted ground), so they stay readable at any camera pitch. The puck is
  * the last layer on the map: above buildings, route and labels. */
-export const UserPuck = React.memo(function UserPuck({ position, quality, billboard = false, compass = false, speedMps = null }: {
+export const UserPuck = React.memo(function UserPuck({ position, quality, billboard = false, speedMps = null }: {
   position: UserPosition; quality: PuckQuality; billboard?: boolean;
-  /** Use the phone's compass when slow (see fuseHeading). */
-  compass?: boolean; speedMps?: number | null;
+  /** For the GPS-course fallback. */
+  speedMps?: number | null;
 }): JSX.Element {
   const c = useColors();
-  const heading = useMarkerHeading(compass, position.headingDeg, speedMps);
+  const heading = useMarkerHeading(position.headingDeg, speedMps);
   const shown = { ...useGlide(position), headingDeg: heading };
   const pulse = usePulse();
   const tone = quality === "good" ? c.accent : quality === "degraded" ? c.warning : c.critical;
