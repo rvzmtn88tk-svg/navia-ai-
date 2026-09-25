@@ -8,6 +8,28 @@ import type { LatLon } from "./types";
 import type { POI, LandmarkCategory } from "./landmark-engine";
 import { haversineMeters } from "./geodesy";
 
+/** Anything with a position and a category (app places, core POIs, …). */
+export type Locatable = { location: LatLon; category: string };
+
+/** Floating-point slack so a point exactly on the circle counts as inside. */
+const BOUNDARY_EPSILON_M = 1e-6;
+
+/**
+ * STRICT radius search: every item whose great-circle distance from `center`
+ * is ≤ `radiusM` (the boundary itself is inside), optionally of one category,
+ * nearest first, each with its distance. No "nearest N", no widening.
+ */
+export function searchByRadius<T extends Locatable>(items: readonly T[], center: LatLon, radiusM: number, category?: string): (T & { distanceM: number })[] {
+  if (!Number.isFinite(radiusM) || radiusM < 0) throw new Error("searchByRadius: radius must be a non-negative number of metres");
+  const out: (T & { distanceM: number })[] = [];
+  for (const item of items) {
+    if (category != null && item.category !== category) continue;
+    const distanceM = haversineMeters(center, item.location);
+    if (distanceM <= radiusM + BOUNDARY_EPSILON_M) out.push({ ...item, distanceM });
+  }
+  return out.sort((a, b) => a.distanceM - b.distanceM);
+}
+
 export class POIEngine {
   private pois: POI[] = [];
 
@@ -29,11 +51,12 @@ export class POIEngine {
 
   /** All POIs within `radiusM` of `center`, nearest first. */
   near(center: LatLon, radiusM: number): POI[] {
-    return this.pois
-      .map((p) => ({ poi: p, distanceM: haversineMeters(center, p.location) }))
-      .filter((x) => x.distanceM <= radiusM)
-      .sort((a, b) => a.distanceM - b.distanceM)
-      .map((x) => x.poi);
+    return searchByRadius(this.pois, center, radiusM).map(({ distanceM: _d, ...poi }) => poi as POI);
+  }
+
+  /** Strict radius search, optionally within one category (see searchByRadius). */
+  searchByRadius(center: LatLon, radiusM: number, category?: LandmarkCategory): (POI & { distanceM: number })[] {
+    return searchByRadius(this.pois, center, radiusM, category);
   }
 
   searchByName(query: string): POI[] {

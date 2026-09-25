@@ -6,7 +6,7 @@ import { Animated, Linking, Modal, Pressable, RefreshControl, ScrollView, StyleS
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList, RouteMode } from "../navigation/RootNavigator";
-import { DEMO_DESTINATION } from "@navia/core";
+import { DEMO_DESTINATION, destinationPoint } from "@navia/core";
 import { useNaviaStore } from "../engine/naviaController";
 import { useLiveContext, type GnssHealth, type GpsStatus } from "../engine/useLiveContext";
 import { useAppSettings, type MapLayer } from "../settings/AppSettings";
@@ -26,6 +26,7 @@ import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { proactiveInsights, suggestions } from "../ai/copilotBrain";
 import { StatusBeacon } from "../components/StatusBeacon";
+import { gnssTrendReasons } from "../engine/gnssWords";
 import { NaviaAiMark } from "../components/NaviaAiMark";
 import { Icon, type IconName } from "../components/Icon";
 import { Button, Card, Chip, Divider, IconButton, ListRow, SectionLabel, Segmented, Text, TextField, Touchable, useColors } from "../components/ui";
@@ -111,6 +112,12 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   }, [focusOn]);
 
 
+  function setCategoryRadius(radiusM: number | null) {
+    if (!category) return;
+    framedCategory.current = null;
+    void live.loadCategory(category, true, radiusM);
+  }
+
   function selectCategory(next: ChipCategory) {
     setSelected(null);
     if (category === next) { setCategory(null); setSnap("peek"); return; }
@@ -119,10 +126,19 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     void live.loadCategory(next);
   }
 
+  // A chosen radius: frame the whole search circle.
+  const circleRadius = categoryEntry?.radiusM ?? null;
+  useEffect(() => {
+    if (!category || circleRadius == null || !fix) return;
+    const c0 = { lat: fix.lat, lon: fix.lon };
+    setCameraMode("free");
+    map.current?.fitPoints([0, 90, 180, 270].map((b) => destinationPoint(c0, b, circleRadius)), halfSheetHeight);
+  }, [category, circleRadius]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Frame the user and the nearest results once a category has loaded.
   const framedCategory = useRef<string | null>(null);
   useEffect(() => {
-    if (!category || categoryPlaces.length === 0 || framedCategory.current === category) return;
+    if (!category || categoryPlaces.length === 0 || framedCategory.current === category || circleRadius != null) return;
     framedCategory.current = category;
     const nearby = categoryPlaces.slice(0, 8).map((p) => p.location);
     setCameraMode("free");
@@ -171,6 +187,9 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           onUserGesture={() => setCameraMode("free")}
           onBearingChange={setBearing}
           places={categoryPlaces}
+          searchCircle={categoryEntry?.radiusM != null && fix ? { center: { lat: fix.lat, lon: fix.lon }, radiusM: categoryEntry.radiusM } : null}
+          compassHeading
+          speedMps={fix?.speedMps ?? null}
           selectedPlaceId={selected?.id}
           onPlacePress={openPlace}
           destination={selected && !selected.category ? selected : null}
@@ -230,7 +249,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
 
       <BottomSheet snap={snap} onSnapChange={setSnap} peekHeight={PEEK_H} fullTop={fullTop} visibleHeight={sheetVisible}
         header={selected ? <PlaceHeader place={selected} t={t} lang={lang} onClose={closeContext} />
-          : category ? <CategoryHeader category={category} count={categoryPlaces.length} t={t} onClose={closeContext} />
+          : category ? <CategoryHeader category={category} count={categoryPlaces.length} radiusM={categoryEntry?.radiusM ?? null} loading={categoryEntry?.state === "loading"} onRadius={setCategoryRadius} t={t} lang={lang} onClose={closeContext} />
             : <View style={[styles.savedRow, styles.savedHeader]}>
                 <SavedTile icon="home" label={t("saved.home")} place={home} onPress={() => home ? startRoute(home, "car") : navigation.navigate("Search", { pickFor: "home" })} />
                 <SavedTile icon="work" label={t("saved.work")} place={work} onPress={() => work ? startRoute(work, "car") : navigation.navigate("Search", { pickFor: "work" })} />
@@ -246,7 +265,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
             <PlaceBody place={selected} t={t} mode={routeMode} onMode={setRouteMode} onRoute={() => startRoute(selected, routeMode)}
               saved={[home, work, ...custom].some((p) => p?.id === selected.id)} onSave={() => saveCustom({ id: selected.id || placeId(selected.lat, selected.lon), label: selected.label, subtitle: selected.subtitle, lat: selected.lat, lon: selected.lon })} />
           ) : category ? (
-            <CategoryList places={categoryPlaces} state={categoryEntry?.state ?? "loading"} t={t} lang={lang} onPick={openPlace} onRetry={() => category && void live.loadCategory(category, true)} />
+            <CategoryList places={categoryPlaces} state={categoryEntry?.state ?? "loading"} unavailable={categoryEntry?.unavailable ?? []} usedOffline={!!categoryEntry?.usedOffline} t={t} lang={lang} onPick={openPlace} onRetry={() => category && void live.loadCategory(category, true)} />
           ) : (
             <>
               <GpsCard gpsStatus={live.gpsStatus} health={live.health} accuracyM={fix?.accuracyM ?? null} fixAt={fix?.timestamp ?? null} t={t} lang={lang}
@@ -312,11 +331,25 @@ function StatusBeacons({ gpsStatus, health, alert, t, onPress }: {
   );
 }
 
-function CategoryHeader({ category, count, t, onClose }: { category: ChipCategory; count: number; t: Translate; onClose: () => void }): JSX.Element {
+const RADII: (number | null)[] = [null, 500, 1000, 3000, 5000, 10000];
+
+function CategoryHeader({ category, count, radiusM, loading, onRadius, t, lang, onClose }: {
+  category: ChipCategory; count: number; radiusM: number | null; loading: boolean; onRadius: (r: number | null) => void; t: Translate; lang: "uk" | "en"; onClose: () => void;
+}): JSX.Element {
+  const title = radiusM == null
+    ? t("category.nearbyCount", { category: t(CATEGORY_META[category].label), count })
+    : t("category.inRadius", { category: t(CATEGORY_META[category].label), count, radius: formatDistance(radiusM, lang) });
   return (
-    <View style={styles.contextHeader}>
-      <Text variant="title" style={styles.flex} numberOfLines={1}>{t("category.nearbyCount", { category: t(CATEGORY_META[category].label), count })}</Text>
-      <IconButton icon="close" tone="plain" size={40} label={t("common.close")} onPress={onClose} />
+    <View style={styles.categoryHeader}>
+      <View style={styles.contextHeaderRow}>
+        <Text variant="title" style={styles.flex} numberOfLines={2}>{loading ? t(CATEGORY_META[category].label) : title}</Text>
+        <IconButton icon="close" tone="plain" size={40} label={t("common.close")} onPress={onClose} />
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.radiusRow}>
+        {RADII.map((r) => (
+          <Chip key={String(r)} label={r == null ? t("category.radiusAuto") : formatDistance(r, lang)} selected={r === radiusM} onPress={() => onRadius(r)} />
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -357,7 +390,7 @@ function PlaceBody({ place, t, mode, onMode, onRoute, saved, onSave }: {
   );
 }
 
-function CategoryList({ places, state, t, lang, onPick, onRetry }: { places: NearbyPlace[]; state: string; t: Translate; lang: "uk" | "en"; onPick: (p: NearbyPlace) => void; onRetry: () => void }): JSX.Element {
+function CategoryList({ places, state, unavailable, usedOffline, t, lang, onPick, onRetry }: { places: NearbyPlace[]; state: string; unavailable: string[]; usedOffline: boolean; t: Translate; lang: "uk" | "en"; onPick: (p: NearbyPlace) => void; onRetry: () => void }): JSX.Element {
   if (places.length === 0) {
     return (
       <View style={styles.empty}>
@@ -366,13 +399,24 @@ function CategoryList({ places, state, t, lang, onPick, onRetry }: { places: Nea
       </View>
     );
   }
-  return <>{places.slice(0, 30).map((p, i) => (
-    <View key={p.id}>
-      {i > 0 && <Divider inset={52} />}
-      <ListRow icon={CATEGORY_META[p.category].icon} iconTint={CATEGORY_META[p.category].color} title={p.name}
-        subtitle={[formatDistance(p.distanceM, lang), p.address && p.address !== p.name ? p.address : null].filter(Boolean).join(" · ")} onPress={() => onPick(p)} />
-    </View>
-  ))}</>;
+  const shown = places.slice(0, 100);
+  return <>
+    {unavailable.length > 0 && <Text variant="caption" color="warning" style={styles.moreNote}>{usedOffline ? t("category.offlineUsed", { sources: unavailable.join(", ") }) : t("category.partial", { sources: unavailable.join(", ") })}</Text>}
+    {shown.map((p, i) => (
+      <View key={p.id}>
+        {i > 0 && <Divider inset={52} />}
+        <ListRow icon={CATEGORY_META[p.category].icon} iconTint={CATEGORY_META[p.category].color} title={p.name}
+          subtitle={[formatDistance(p.distanceM, lang), p.address && p.address !== p.name ? p.address : null, placeSourceLabel(p, t)].filter(Boolean).join(" · ")} onPress={() => onPick(p)} />
+      </View>
+    ))}
+    {places.length > shown.length && <Text variant="caption" color="muted" style={styles.moreNote}>{t("category.shownOf", { shown: shown.length, total: places.length })}</Text>}
+  </>;
+}
+
+/** "КМДА · онлайн", "OpenStreetMap · онлайн", "Бучанська міська рада · офлайн". */
+function placeSourceLabel(p: NearbyPlace, t: Translate): string {
+  const who = p.source === "Kyiv City open data" ? "КМДА" : p.source === "data.gov.ua" ? (p.sourceDetail?.split(" · ")[0] ?? "data.gov.ua") : "OpenStreetMap";
+  return `${who} · ${t(`place.origin.${p.origin}` as Parameters<Translate>[0])}`;
 }
 
 function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefresh }: {
@@ -380,7 +424,9 @@ function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefr
 }): JSX.Element {
   const c = useColors();
   const g = gpsTone(gpsStatus, health);
-  const explain = gpsStatus !== "ready" ? null : health === "stable" ? t("gps.explainStable") : health === "unstable" ? t("gps.explainUnstable") : t("gps.explainLost");
+  const trend = useNaviaStore((s) => s.state.gnssTrend);
+  const warning = health === "unstable" && trend?.level === "degrading" ? `${t("gps.warnDegrading")}: ${gnssTrendReasons(trend, t)}.` : null;
+  const explain = gpsStatus !== "ready" ? null : health === "stable" ? t("gps.explainStable") : health === "unstable" ? (warning ?? t("gps.explainUnstable")) : t("gps.explainLost");
   return (
     <Card style={styles.card}>
       <View style={styles.cardHead}>
@@ -514,6 +560,10 @@ const styles = StyleSheet.create({
   tile: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: space.xs, padding: space.xs, borderRadius: radius.lg },
   tileIcon: { width: 40, height: 40, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
   tileText: { flex: 1, minWidth: 0 },
+  categoryHeader: { paddingHorizontal: space.md, paddingBottom: space.sm, gap: space.xs },
+  contextHeaderRow: { flexDirection: "row", alignItems: "flex-start", gap: space.xs },
+  radiusRow: { gap: space.xs, paddingRight: space.md },
+  moreNote: { paddingHorizontal: space.md, paddingVertical: space.sm },
   contextHeader: { flexDirection: "row", alignItems: "flex-start", gap: space.xs, paddingHorizontal: space.md, paddingBottom: space.sm },
   metaRow: { flexDirection: "row", flexWrap: "wrap", columnGap: space.xs, marginTop: space.xxs },
   sheetContent: { paddingHorizontal: space.md, paddingBottom: space.xl, gap: space.sm },

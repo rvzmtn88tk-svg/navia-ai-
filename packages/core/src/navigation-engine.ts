@@ -31,12 +31,15 @@ import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
 import { TelemetryLogger } from "./telemetry-logger";
 import { haversineMeters } from "./geodesy";
+import { GnssTrendMonitor, type GnssTrend } from "./gnss-trend";
 import { MotionDetector, RouteDeadReckoner, deadReckoningConfidence, type DeadReckoningEstimate } from "./route-dead-reckoning";
 
 const DEFAULT_GNSS_CONFIG: GNSSConfig = {
   maxPlausibleSpeedMps: 45, maxJumpM: 150, maxFreshAgeMs: 6000, accuracyGoodM: 10, accuracyBadM: 80,
 };
 const GNSS_LOST_CONFIRM_MS = 3_000;
+/** Standing still: a fix of the same place this old is still the truth. */
+const STATIONARY_FIX_MAX_AGE_MS = 15_000;
 
 export type NavigationEngineOptions = {
   routingProvider: RoutingProvider;
@@ -78,6 +81,9 @@ export class NavigationEngine {
   private staleAfterMs: number;
   private stationaryStaleAfterMs: number;
   private prevTrustedGnssRaw: GNSSRawSample | null = null;
+  /** Watches the fix stream for degradation before the signal is lost. */
+  private trend = new GnssTrendMonitor();
+  private lastTrend: GnssTrend | null = null;
   private fusion = new SensorFusionEngine();
   private progressEngine = new RouteProgressEngine();
   private offRouteDetector = new OffRouteDetector();
@@ -247,10 +253,26 @@ export class NavigationEngine {
    * GNSSMonitor immediately; the resulting NavigationState comes from the
    * next tick() call, same clock-driven design as staleness detection. */
   pushGnssSample(sample: GNSSRawSample, nowMs = sample.timestamp): boolean {
+    // A fix that is not newer than the last one (an OS cache replay, e.g. from
+    // a one-off position request) carries no information: ignore it rather
+    // than treat it as a signal anomaly.
+    if (this.lastGnssRaw && sample.timestamp <= this.lastGnssRaw.timestamp) return this.lastGnssIntegrity?.trusted ?? false;
     const previousFix = this.lastTrustedGnssRaw;
     const isPreviousFixRecent = previousFix != null && nowMs - previousFix.timestamp <= this.gnssMaxFreshAgeMs;
     const baseline = previousFix && (sample.timestamp <= previousFix.timestamp || isPreviousFixRecent) ? previousFix : null;
     const integrity = this.gnssMonitor.evaluate(baseline, sample, nowMs);
+    // Standing still, iOS answers a position request with a fix a few seconds
+    // old. The same place a few seconds ago is still the truth: accept it if
+    // it is otherwise clean (accuracy, no jump), instead of calling GPS weak.
+    const lastTrusted = this.lastTrustedGnssRaw;
+    if (!integrity.trusted && lastTrusted && this.movingKnown(nowMs) !== true) {
+      const ageMs = nowMs - sample.timestamp;
+      const samePlace = haversineMeters(lastTrusted, sample) < 10;
+      const accurate = sample.accuracyM != null && sample.accuracyM <= 30;
+      if (ageMs >= 0 && ageMs <= STATIONARY_FIX_MAX_AGE_MS && samePlace && accurate && integrity.jumpScore < 0.2 && integrity.speedScore < 0.35) {
+        integrity.trusted = true;
+      }
+    }
     // While dead reckoning along a route, a "recovered" fix far from where the
     // vehicle must be is treated as spoofed, not as a jump to follow.
     if (integrity.trusted && this.route && this.drWasActive && !this.deadReckoner.isConsistent(sample, nowMs)) {
@@ -265,6 +287,7 @@ export class NavigationEngine {
     } else if (integrity.trusted) {
       this.conflictFixes = [];
     }
+    this.trend.push(sample.accuracyM, nowMs, this.movingKnown(nowMs) === false);
     this.lastGnssRaw = sample;
     this.lastGnssIntegrity = integrity;
     this.telemetry.log("GNSS_FIX", { accuracyM: sample.accuracyM, trusted: integrity.trusted }, sample.timestamp);
@@ -279,15 +302,25 @@ export class NavigationEngine {
    * when available, not reporting motion) gets a longer silence allowance. */
   private currentStaleLimitMs(nowMs: number): number {
     const last = this.lastTrustedGnssRaw;
-    if (!last || last !== this.lastGnssRaw) return this.staleAfterMs;
-    // Speed when the receiver reports it; otherwise the last two fixes
-    // standing (almost) in the same place.
+    if (!last) return this.staleAfterMs;
+    const moving = this.movingKnown(nowMs);
+    if (moving === false) return this.stationaryStaleAfterMs;
+    // Unknown (no speed from the receiver, not enough fixes yet): iOS may be
+    // quiet because nothing moves — allow a medium silence.
+    if (moving === null) return Math.max(this.staleAfterMs, 12_000);
+    // Moving: lost after ≈3 missed fixes of the receiver's own rhythm.
+    return Math.min(this.staleAfterMs, this.trend.lostAfterMs());
+  }
+
+  /** Moving / still / unknown, from the motion sensor or the last trusted fix. */
+  private movingKnown(nowMs: number): boolean | null {
+    const m = this.motion.isMoving(nowMs);
+    if (m != null) return m;
+    const last = this.lastTrustedGnssRaw;
+    if (!last) return null;
+    if (last.speedMps != null) return last.speedMps >= 0.7;
     const prev = this.prevTrustedGnssRaw;
-    const still = last.speedMps != null
-      ? last.speedMps < 0.7
-      : prev != null && haversineMeters(prev, last) < 8;
-    const moving = this.motion.isMoving(nowMs);
-    return still && moving !== true ? this.stationaryStaleAfterMs : this.staleAfterMs;
+    return prev != null ? haversineMeters(prev, last) >= 8 : null;
   }
 
   /** Advance the engine's state to `nowMs`. Call this on a regular clock
@@ -297,6 +330,9 @@ export class NavigationEngine {
     const ageMs = this.lastGnssRaw ? nowMs - this.lastGnssRaw.timestamp : Infinity;
     const staleLimitMs = this.currentStaleLimitMs(nowMs);
     const isStale = ageMs < -1_500 || ageMs > staleLimitMs;
+    const moving = this.movingKnown(nowMs);
+    const trend = this.trend.evaluate(nowMs, moving);
+    this.lastTrend = trend;
 
     const gnssIntegrityState: GNSSIntegrityState = !this.lastGnssRaw
       ? "LOST"
@@ -315,7 +351,8 @@ export class NavigationEngine {
       this.degradedFixStreak = 0;
       if (this.displayedGnss === "NORMAL") this.displayedGnss = "DEGRADED";
       if (this.lostSinceMs == null) this.lostSinceMs = nowMs - Math.max(0, ageMs - staleLimitMs);
-      if (nowMs - this.lostSinceMs >= GNSS_LOST_CONFIRM_MS) this.displayedGnss = "LOST";
+      // Moving and ≈3 fixes missed: report the loss now, not metres later.
+      if (nowMs - this.lostSinceMs >= GNSS_LOST_CONFIRM_MS || (moving !== false && trend.level === "lost")) this.displayedGnss = "LOST";
     } else if (gnssIntegrityState === "DEGRADED") {
       this.lostSinceMs = null;
       this.recoveryFixStreak = 0;
@@ -332,8 +369,15 @@ export class NavigationEngine {
         this.lastDisplayedFixTimestamp = displaySampleId;
         if (this.displayedGnss !== "NORMAL") this.recoveryFixStreak++;
       }
-      if (!this.lastTrustedPosition) this.displayedGnss = "NORMAL";
-      else if (this.recoveryFixStreak >= 3) {
+      if (trend.level === "degrading" && this.lastTrustedPosition) {
+        // Fixes are still usable, but the stream is getting worse: warn now.
+        this.recoveryFixStreak = 0;
+        if (this.displayedGnss === "NORMAL") this.displayedGnss = "DEGRADED";
+      } else if (!this.lastTrustedPosition) this.displayedGnss = "NORMAL";
+      // Moving: 3 good fixes before calling GPS stable again. Standing still
+      // with fixes that agree on the same place: one is enough (fixes then
+      // arrive only every ~15 s).
+      else if (this.recoveryFixStreak >= (this.movingKnown(nowMs) === true ? 3 : 1)) {
         this.displayedGnss = "NORMAL";
         this.recoveryFixStreak = 0;
       }
@@ -454,6 +498,7 @@ export class NavigationEngine {
       positionMode: route ? (hasFreshTrustedPosition ? "GNSS" : dr ? (dr.anchorSource === "manual" ? "MANUAL" : "DEAD_RECKONING") : null) : null,
       positionUncertaintyM: dr ? Math.round(dr.uncertaintyM) : null,
       gnssConflict: this.currentConflict(nowMs, dr ? dr.position : null),
+      gnssTrend: this.lastTrend ? { level: this.lastTrend.level, reasons: this.lastTrend.reasons, sinceLastFixMs: this.lastTrend.sinceLastFixMs, expectedIntervalMs: this.lastTrend.expectedIntervalMs, accuracyM: this.lastTrend.accuracyM } : null,
       updatedAt: nowMs,
     };
     return this.currentState;

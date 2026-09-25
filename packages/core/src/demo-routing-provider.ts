@@ -10,7 +10,7 @@
 // live routing data (spec section 40).
 
 import type { LatLon, RouteStep } from "./types";
-import { haversineMeters, initialBearing, angleDeltaDeg } from "./geodesy";
+import { haversineMeters, initialBearing, signedTurnDeg } from "./geodesy";
 import type { Route, RouteRequest, RoutingProvider, MapMatchResult } from "./route-engine";
 
 export type DemoRoadNode = {
@@ -34,8 +34,11 @@ export type DemoRoadGraph = {
 
 const AVERAGE_SPEED_MPS = 11; // ~40 km/h, a reasonable urban demo pace
 
-function maneuverFor(turnDeltaDeg: number): RouteStep["maneuver"] {
-  const d = ((turnDeltaDeg + 540) % 360) - 180; // -180..180
+/** `turnDeg` is SIGNED (signedTurnDeg): positive = clockwise = right. The
+ * old code passed the absolute angle (angleDeltaDeg), so every left turn came
+ * out as "right". */
+function maneuverFor(turnDeg: number): RouteStep["maneuver"] {
+  const d = turnDeg;
   if (Math.abs(d) < 12) return "straight";
   if (Math.abs(d) > 150) return "uturn";
   return d < 0 ? "left" : "right";
@@ -127,7 +130,7 @@ function edgesToRoute(graph: DemoRoadGraph, edges: DemoRoadEdge[], id: string): 
     const b = nodeById.get(edge.toId)!.position;
     const bearingAfter = initialBearing(a, b);
     const maneuver: RouteStep["maneuver"] =
-      i === 0 ? "depart" : maneuverFor(angleDeltaDeg(bearingBefore ?? bearingAfter, bearingAfter));
+      i === 0 ? "depart" : maneuverFor(signedTurnDeg(bearingBefore ?? bearingAfter, bearingAfter));
     steps.push({
       id: `step-${i}`,
       roadName: edge.roadName,

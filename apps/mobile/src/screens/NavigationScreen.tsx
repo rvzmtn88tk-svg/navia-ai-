@@ -17,6 +17,7 @@ import { StatusBeacon } from "../components/StatusBeacon";
 import { alertBeaconTone } from "../components/AlertStatus";
 import { useRouteIntel } from "../store/routeIntelStore";
 import { useTripStore } from "../store/tripStore";
+import { gnssTrendReasons } from "../engine/gnssWords";
 import { landmarkCue } from "../navigation/landmarks";
 import { NaviaMap, type CameraMode, type NaviaMapHandle } from "../map/NaviaMap";
 import { useMapStyle } from "../map/mapStyles";
@@ -43,8 +44,13 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const c = useColors();
   const { t, lang } = useT();
   const insets = useSafeAreaInsets();
-  const { isDark, mapLayer, voiceGender, briefingEnabled } = useAppSettings();
-  const style = useMapStyle(mapLayer, isDark, 0, true);
+  const { isDark, mapLayer, voiceGender, briefingEnabled, nav3d, setNav3d } = useAppSettings();
+  // 3D: tilted camera, buildings stand up (fill-extrusion). 2D: flat, clean.
+  // Relief shading is NOT added on top in 3D: measured on the simulator it
+  // halves the frame rate (2D 45 fps, 3D 31 fps, 3D + hillshade 15 fps);
+  // the "Рельєф" layer (shading baked into the tiles) gives relief for free.
+  const style = useMapStyle(mapLayer, isDark, 0, !nav3d, false);
+  const fps = useFrameCounter(__DEV__);
   const { height: screenH } = useWindowDimensions();
   const state = useNaviaStore((s) => s.state);
   const route = useNaviaStore((s) => s.route);
@@ -353,6 +359,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           destination={destination}
           padding={padding}
           speedMps={state.speedMps}
+          view3d={nav3d}
+          compassHeading={mode === "walk"}
+          {...(__DEV__ ? { onFrame: fps.onFrame } : {})}
         />
       )}
 
@@ -365,6 +374,13 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       {isDemo && (
         <View style={[styles.demo, { paddingTop: insets.top, backgroundColor: c.brandOrange }]}>
           <Text variant="caption" color={{ custom: c.onAccent }}>{t("route.demoBanner")}</Text>
+          {__DEV__ && phase === "navigating" && (
+            // Dev-only scenario controls (not in release builds).
+            <View style={styles.demoDev}>
+              <Text variant="caption" color={{ custom: c.onAccent }} onPress={() => demoEngine.simulateGradualGnssLoss()}>РЕБ ▸</Text>
+              <Text variant="caption" color={{ custom: c.onAccent }} onPress={() => demoEngine.restoreGnss()}>GPS ✓</Text>
+            </View>
+          )}
         </View>
       )}
 
@@ -423,6 +439,15 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
         <>
           <Appear from={-24} style={[styles.maneuverWrap, { top: topInset }]}>
             <ManeuverCard step={nextStep} cue={nextCue ? landmarkCue(nextCue, lang) : null} distanceM={state.nextStepDistanceM ?? null} following={followingStep} reliable={positionReliable} estimated={estimated} uncertaintyM={uncertaintyM} offRoute={state.offRoute} t={t} lang={lang} c={c} />
+            {!estimated && state.gnssTrend?.level === "degrading" && (
+              <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
+                <Icon name="satellite" size={iconSize.md} color={c.warning} />
+                <View style={styles.flex}>
+                  <Text variant="subhead" color="warning">{t("gps.warnDegrading")}</Text>
+                  <Text variant="caption" color="secondary">{[gnssTrendReasons(state.gnssTrend, t), t("gps.warnDegradingHint")].filter(Boolean).join(" · ")}</Text>
+                </View>
+              </Appear>
+            )}
             {estimated && (
               <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
                 <Icon name="satellite" size={iconSize.md} color={c.warning} />
@@ -454,6 +479,11 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           <SpeedBadge speedMps={state.gnss === "NORMAL" ? state.speedMps : null} bottom={insets.bottom + 104} t={t} c={c} />
           {/* HUD: co-pilot and the two status beacons (GPS, air alert) */}
           <View style={[styles.hudRight, { bottom: insets.bottom + 104 }]} pointerEvents="box-none">
+            <Touchable accessibilityRole="button" accessibilityLabel={nav3d ? t("nav.to2d") : t("nav.to3d")} onPress={() => setNav3d(!nav3d)}
+              style={[styles.hudToggle, { backgroundColor: c.maneuverCard, borderColor: nav3d ? c.brandTeal : c.border }]}>
+              <Text variant="headline" color={{ custom: nav3d ? c.brandTeal : c.onManeuver }}>{nav3d ? "3D" : "2D"}</Text>
+            </Touchable>
+            {__DEV__ && <Text variant="caption" color={{ custom: c.onManeuverSecondary }}>{fps.value} fps</Text>}
             <Touchable accessibilityRole="button" accessibilityLabel={t("copilot.title")} onPress={() => navigation.navigate("Assistant", { voice: true })}
               style={[styles.hudCopilot, { backgroundColor: c.maneuverCard, borderColor: c.brandTeal }, elevation(3, c)]}>
               <NaviaAiMark size={38} />
@@ -605,6 +635,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   flex: { flex: 1, minWidth: 0 },
   flexEnd: { marginLeft: "auto" },
+  demoDev: { position: "absolute", right: space.md, bottom: space.xxs, flexDirection: "row", gap: space.md },
   demo: { position: "absolute", top: 0, left: 0, right: 0, alignItems: "center", paddingBottom: space.xxs },
   topBar: { position: "absolute", left: space.md, right: space.md, flexDirection: "row", gap: space.xs, alignItems: "center" },
   destCard: { flex: 1, minHeight: 44, borderRadius: radius.pill, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.md },
@@ -616,6 +647,7 @@ const styles = StyleSheet.create({
   maneuverCard: { borderRadius: radius.xl, overflow: "hidden", borderWidth: 1, shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 0 } },
   hudRight: { position: "absolute", right: space.md, alignItems: "flex-end", gap: space.sm },
   hudBeacons: { flexDirection: "row", gap: space.xs },
+  hudToggle: { width: 56, height: 44, borderRadius: 22, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
   hudCopilot: { width: 56, height: 56, borderRadius: 28, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
   maneuverMain: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.md },
   thenRow: { flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.md, paddingVertical: space.xs },
@@ -636,3 +668,15 @@ const styles = StyleSheet.create({
   speedValue: { fontSize: 24, lineHeight: 28 },
   crosshair: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", paddingBottom: 44 },
 });
+
+/** Dev-only: rendered map frames per second (from MapLibre's per-frame event). */
+function useFrameCounter(enabled: boolean): { value: number; onFrame: () => void } {
+  const frames = useRef(0);
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const timer = setInterval(() => { setValue(frames.current); frames.current = 0; }, 1000);
+    return () => clearInterval(timer);
+  }, [enabled]);
+  return { value, onFrame: useCallback(() => { frames.current += 1; }, []) };
+}

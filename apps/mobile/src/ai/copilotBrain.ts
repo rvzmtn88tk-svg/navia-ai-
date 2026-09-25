@@ -40,6 +40,8 @@ export type CopilotWorld = {
     positionMode: "GNSS" | "DEAD_RECKONING" | "MANUAL" | null;
     uncertaintyM: number | null;
     hasPosition: boolean;
+    /** Early-warning reasons in words when the signal is getting worse. */
+    trendText?: string;
   };
   here?: { street?: string; area?: string };
   alert?: { active: boolean | null; scope?: "district" | "city" | "region"; level?: string; reasons?: string[]; since?: number; otherDistricts?: number; area?: string };
@@ -138,11 +140,13 @@ export function detectIntent(q: string): Intent {
   if (has(f, "заблук", "загубив", "загубил", "заблуд", "потерял", "не знаю де я", "не знаю где я", "i am lost", "im lost", "i'm lost")) return "lost";
   if (has(f, "де я", "где я", "where am i", "моє місце", "мое место", "моя позиц", "my location", "мої координ", "мои координ")) return "whereAmI";
   if (has(f, "без gps", "без джипиес", "gps пропав", "gps зник", "пропал gps", "пропав сигнал", "пропал сигнал", "зник сигнал", "нет сигнала", "немає сигналу", "глуш", "заглуш", "реб", "рэб", "jamming", "jammed", "no gps", "without gps", "spoof", "спуф", "підмін", "подмен")) return "noGps";
-  if (has(f, "gps", "джипиес", "джі пі ес", "сигнал", "точніст", "точност", "accuracy", "signal", "gnss", "супутник", "спутник")) return "gps";
+  if (has(f, "gps", "джипиес", "джі пі ес", "джипіес", "жпс", "сигнал", "точніст", "точност", "accuracy", "signal", "gnss", "супутник", "спутник")) return "gps";
   if (detectKind(q) === "shelter") return "place";
   if (has(f, "тривог", "тревог", "alert", "сирен", "siren", "ракет", "шахед", "дрон", "бпла", "обстріл", "обстрел", "вибух", "взрыв", "missile", "drone", "балістик", "баллистик")) return "alert";
   if (detectKind(q)) return "place";
-  if (has(f, "що далі", "что дальше", "куди повертат", "куда поворачив", "наступн поворот", "наступний поворот", "следующ поворот", "next turn", "what next", "whats next", "куди їхати", "куда ехать", "куди йти", "куда идти")) return "routeNext";
+  if (has(f, "що далі", "что дальше", "куди далі", "далі куди", "куда дальше", "дальше куда", "куди зараз", "куда сейчас", "що робити далі", "куди повертат", "куда поворачив",
+    "наступн поворот", "наступний поворот", "следующ поворот", "через скільки поворот", "через скилки поворот", "через сколько поворот", "скільки до поворот", "сколько до поворот",
+    "коли поворот", "когда поворот", "де поворот", "где поворот", "next turn", "what next", "whats next", "how far to the turn", "куди їхати", "куда ехать", "куди йти", "куда идти")) return "routeNext";
   if (has(f, "коли приїд", "когда приед", "скільки їхати", "сколько ехать", "скільки залиш", "сколько остал", "how long", "eta", "arrive", "коли будем", "когда будем", "далеко ще", "далеко еще")) return "eta";
   if (has(f, "орієнтир", "ориентир", "landmark", "що побачу", "что увижу")) return "landmarks";
   if (/^(веди|веди мене|маршрут до|поїхали до|поехали в|поехали до|їдемо до|едем в|как доехать|як доїхати|як дістатися|как добраться|take me to|navigate to|route to)( |$)/.test(f)) return "navigateTo";
@@ -229,7 +233,10 @@ export function gpsSentence(w: CopilotWorld): string {
   if (g.positionMode === "DEAD_RECKONING") return uk ? `GPS зараз недоступний — веду за маршрутом, позиція приблизна${g.uncertaintyM ? ` (±${Math.round(g.uncertaintyM)} м)` : ""}.` : `GPS is unavailable — I'm guiding along the route; the position is approximate${g.uncertaintyM ? ` (±${Math.round(g.uncertaintyM)} m)` : ""}.`;
   if (g.positionMode === "MANUAL") return uk ? "GPS недоступний — ведемо від точки, яку ви вказали." : "GPS is unavailable — guiding from the point you set.";
   if (g.state === "NORMAL") return uk ? `GPS стабільний${g.accuracyM != null ? ` (±${Math.round(g.accuracyM)} м)` : ""}.` : `GPS is stable${g.accuracyM != null ? ` (±${Math.round(g.accuracyM)} m)` : ""}.`;
-  if (g.state === "DEGRADED") return uk ? "GPS нестабільний: сумнівні точки я відсіюю, позиція може бути неточною." : "GPS is unstable: I filter out suspicious fixes; the position may be off.";
+  if (g.state === "DEGRADED") {
+    if (g.trendText) return uk ? `Сигнал GPS слабшає (${g.trendText}) — можлива втрата. Маршрут і орієнтири збережено, я поведу і без GPS.` : `The GPS signal is weakening (${g.trendText}) and may be lost. The route and landmarks are saved; I'll guide without GPS.`;
+    return uk ? "GPS нестабільний: сумнівні точки я відсіюю, позиція може бути неточною." : "GPS is unstable: I filter out suspicious fixes; the position may be off.";
+  }
   const age = g.lastFixAgeS != null ? (uk ? ` Остання надійна позиція — ${Math.max(1, Math.round(g.lastFixAgeS / 60))} хв тому.` : ` Last trusted position: ${Math.max(1, Math.round(g.lastFixAgeS / 60))} min ago.`) : "";
   return uk ? `Сигнал GPS втрачено.${age}` : `GPS signal lost.${age}`;
 }

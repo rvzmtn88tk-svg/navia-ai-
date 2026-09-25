@@ -1,6 +1,6 @@
 # NAVIA feature and data status
 
-Updated 25 September 2026 (iteration 4). Status labels follow docs/NAVIA_TZ.md §4.
+Updated 25 September 2026 (Stage 3: maps & navigation). Status labels follow docs/NAVIA_TZ.md §4.
 
 ## In this build
 
@@ -33,6 +33,20 @@ Updated 25 September 2026 (iteration 4). Status labels follow docs/NAVIA_TZ.md �
 | Spoken alert notice during a trip | AUTOMATED-TESTED (phrasing) | Alert re-checked every minute during navigation. |
 | Startup chime | IMPLEMENTED | Original synthesis (`apps/mobile/scripts/make-intro-sound.mjs`), in the style of the owner's reference; respects the iPhone silent switch. |
 | Male voice | Interim: lowered-pitch system voice · Neural male voice: BLOCKED (owner decision) | iOS has no male Ukrainian voice. Options: on-device neural (Piper, works without internet, +70–80 MB) or cloud (Azure uk-UA-OstapNeural, needs server). See docs/VOICE_OPTIONS.md. |
+
+## Stage 3 (maps & navigation)
+
+| Area | Status | Notes |
+|---|---|---|
+| Turn direction (left/right) | FIXED · AUTOMATED-TESTED | Demo router used an unsigned angle, so every left turn came out "right" (reproduced: Kyiv→Boryspil demo route turn −24° was "right"). Now signed (clockwise = right). Real Valhalla mapping checked line by line against the official enum and on a recorded real Kyiv route (9 turns agree with Valhalla's own bearings). |
+| Strict radius search (any category) | NEWLY IMPLEMENTED · REAL/TESTED | `searchByRadius(center, radiusM, category?)` in the core POI engine (boundary inclusive, tested). UI: radius chips (Найближчі / 500 м / 1 / 3 / 5 / 10 км) with the circle drawn on the map; every result inside the circle is returned (no top-N cap). |
+| Shelters / resilience points | FIXED + extended · REAL/TESTED (live) | Kyiv official GIS (4 194 shelters, 1 210 heating/resilience points) was already used but only when the alert feed said "м. Київ"; now by position. Added OSM `emergency=shelter`, 373 shelters from official open data of 17 Kyiv-oblast communities (data.gov.ua, shipped with the app, offline). Outside Kyiv, resilience points are not in any open registry found — the co-pilot points to the official bot. Every result shows its source and online/offline. |
+| Satellite layer | FIXED · RUNTIME-TESTED (simulator) | Cause: no MapTiler key → layer disabled by design. Now keyless Esri World Imagery + NAVIA roads/labels (hybrid). Esri terms require an ArcGIS/MapTiler key for production — test source only. |
+| 3D navigation | NEWLY IMPLEMENTED · RUNTIME-TESTED (simulator) | 2D/3D button: 60° tilt, extruded buildings; the position arrow is the top layer and billboarded (faces the screen) so buildings never cover it. Measured (simulator, dev FPS meter): 2D 45 fps, 3D 31 fps, 3D + hillshade 15 fps → hillshade not added in 3D (use the "Рельєф" layer). Terrain elevation (DEM 3D) is not supported by the MapLibre iOS version in this app (6.17). |
+| Heading of my marker | FIXED (code) · REAL/NOT TESTED on device | Causes found: heading came from GPS course (slow and wrong when standing) and was glided over 900 ms. Now: phone compass (CoreLocation, per-degree updates) when slow, GPS course when driving; applied without animation. Pipeline latency measurable in Diagnostics; the simulator has no compass, so real compass latency needs the phone. |
+| Offline map Kyiv + oblast | NEWLY IMPLEMENTED (real download) | Real MapLibre packs (Kyiv z10–14, oblast z6–12) with real progress/size, plus places for offline search; "ready" only after verification. "Тест без інтернету" switch in Settings. Offline routing (new route without network) is still not available. |
+| Early GNSS warning | NEWLY IMPLEMENTED · AUTOMATED-TESTED · RUNTIME-TESTED (demo) | Trend monitor: rising/poor accuracy, slower fixes, missed fix. Moving at 54 km/h: first warning +2.1 s (was +6.1 s), loss shown +3.1 s after the last fix (was +9 s). Demo "РЕБ ▸": warning 15 s before the loss. Satellite counts are not available on iOS. |
+| Co-pilot speed | FIXED · MEASURED | On-device answers take 0.3–6 ms; the slowness was the screen waiting up to 9 s for place searches before showing anything. Now the answer shows at once and updates itself when data arrives. |
 
 ## Limits to know before relying on the app
 

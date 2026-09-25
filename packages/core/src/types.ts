@@ -150,6 +150,14 @@ export type NavigationState = {
   /** GNSS has consistently reported a place far from the dead-reckoned one
    * for a few seconds: either a real correction or spoofing — ask the user. */
   gnssConflict?: { distanceM: number; sinceMs: TimestampMs } | null;
+  /** Early warning: how the fix stream behaves (see gnss-trend.ts). */
+  gnssTrend?: {
+    level: "stable" | "degrading" | "lost";
+    reasons: ("accuracy_poor" | "accuracy_rising" | "fixes_slowing" | "fix_overdue" | "no_fix")[];
+    sinceLastFixMs: number | null;
+    expectedIntervalMs: number;
+    accuracyM: number | null;
+  } | null;
   updatedAt: TimestampMs;
 };
 

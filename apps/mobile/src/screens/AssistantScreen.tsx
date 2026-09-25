@@ -12,7 +12,7 @@ import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
 import { useAppSettings } from "../settings/AppSettings";
 import { askRemote, remoteCopilotAvailable, type CopilotTurn } from "../ai/copilotClient";
 import { stateFromWorld } from "../ai/copilotState";
-import { answer, detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type WorldPlace } from "../ai/copilotBrain";
+import { answer, detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type PlaceKind, type WorldPlace } from "../ai/copilotBrain";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { useNearbyStore } from "../store/nearbyStore";
@@ -27,6 +27,8 @@ import { radius, space } from "../theme/tokens";
 type Props = NativeStackScreenProps<RootStackParamList, "Assistant">;
 type Message = { id: number; role: "assistant" | "user"; text: string; actions?: CopilotAction[]; places?: WorldPlace[] };
 const listener = new ExpoSpeechVoiceProvider();
+/** High-resolution clock when available (RN provides performance.now). */
+const nowMs = (): number => (globalThis as { performance?: { now(): number } }).performance?.now() ?? Date.now();
 
 /** Plain sentences for speech: no bullets, numbering or line breaks. */
 function forSpeech(text: string): string {
@@ -55,46 +57,78 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
   const remote = remoteCopilotAvailable();
 
   // Keep shelters ready for the most important question.
-  useEffect(() => { void useNearbyStore.getState().load("shelter"); }, []);
+  useEffect(() => {
+    for (const k of ["shelter", "pharmacy", "fuel", "shop", "hospital", "atm"] as const) void useNearbyStore.getState().load(k);
+  }, []);
 
   const say = useCallback(async (text: string) => {
     setSpeaking(true);
     try { await speak(forSpeech(text), { lang, gender: voiceGender }); } finally { setSpeaking(false); }
   }, [lang, voiceGender]);
 
-  const send = useCallback(async (raw: string, spoken = false) => {
+  // Instant replies: the answer is computed from what NAVIA knows right now
+  // (≈1–6 ms) and shown immediately — never after waiting for the network.
+  // If the question needs places that are still loading, that first reply
+  // says so, and the SAME message is updated when the data lands.
+  const [followUps, setFollowUps] = useState<{ id: number; text: string; kind: PlaceKind; spoken: boolean }[]>([]);
+  const timing = useRef<{ id: number; t0: number; computeMs: number; question: string } | null>(null);
+  const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
+
+  const send = useCallback((raw: string, spoken = false) => {
     const text = raw.trim();
-    if (!text || busy) return;
+    if (!text) return;
+    const t0 = nowMs();
     const history: CopilotTurn[] = messages.slice(1).map((m) => ({ role: m.role, text: m.text }));
-    setMessages((old) => [...old, { id: ++seq.current, role: "user", text }]);
-    setQuestion("");
-    setBusy(true);
-    // Make sure the data the question needs is loaded (e.g. pharmacies).
-    const kind = detectKind(text);
-    const intent = detectIntent(text);
-    const needs = kind ? [kind] : intent === "whereAmI" || intent === "lost" ? (["shop", "pharmacy"] as const) : intent === "emergency" ? (["hospital"] as const) : [];
-    if (needs.length) {
-      await Promise.race([
-        Promise.all(needs.map((k) => useNearbyStore.getState().load(k))),
-        new Promise<void>((resolve) => { setTimeout(() => resolve(), 9_000); }),
-      ]);
-      await new Promise<void>((resolve) => { setTimeout(() => resolve(), 30); }); // let the world re-render
-    }
     const w = worldRef.current;
     const local: CopilotReply = answer(text, w);
-    let reply: Message = { id: ++seq.current, role: "assistant", text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) };
-    if (remote) {
-      try {
-        const r = await askRemote(text, stateFromWorld(w), history);
-        // Claude words the answer; the buttons stay NAVIA's own.
-        reply = { ...reply, text: r.answer };
-      } catch { /* on-device answer already prepared */ }
+    const computeMs = nowMs() - t0;
+    const userId = ++seq.current;
+    const replyId = ++seq.current;
+    timing.current = { id: replyId, t0, computeMs, question: text };
+    setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) }]);
+    setQuestion("");
+    if (spoken) void say(local.text);
+    const kind = detectKind(text);
+    const intent = detectIntent(text);
+    if (kind && intent === "place" && w.placeStates?.[kind] !== "ready") {
+      setFollowUps((f) => [...f, { id: replyId, text, kind, spoken }]);
+      void useNearbyStore.getState().load(kind);
     }
-    setMessages((old) => [...old, reply]);
-    setBusy(false);
-    if (spoken) void say(reply.text);
+    if (remote) {
+      setBusy(true);
+      void askRemote(text, stateFromWorld(w), history)
+        // Claude words the answer; the buttons stay NAVIA's own.
+        .then((r) => setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: r.answer } : m))))
+        .catch(() => { /* the on-device answer is already shown */ })
+        .finally(() => setBusy(false));
+    }
     setTimeout(() => list.current?.scrollToEnd({ animated: true }), 60);
-  }, [busy, messages, remote, say]);
+  }, [messages, remote, say]);
+
+  // When a place search that a reply was waiting for finishes, update that reply.
+  useEffect(() => {
+    if (followUps.length === 0) return;
+    const doneNow = followUps.filter((f) => { const st = world.placeStates?.[f.kind]; return st === "ready" || st === "error"; });
+    if (doneNow.length === 0) return;
+    setFollowUps((f) => f.filter((x) => !doneNow.includes(x)));
+    setMessages((old) => old.map((m) => {
+      const f = doneNow.find((x) => x.id === m.id);
+      if (!f) return m;
+      const r = answer(f.text, world);
+      if (f.spoken) void say(r.text);
+      return { ...m, text: r.text, actions: r.actions, ...(r.places ? { places: r.places } : {}) };
+    }));
+  }, [world, followUps, say]);
+
+  // Stopwatch: tap/voice → reply on screen (committed).
+  useEffect(() => {
+    const tm = timing.current;
+    if (!tm || !messages.some((m) => m.id === tm.id)) return;
+    const shownMs = nowMs() - tm.t0;
+    timing.current = null;
+    setLastLatencyMs(Math.round(shownMs));
+    if (__DEV__) console.log(`[copilot-timing] "${tm.question}" compute ${tm.computeMs.toFixed(1)} ms, on screen ${shownMs.toFixed(1)} ms`);
+  }, [messages]);
 
   const listen = useCallback(async () => {
     stopSpeaking();
@@ -134,7 +168,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
         <NaviaAiMark size={56} active={busy || listening || speaking} />
         <View style={styles.flex}>
           <Text variant="headline">{t("copilot.title")}</Text>
-          <Text variant="caption" color="muted">{listening ? t("copilot.listening") : speaking ? t("copilot.speaking") : busy ? t("copilot.thinking") : t("copilot.ready")}</Text>
+          <Text variant="caption" color="muted">{listening ? t("copilot.listening") : speaking ? t("copilot.speaking") : busy ? t("copilot.thinking") : t("copilot.ready")}{__DEV__ && lastLatencyMs != null ? ` · ⏱ ${lastLatencyMs} мс` : ""}</Text>
         </View>
         <StatusPill tone={remote ? "success" : "neutral"} icon="sparkle" label={remote ? "Claude" : t("copilot.onDevice")} />
       </View>

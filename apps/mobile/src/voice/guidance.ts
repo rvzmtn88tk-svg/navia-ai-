@@ -143,7 +143,7 @@ export type ResilienceEvent = "degraded" | "lost" | "recovered";
 export function resiliencePhrase(event: ResilienceEvent, lang: Lang): string {
   const uk = lang === "uk";
   switch (event) {
-    case "degraded": return uk ? "Сигнал GPS нестабільний. Я стежу за позицією." : "GPS signal is unstable. I'm watching your position.";
+    case "degraded": return uk ? "Сигнал GPS слабшає, можлива втрата. Маршрут і орієнтири збережено — я поведу і без GPS." : "The GPS signal is weakening and may be lost. The route and landmarks are saved — I'll keep guiding without GPS.";
     case "lost": return uk ? "Сигнал GPS втрачено. Продовжуйте маршрутом — я веду за датчиками, позиція приблизна." : "GPS signal lost. Keep following the route — I'm guiding from motion sensors; the position is approximate.";
     case "recovered": return uk ? "GPS відновлено. Позицію підтверджено." : "GPS restored. Position confirmed.";
   }

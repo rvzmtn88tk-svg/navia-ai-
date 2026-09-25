@@ -218,3 +218,48 @@ test("GNSS conflict: 'it's fake' keeps dead reckoning and stops asking for a whi
   assert.equal(engine.getState().gnssConflict, null);
   assert.equal(engine.getState().positionMode, "DEAD_RECKONING");
 });
+
+test("GNSS: standing still, a 5 s old fix of the same place (iOS position request) keeps GPS stable", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider });
+  for (let i = 0; i < 4; i++) {
+    engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: i * 1000, accuracyM: 5, speedMps: 0, headingDeg: null }, i * 1000);
+    engine.tick(i * 1000);
+  }
+  // 40 s of silence answered by probes returning 4.6 s old fixes.
+  for (let t = 15_000; t <= 60_000; t += 15_000) {
+    const accepted = engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: t - 4600, accuracyM: 5, speedMps: 0, headingDeg: null }, t);
+    assert.equal(accepted, true, `probe at ${t} accepted`);
+    assert.equal(engine.tick(t).gnss, "NORMAL");
+  }
+});
+
+test("GNSS: an old fix is still rejected when moving, or when it is somewhere else", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider });
+  for (let i = 0; i < 4; i++) {
+    engine.pushGnssSample({ lat: 50.45, lon: 30.52 + i * 0.0002, timestamp: i * 1000, accuracyM: 5, speedMps: 14, headingDeg: 90 }, i * 1000);
+    engine.tick(i * 1000);
+  }
+  assert.equal(engine.pushGnssSample({ lat: 50.45, lon: 30.5208, timestamp: 3500, accuracyM: 5, speedMps: 14, headingDeg: 90 }, 8100), false);
+});
+
+test("GNSS: right after start (one fix, speed unknown) a slightly old probe fix of the same place is accepted", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider });
+  engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: 0, accuracyM: 5, speedMps: null, headingDeg: null }, 800);
+  engine.tick(800);
+  assert.equal(engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: 11_000, accuracyM: 5, speedMps: null, headingDeg: null }, 15_800), true);
+  assert.equal(engine.tick(15_800).gnss, "NORMAL");
+});
+
+test("GNSS: standing still, a 7 s old same-place fix under load is accepted; recovery needs one fix, not three", async () => {
+  const engine = new NavigationEngine({ routingProvider: provider });
+  engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: 0, accuracyM: 5, speedMps: null, headingDeg: null }, 500);
+  engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: 1000, accuracyM: 5, speedMps: null, headingDeg: null }, 1500);
+  engine.tick(1500);
+  assert.equal(engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: 9000, accuracyM: 5, speedMps: null, headingDeg: null }, 16_000), true);
+  assert.equal(engine.tick(16_000).gnss, "NORMAL");
+  // 50 s with no answer at all → lost (honest) …
+  assert.notEqual(engine.tick(66_000).gnss, "NORMAL");
+  // … then one clean same-place fix restores it.
+  engine.pushGnssSample({ lat: 50.45, lon: 30.52, timestamp: 66_500, accuracyM: 5, speedMps: null, headingDeg: null }, 67_000);
+  assert.equal(engine.tick(67_000).gnss, "NORMAL");
+});

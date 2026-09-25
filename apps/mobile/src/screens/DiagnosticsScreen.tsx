@@ -4,6 +4,10 @@
 // naviaController and @navia/core's DiagnosticsEngine — never invents a
 // number for a field that has no real value yet (renders "—" instead, via
 // DiagnosticsEngine.snapshot()'s honest nulls).
+import { regionPackage } from "../offline/regionPackage";
+import { isSimulatedOffline } from "../offline/network";
+import type { OfflinePackageStatus } from "@navia/core";
+import { compassAvailable, headingLatencySummary, resetHeadingLatency, runSyntheticSpin } from "../sensors/deviceHeading";
 import React, { useEffect, useState } from "react";
 import { View, ScrollView, StyleSheet, Switch, Pressable } from "react-native";
 import { DiagnosticsEngine, type DiagnosticsSnapshot } from "@navia/core";
@@ -84,6 +88,8 @@ export function DiagnosticsScreen(): JSX.Element {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => { void regionPackage.refresh(); }, []);
+
   useEffect(() => {
     const id = setInterval(() => {
       refresh();
@@ -106,7 +112,8 @@ export function DiagnosticsScreen(): JSX.Element {
           confidenceBand: s.confidenceBand,
           sensorsAvailable: { gnss: s.gnss !== "LOST", ...sensorAvailability },
           networkAvailable: s.networkAvailable,
-          offlinePackageState: "not_downloaded",
+          // Real package status: "ready" only after the download was verified.
+          offlinePackageState: regionPackage.getStatus().state,
         })
       );
     }, 1000);
@@ -131,6 +138,7 @@ export function DiagnosticsScreen(): JSX.Element {
           <View style={styles.demoButtonRow}>
             <DemoButton label={en ? "Weaken GPS" : "Погіршити сигнал GNSS"} onPress={() => demoEngine.simulateGnssDegradation()} p={p} />
             <DemoButton label={en ? "Lose GPS" : "Зімітувати втрату GNSS"} onPress={() => demoEngine.simulateGnssLoss()} p={p} />
+            <DemoButton label={en ? "Gradual GPS loss (jamming)" : "Поступова втрата GNSS (РЕБ)"} onPress={() => demoEngine.simulateGradualGnssLoss()} p={p} />
             <DemoButton label={en ? "Restore GPS" : "Відновити GNSS"} onPress={() => demoEngine.restoreGnss()} p={p} />
           </View>
           <View style={styles.demoButtonRow}>
@@ -143,6 +151,8 @@ export function DiagnosticsScreen(): JSX.Element {
           </View>
         </View>
       )}
+
+      {__DEV__ && <HeadingLatencyTest p={p} en={en} />}
 
       {!snapshot ? (
         <Text style={[styles.value, { color: p.text }]}>{en ? "No active navigation session." : "Немає активної навігаційної сесії."}</Text>
@@ -168,6 +178,10 @@ export function DiagnosticsScreen(): JSX.Element {
           <Row label={en ? "Gyroscope" : "Гіроскоп"} value={snapshot.sensorsAvailable.gyroscope ? (en ? "available" : "доступний") : (en ? "unavailable" : "недоступний")} p={p} />
           <Row label={en ? "Magnetometer" : "Магнітометр"} value={snapshot.sensorsAvailable.magnetometer ? (en ? "available" : "доступний") : (en ? "unavailable" : "недоступний")} p={p} />
           <Row label={en ? "Sensor fusion" : "Об’єднання даних"} value={localizeState(state.position?.source, en)} p={p} />
+
+          <Section title={en ? "Offline package" : "Офлайн-пакет"} p={p} />
+          <Row label={en ? "Kyiv + oblast" : "Київ + область"} value={offlineLabel(regionPackage.getStatus(), en)} p={p} />
+          <Row label={en ? "Network test mode" : "Тест без інтернету"} value={isSimulatedOffline() ? (en ? "ON (no network)" : "УВІМК. (без мережі)") : (en ? "off" : "вимк.")} p={p} />
 
           <Section title={en ? "Map" : "Карта"} p={p} />
           <Row label={en ? "Current road" : "Поточна дорога"} value={fmt(snapshot.currentRoadName)} p={p} />
@@ -214,3 +228,37 @@ const styles = StyleSheet.create({
   demoButton: { backgroundColor: "#2a1f55", paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8 },
   demoButtonText: { color: "#c4b5fd", fontSize: 12, fontWeight: "600" },
 });
+
+/** Dev: compass availability and the measured compass → marker latency
+ * (synthetic 30 Hz rotation through the same code path as the real compass). */
+function HeadingLatencyTest({ p, en }: { p: ReturnType<typeof useAppSettings>["palette"]; en: boolean }): JSX.Element {
+  const [result, setResult] = useState<string>("");
+  const run = async () => {
+    resetHeadingLatency();
+    setResult(en ? "Running…" : "Вимірюю…");
+    await runSyntheticSpin(3000, 30);
+    await new Promise<void>((r) => { setTimeout(() => r(), 200); });
+    const s = headingLatencySummary();
+    setResult(s.n === 0
+      ? (en ? "No marker on screen to measure (open the map)." : "На мапі немає позначки для виміру (відкрийте мапу).")
+      : `n=${s.n} · p50 ${s.p50} ms · p95 ${s.p95} ms · max ${s.max} ms`);
+  };
+  const avail = compassAvailable();
+  return (
+    <View style={[styles.demoControls, { backgroundColor: p.surfaceRaised }]}>
+      <Section title={en ? "Compass → marker latency" : "Компас → позначка: затримка"} p={p} />
+      <Row label={en ? "Compass" : "Компас"} value={avail == null ? "—" : avail ? (en ? "available" : "доступний") : (en ? "not available (simulator?)" : "недоступний (симулятор?)")} p={p} />
+      <DemoButton label={en ? "Measure (synthetic 30 Hz spin)" : "Виміряти (синтетичне обертання 30 Гц)"} onPress={() => void run()} p={p} />
+      {result ? <Text style={[styles.value, { color: p.text }]}>{result}</Text> : null}
+    </View>
+  );
+}
+
+function offlineLabel(st: OfflinePackageStatus, en: boolean): string {
+  switch (st.state) {
+    case "ready": return st.label;
+    case "downloading": return `${en ? "downloading" : "завантаження"} ${Math.round(st.progress0to1 * 100)}%`;
+    case "unavailable": return `${en ? "not ready" : "не готовий"}: ${st.reason}`;
+    default: return en ? "not downloaded" : "не завантажено";
+  }
+}

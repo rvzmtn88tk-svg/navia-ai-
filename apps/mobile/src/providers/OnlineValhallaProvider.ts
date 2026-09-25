@@ -89,6 +89,9 @@ export function mapManeuverType(type: number): RouteStep["maneuver"] {
 
 type ValhallaManeuver = {
   type: number;
+  /** Clockwise angle from north of travel just before / after the maneuver. */
+  bearing_before?: number;
+  bearing_after?: number;
   instruction: string;
   street_names?: string[];
   length: number; // km (metric units requested below)
@@ -97,7 +100,7 @@ type ValhallaManeuver = {
   roundabout_exit_count?: number;
 };
 
-type ValhallaLeg = {
+export type ValhallaLeg = {
   shape: string;
   maneuvers: ValhallaManeuver[];
   summary: { length: number; time: number };
@@ -108,6 +111,45 @@ type ValhallaResponse = {
   alternates?: { trip: { legs: ValhallaLeg[]; summary: { length: number; time: number } } }[];
   error?: string; error_code?: number;
 };
+
+/** Valhalla leg → Route (exported for tests on recorded real responses). */
+export function valhallaLegToRoute(leg: ValhallaLeg, tripSummary: { length: number; time: number }, id: string): Route {
+  if (!leg || typeof leg.shape !== "string" || !Array.isArray(leg.maneuvers) || leg.maneuvers.length === 0
+    || !Number.isFinite(tripSummary?.length) || tripSummary.length <= 0
+    || !Number.isFinite(tripSummary?.time) || tripSummary.time < 0) {
+    throw new Error("OnlineValhallaProvider: route response is missing valid geometry, maneuvers, distance or duration.");
+  }
+  const geometry = decodePolyline6(leg.shape);
+  if (geometry.length < 2) throw new Error("OnlineValhallaProvider: route geometry needs at least two points.");
+  const steps: RouteStep[] = leg.maneuvers.map((maneuver, i) => {
+    const index = maneuver.begin_shape_index;
+    if (!Number.isInteger(index) || index < 0 || index >= geometry.length
+      || !Number.isFinite(maneuver.length) || maneuver.length < 0
+      || !Number.isFinite(maneuver.time) || maneuver.time < 0
+      || !Number.isFinite(maneuver.type)) {
+      throw new Error(`OnlineValhallaProvider: maneuver ${i} is invalid or points outside route geometry.`);
+    }
+    return {
+      id: `step-${i}`,
+      roadName: maneuver.street_names?.[0] ?? "",
+      maneuver: mapManeuverType(maneuver.type),
+      ...(maneuver.type === 26 && Number.isInteger(maneuver.roundabout_exit_count) && (maneuver.roundabout_exit_count ?? 0) > 0 ? { roundaboutExit: maneuver.roundabout_exit_count } : {}),
+      distanceM: maneuver.length * 1000,
+      durationS: maneuver.time,
+      location: geometry[index]!,
+      ...(Number.isFinite(maneuver.bearing_before) ? { bearingBefore: maneuver.bearing_before } : {}),
+      ...(Number.isFinite(maneuver.bearing_after) ? { bearingAfter: maneuver.bearing_after } : {}),
+    };
+  });
+  return {
+    id,
+    steps,
+    geometry,
+    distanceM: tripSummary.length * 1000,
+    durationS: tripSummary.time,
+    source: "online-valhalla",
+  };
+}
 
 export class OnlineValhallaProvider implements RoutingProvider {
   constructor(private baseUrl: string | null = config.valhallaUrl) {}
@@ -162,39 +204,7 @@ export class OnlineValhallaProvider implements RoutingProvider {
   }
 
   private legToRoute(leg: ValhallaLeg, tripSummary: { length: number; time: number }, id: string): Route {
-    if (!leg || typeof leg.shape !== "string" || !Array.isArray(leg.maneuvers) || leg.maneuvers.length === 0
-      || !Number.isFinite(tripSummary?.length) || tripSummary.length <= 0
-      || !Number.isFinite(tripSummary?.time) || tripSummary.time < 0) {
-      throw new Error("OnlineValhallaProvider: route response is missing valid geometry, maneuvers, distance or duration.");
-    }
-    const geometry = decodePolyline6(leg.shape);
-    if (geometry.length < 2) throw new Error("OnlineValhallaProvider: route geometry needs at least two points.");
-    const steps: RouteStep[] = leg.maneuvers.map((maneuver, i) => {
-      const index = maneuver.begin_shape_index;
-      if (!Number.isInteger(index) || index < 0 || index >= geometry.length
-        || !Number.isFinite(maneuver.length) || maneuver.length < 0
-        || !Number.isFinite(maneuver.time) || maneuver.time < 0
-        || !Number.isFinite(maneuver.type)) {
-        throw new Error(`OnlineValhallaProvider: maneuver ${i} is invalid or points outside route geometry.`);
-      }
-      return {
-        id: `step-${i}`,
-        roadName: maneuver.street_names?.[0] ?? "",
-        maneuver: mapManeuverType(maneuver.type),
-        ...(maneuver.type === 26 && Number.isInteger(maneuver.roundabout_exit_count) && (maneuver.roundabout_exit_count ?? 0) > 0 ? { roundaboutExit: maneuver.roundabout_exit_count } : {}),
-        distanceM: maneuver.length * 1000,
-        durationS: maneuver.time,
-        location: geometry[index]!,
-      };
-    });
-    return {
-      id,
-      steps,
-      geometry,
-      distanceM: tripSummary.length * 1000,
-      durationS: tripSummary.time,
-      source: "online-valhalla",
-    };
+    return valhallaLegToRoute(leg, tripSummary, id);
   }
 
   async route(request: RouteRequest): Promise<Route> {

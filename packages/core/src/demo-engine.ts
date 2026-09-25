@@ -24,6 +24,7 @@ import { SensorFusionEngine } from "./sensor-fusion";
 import type { Route } from "./route-engine";
 import { RouteProgressEngine, distanceFromRouteCorridorM, positionAtDistance } from "./route-engine";
 import { DemoRoutingProvider, type DemoRoadGraph } from "./demo-routing-provider";
+import { GnssTrendMonitor } from "./gnss-trend";
 import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
 import { LandmarkEngine, type POI, type LandmarkQueryResult } from "./landmark-engine";
@@ -71,6 +72,9 @@ export class DemoEngine {
   // only place that reads them, and only to build the next synthetic sample.
   private gnssDegraded = false;
   private gnssLost = false;
+  /** Gradual loss scenario: accuracy worsens, fixes thin out, then stop. */
+  private gradualLossStartMs: number | null = null;
+  private trend = new GnssTrendMonitor();
   private pendingGpsJump = false;
   private pendingWrongHeading = false;
   private forcedOffRoute = false;
@@ -111,6 +115,8 @@ export class DemoEngine {
     this.lastTrustedPosition = null;
     this.lastFusedPosition = null;
     this.gnssDegraded = this.gnssLost = this.pendingGpsJump = this.pendingWrongHeading = this.forcedOffRoute = false;
+    this.gradualLossStartMs = null;
+    this.trend.reset();
     this.networkAvailable = true;
     this.route = null;
     this.gnssMonitor = new GNSSMonitor(GNSS_CONFIG);
@@ -121,9 +127,12 @@ export class DemoEngine {
   }
 
   // --- section 26's control list ---
-  simulateGnssDegradation(): void { this.gnssDegraded = true; this.gnssLost = false; }
-  simulateGnssLoss(): void { this.gnssLost = true; this.gnssDegraded = false; }
-  restoreGnss(): void { this.gnssLost = false; this.gnssDegraded = false; }
+  simulateGnssDegradation(): void { this.gnssDegraded = true; this.gnssLost = false; this.gradualLossStartMs = null; }
+  simulateGnssLoss(): void { this.gnssLost = true; this.gnssDegraded = false; this.gradualLossStartMs = null; }
+  /** Realistic jamming onset: accuracy 5 → 60 m over ~12 s, fixes every 2 s
+   * from 10 s, none from 16 s. Warnings must appear before the loss. */
+  simulateGradualGnssLoss(): void { this.gradualLossStartMs = this.simTimeMs; this.gnssLost = false; this.gnssDegraded = false; }
+  restoreGnss(): void { this.gnssLost = false; this.gnssDegraded = false; this.gradualLossStartMs = null; }
   simulateGpsJump(): void { this.pendingGpsJump = true; }
   simulateWrongHeading(): void { this.pendingWrongHeading = true; }
   simulateOffRoute(): void { this.forcedOffRoute = true; }
@@ -169,14 +178,16 @@ export class DemoEngine {
 
     // Build this tick's synthetic GNSS sample (or none, if GNSS is lost).
     let gnssSample: GNSSRawSample | null = null;
-    if (!this.gnssLost) {
+    const gradualS = this.gradualLossStartMs != null ? (this.simTimeMs - this.gradualLossStartMs) / 1000 : null;
+    const gradualEmits = gradualS == null || gradualS < 10 || (gradualS < 16 && Math.floor(gradualS) % 2 === 0);
+    if (!this.gnssLost && gradualEmits) {
       let lat = groundTruth.lat, lon = groundTruth.lon;
       if (this.pendingGpsJump) { lat += 0.003; this.pendingGpsJump = false; } // ~330m implausible jump
       let headingDeg = this.lastHeadingDeg;
       if (this.pendingWrongHeading) { headingDeg = (headingDeg + 150) % 360; this.pendingWrongHeading = false; }
       gnssSample = {
         lat, lon, timestamp: this.simTimeMs,
-        accuracyM: this.gnssDegraded ? 60 : 5,
+        accuracyM: gradualS != null ? Math.min(60, 5 + 4.5 * gradualS) : this.gnssDegraded ? 60 : 5,
         speedMps: AVERAGE_SPEED_MPS,
         headingDeg,
       };
@@ -185,7 +196,13 @@ export class DemoEngine {
     const integrity = gnssSample ? this.gnssMonitor.evaluate(this.lastGnssRawSample, gnssSample, this.simTimeMs) : null;
     if (gnssSample) this.lastGnssRawSample = gnssSample;
 
-    const gnssIntegrityState: GNSSIntegrityState = !gnssSample ? "LOST" : integrity!.trusted ? "NORMAL" : "DEGRADED";
+    if (gnssSample) this.trend.push(gnssSample.accuracyM, this.simTimeMs);
+    const trend = this.trend.evaluate(this.simTimeMs, true);
+    // A missing fix is not yet a loss: LOST only after ≈3 missed fixes of the
+    // receiver's rhythm (same rule as the live engine).
+    const gnssIntegrityState: GNSSIntegrityState = !gnssSample
+      ? (trend.level === "lost" ? "LOST" : "DEGRADED")
+      : integrity!.trusted ? (trend.level === "degrading" ? "DEGRADED" : "NORMAL") : "DEGRADED";
 
     // Dead reckoning from the last trusted fix (or last fused position if none yet).
     const drAnchor = this.lastTrustedPosition?.position ?? this.lastFusedPosition ?? groundTruth;
@@ -256,6 +273,7 @@ export class DemoEngine {
       networkAvailable: this.networkAvailable,
       offlineMapAvailable: false,
       lastTrustedFixAt: this.lastTrustedPosition?.position.timestamp ?? null,
+      gnssTrend: { level: trend.level, reasons: trend.reasons, sinceLastFixMs: trend.sinceLastFixMs, expectedIntervalMs: trend.expectedIntervalMs, accuracyM: trend.accuracyM },
       updatedAt: this.simTimeMs,
     };
     return this.currentState;

@@ -1,0 +1,192 @@
+// "Київ + Київська область" offline package: the real implementation of
+// @navia/core's OfflineMapManager. Downloads (1) map tiles, glyphs and sprites
+// through MapLibre offline packs — Kyiv at full detail (z10–14, the source's
+// max zoom), the oblast at road/settlement level (z6–12) — and (2) the
+// places for offline search. Progress and size come from MapLibre / the real
+// downloads. "ready" is reported only after verification: both packs
+// complete and an offline search around Kyiv returns shelters.
+import MapLibreGL from "@maplibre/maplibre-react-native";
+import { formatPackageLabel, type OfflineMapManager, type OfflinePackageMetadata, type OfflinePackageStatus } from "@navia/core";
+import { config } from "../config";
+import { downloadOfflinePlaces, offlinePlacesMeta, offlinePlacesWithin, removeOfflinePlaces, type Bbox } from "./offlinePlaces";
+
+type PackSpec = { name: string; bounds: [[number, number], [number, number]]; minZoom: number; maxZoom: number };
+
+export const KYIV_OBLAST_BBOX: Bbox = { south: 49.18, west: 29.26, north: 51.55, east: 32.16 };
+const KYIV_CITY_BBOX: Bbox = { south: 50.21, west: 30.24, north: 50.59, east: 30.83 };
+const toBounds = (b: Bbox): [[number, number], [number, number]] => [[b.east, b.north], [b.west, b.south]];
+
+export const REGION_PACKS: PackSpec[] = [
+  { name: "navia-region-kyiv-city", bounds: toBounds(KYIV_CITY_BBOX), minZoom: 10, maxZoom: 14 },
+  { name: "navia-region-kyiv-oblast", bounds: toBounds(KYIV_OBLAST_BBOX), minZoom: 6, maxZoom: 12 },
+];
+export const REGION_LABEL = "Київ + область";
+
+export type RegionProgress = {
+  phase: "map" | "places" | "verify" | "done" | "error";
+  /** 0..1 over the whole package. */
+  progress: number;
+  mapBytes: number;
+  resourcesDone: number;
+  resourcesTotal: number;
+  placesDone: number;
+  placesTotal: number;
+  message?: string;
+};
+
+type StoredMeta = { downloadedAt: string; mapBytes: number; mapResources: number; placesBytes: number; placesCounts: Record<string, number>; failed: string[]; verifiedAt: string | null; mapVersion: string };
+const META_KEY = "navia.offline.region.v1";
+
+type KV = { getItemAsync(key: string): Promise<string | null>; setItemAsync(key: string, value: string): Promise<void>; removeItemAsync?(key: string): Promise<void> };
+function storage(): KV | null {
+  try { return (require("expo-sqlite/kv-store") as { default: KV }).default; } catch { return null; }
+}
+
+type PackStatus = { state: number; percentage: number; completedResourceCount: number; completedResourceSize: number; requiredResourceCount: number };
+
+async function packStatus(name: string): Promise<PackStatus | null> {
+  const pack = await MapLibreGL.OfflineManager.getPack(name).catch(() => null);
+  if (!pack) return null;
+  return (await pack.status().catch(() => null)) as PackStatus | null;
+}
+
+function complete(st: PackStatus | null): boolean {
+  return !!st && (st.state === MapLibreGL.OfflinePackDownloadState.Complete || (st.percentage >= 100 && st.completedResourceCount >= st.requiredResourceCount && st.requiredResourceCount > 0));
+}
+
+async function mapVersion(): Promise<string> {
+  try {
+    const tj = await (await fetch("https://tiles.openfreemap.org/planet")).json() as { tiles?: string[] };
+    return tj.tiles?.[0]?.match(/planet\/([^/]+)\//)?.[1] ?? "openfreemap";
+  } catch { return "openfreemap"; }
+}
+
+class MapLibreRegionManager implements OfflineMapManager {
+  private status: OfflinePackageStatus = { state: "not_downloaded" };
+  private downloading = false;
+
+  getStatus(): OfflinePackageStatus {
+    return this.status;
+  }
+
+  /** Re-reads the package from disk and verifies the packs are complete. */
+  async refresh(): Promise<OfflinePackageStatus> {
+    if (this.downloading) return this.status;
+    const raw = await storage()?.getItemAsync(META_KEY).catch(() => null);
+    if (!raw) { this.status = { state: "not_downloaded" }; return this.status; }
+    const meta = JSON.parse(raw) as StoredMeta;
+    const statuses = await Promise.all(REGION_PACKS.map((p) => packStatus(p.name)));
+    if (!statuses.every(complete) || !meta.verifiedAt) {
+      this.status = { state: "unavailable", reason: "Пакет завантажено не повністю — завантажте ще раз." };
+      return this.status;
+    }
+    this.status = { state: "ready", metadata: toMetadata(meta), label: formatPackageLabel(toMetadata(meta), REGION_LABEL) };
+    return this.status;
+  }
+
+  async details(): Promise<StoredMeta | null> {
+    const raw = await storage()?.getItemAsync(META_KEY).catch(() => null);
+    return raw ? JSON.parse(raw) as StoredMeta : null;
+  }
+
+  /** OfflineMapManager.download: progress 0..1. */
+  async download(onProgress?: (progress0to1: number) => void): Promise<OfflinePackageStatus> {
+    return this.downloadWithDetails((p) => onProgress?.(p.progress));
+  }
+
+  async downloadWithDetails(onProgress: (p: RegionProgress) => void): Promise<OfflinePackageStatus> {
+    if (this.downloading) throw new Error("already downloading");
+    this.downloading = true;
+    const report: RegionProgress = { phase: "map", progress: 0, mapBytes: 0, resourcesDone: 0, resourcesTotal: 0, placesDone: 0, placesTotal: 1 };
+    const emit = () => onProgress({ ...report });
+    try {
+      // Offline data must survive; MapLibre keeps packs out of its evictable cache.
+      const done: Record<string, PackStatus> = {};
+      for (const spec of REGION_PACKS) {
+        const existing = await packStatus(spec.name);
+        if (complete(existing)) { done[spec.name] = existing!; continue; }
+        if (existing) await MapLibreGL.OfflineManager.deletePack(spec.name).catch(() => {});
+        await new Promise<void>((resolve, reject) => {
+          void MapLibreGL.OfflineManager.createPack(
+            { name: spec.name, styleURL: config.mapStyleUrl, bounds: spec.bounds, minZoom: spec.minZoom, maxZoom: spec.maxZoom },
+            (_pack: unknown, st: PackStatus) => {
+              done[spec.name] = st;
+              const all = Object.values(done);
+              report.mapBytes = all.reduce((a, s) => a + (s.completedResourceSize ?? 0), 0);
+              report.resourcesDone = all.reduce((a, s) => a + (s.completedResourceCount ?? 0), 0);
+              report.resourcesTotal = all.reduce((a, s) => a + (s.requiredResourceCount ?? 0), 0);
+              const packIndex = REGION_PACKS.findIndex((p) => p.name === spec.name);
+              report.progress = 0.85 * ((packIndex + (st.percentage ?? 0) / 100) / REGION_PACKS.length);
+              emit();
+              if (complete(st)) resolve();
+            },
+            (_pack: unknown, err: { message?: string }) => reject(new Error(err?.message ?? "offline pack error")),
+          ).catch(reject);
+        });
+      }
+
+      report.phase = "places";
+      emit();
+      const places = await downloadOfflinePlaces(KYIV_OBLAST_BBOX, (p) => {
+        report.placesDone = p.done;
+        report.placesTotal = p.total;
+        report.progress = 0.85 + 0.13 * (p.done / p.total);
+        emit();
+      });
+
+      report.phase = "verify";
+      report.progress = 0.99;
+      emit();
+      const statuses = await Promise.all(REGION_PACKS.map((p) => packStatus(p.name)));
+      const packsOk = statuses.every(complete);
+      const probe = await offlinePlacesWithin("shelter", { lat: 50.4501, lon: 30.5234 }, 2000);
+      const verified = packsOk && probe.length > 0;
+      const meta: StoredMeta = {
+        downloadedAt: new Date().toISOString().slice(0, 10),
+        mapBytes: statuses.reduce((a, s) => a + (s?.completedResourceSize ?? 0), 0),
+        mapResources: statuses.reduce((a, s) => a + (s?.completedResourceCount ?? 0), 0),
+        placesBytes: places.bytes,
+        placesCounts: places.counts,
+        failed: places.failed,
+        verifiedAt: verified ? new Date().toISOString() : null,
+        mapVersion: await mapVersion(),
+      };
+      await storage()?.setItemAsync(META_KEY, JSON.stringify(meta));
+      report.phase = verified ? "done" : "error";
+      report.progress = verified ? 1 : report.progress;
+      report.message = verified ? undefined : !packsOk ? "Карта завантажилась не повністю." : "Не вдалося перевірити офлайн-пошук укриттів.";
+      emit();
+      this.downloading = false;
+      return this.refresh();
+    } catch (e) {
+      report.phase = "error";
+      report.message = (e as Error).message;
+      emit();
+      this.downloading = false;
+      this.status = { state: "unavailable", reason: (e as Error).message };
+      return this.status;
+    }
+  }
+
+  async remove(): Promise<void> {
+    for (const spec of REGION_PACKS) await MapLibreGL.OfflineManager.deletePack(spec.name).catch(() => {});
+    await removeOfflinePlaces();
+    await storage()?.removeItemAsync?.(META_KEY).catch(() => {});
+    this.status = { state: "not_downloaded" };
+  }
+}
+
+function toMetadata(m: StoredMeta): OfflinePackageMetadata {
+  return {
+    bboxMinLat: KYIV_OBLAST_BBOX.south, bboxMinLon: KYIV_OBLAST_BBOX.west, bboxMaxLat: KYIV_OBLAST_BBOX.north, bboxMaxLon: KYIV_OBLAST_BBOX.east,
+    osmSourceDate: m.mapVersion.slice(0, 8), dataVersion: m.downloadedAt, graphVersion: "онлайн-маршрутизація (офлайн-маршрути ще не підтримуються)",
+    mapVersion: m.mapVersion, poiVersion: m.downloadedAt, checksum: "перевірено за станом пакетів MapLibre", sizeBytes: m.mapBytes + m.placesBytes,
+  };
+}
+
+export const regionPackage = new MapLibreRegionManager();
+
+/** For the offline places module: is a verified package on the phone? */
+export async function hasOfflinePlaces(): Promise<boolean> {
+  return (await offlinePlacesMeta()) != null;
+}

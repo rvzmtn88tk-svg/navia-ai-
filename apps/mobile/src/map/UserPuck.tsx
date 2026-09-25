@@ -6,6 +6,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import MapLibreGL from "@maplibre/maplibre-react-native";
 import { useColors } from "../components/ui";
 import type { UserPosition } from "./NaviaMap";
+import { fuseHeading } from "../sensors/fuseHeading";
+import { lastHeading, recordHeadingLatency, subscribeHeading, type HeadingReading } from "../sensors/deviceHeading";
 
 export type PuckQuality = "good" | "degraded" | "lost";
 
@@ -17,6 +19,8 @@ function shortestAngleDelta(from: number, to: number): number {
   return ((to - from + 540) % 360) - 180;
 }
 
+/** Position glides between GPS fixes (1 Hz); heading is NOT glided — it is
+ * applied as it arrives (the compass updates on every 1° of rotation). */
 export function useGlide(target: UserPosition): UserPosition {
   const [current, setCurrent] = useState(target);
   const from = useRef(target);
@@ -24,8 +28,6 @@ export function useGlide(target: UserPosition): UserPosition {
   useEffect(() => {
     from.current = shown.current;
     const start = Date.now();
-    const startHeading = from.current.headingDeg ?? target.headingDeg ?? 0;
-    const delta = target.headingDeg == null ? 0 : shortestAngleDelta(startHeading, target.headingDeg);
     // A jump over ~200 m is a relocation, not motion: snap instead of sliding.
     const jumpM = Math.hypot((target.lat - from.current.lat) * 111_320, (target.lon - from.current.lon) * 111_320 * Math.cos(target.lat * Math.PI / 180));
     if (jumpM > 200) { shown.current = target; setCurrent(target); return; }
@@ -35,7 +37,7 @@ export function useGlide(target: UserPosition): UserPosition {
       const next: UserPosition = {
         lat: from.current.lat + (target.lat - from.current.lat) * e,
         lon: from.current.lon + (target.lon - from.current.lon) * e,
-        headingDeg: target.headingDeg == null && from.current.headingDeg == null ? null : (startHeading + delta * e + 360) % 360,
+        headingDeg: target.headingDeg,
         accuracyM: target.accuracyM,
       };
       shown.current = next;
@@ -43,8 +45,28 @@ export function useGlide(target: UserPosition): UserPosition {
       if (k >= 1) clearInterval(timer);
     }, FRAME_MS);
     return () => clearInterval(timer);
-  }, [target.lat, target.lon, target.headingDeg, target.accuracyM]);
-  return current;
+  }, [target.lat, target.lon, target.accuracyM]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { ...current, headingDeg: target.headingDeg };
+}
+
+/** Marker heading from the phone's compass (walking/standing) or the GPS
+ * course (driving), updated per compass event without re-rendering screens. */
+function useMarkerHeading(useCompass: boolean, courseDeg: number | null, speedMps: number | null): number | null {
+  const [reading, setReading] = useState<HeadingReading | null>(() => (useCompass ? lastHeading() : null));
+  const pendingAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (!useCompass) return undefined;
+    return subscribeHeading((r) => { pendingAt.current = r.at; setReading(r); });
+  }, [useCompass]);
+  const fused = fuseHeading({
+    compassDeg: reading?.deg ?? null, compassAt: reading?.at ?? null, compassAccuracyDeg: reading?.accuracyDeg ?? null,
+    courseDeg, speedMps, nowMs: Date.now(),
+  });
+  // Latency: compass event → this marker's new heading committed.
+  useEffect(() => {
+    if (pendingAt.current != null) { recordHeadingLatency(Date.now() - pendingAt.current); pendingAt.current = null; }
+  }, [reading]);
+  return fused.deg ?? courseDeg;
 }
 
 function usePulse(): number {
@@ -57,9 +79,17 @@ function usePulse(): number {
   return phase;
 }
 
-export const UserPuck = React.memo(function UserPuck({ position, quality }: { position: UserPosition; quality: PuckQuality }): JSX.Element {
+/** `billboard`: in 3D the disc and arrow face the screen (not laid flat on
+ * the tilted ground), so they stay readable at any camera pitch. The puck is
+ * the last layer on the map: above buildings, route and labels. */
+export const UserPuck = React.memo(function UserPuck({ position, quality, billboard = false, compass = false, speedMps = null }: {
+  position: UserPosition; quality: PuckQuality; billboard?: boolean;
+  /** Use the phone's compass when slow (see fuseHeading). */
+  compass?: boolean; speedMps?: number | null;
+}): JSX.Element {
   const c = useColors();
-  const shown = useGlide(position);
+  const heading = useMarkerHeading(compass, position.headingDeg, speedMps);
+  const shown = { ...useGlide(position), headingDeg: heading };
   const pulse = usePulse();
   const tone = quality === "good" ? c.accent : quality === "degraded" ? c.warning : c.critical;
   const shape = useMemo(() => ({
@@ -87,11 +117,11 @@ export const UserPuck = React.memo(function UserPuck({ position, quality }: { po
           circleRadius: 22 + pulse * 18, circleColor: tone, circleOpacity: 0.28 * (1 - pulse), circlePitchAlignment: "map",
         }} />
         <MapLibreGL.CircleLayer id="navia-user-disc" style={{
-          circleRadius: 20, circleColor: c.surface, circleStrokeColor: tone, circleStrokeWidth: 2.5, circlePitchAlignment: "map",
+          circleRadius: 20, circleColor: c.surface, circleStrokeColor: tone, circleStrokeWidth: 2.5, circlePitchAlignment: billboard ? "viewport" : "map",
         }} />
         <MapLibreGL.SymbolLayer id="navia-user-logo" style={{
           iconImage: "naviaMark", iconSize: 0.052, iconRotate: ["get", "heading"], iconRotationAlignment: "map",
-          iconPitchAlignment: "map", iconAllowOverlap: true, iconIgnorePlacement: true,
+          iconPitchAlignment: billboard ? "viewport" : "map", iconAllowOverlap: true, iconIgnorePlacement: true,
           iconOpacity: quality === "lost" ? 0.55 : 1,
         }} />
       </MapLibreGL.ShapeSource>

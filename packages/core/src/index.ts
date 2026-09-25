@@ -7,6 +7,7 @@ export * from "./geodesy";
 export * from "./dead-reckoning";
 export * from "./confidence";
 export * from "./gnss-monitor";
+export * from "./gnss-trend";
 export * from "./sensor-fusion";
 export * from "./route-engine";
 export * from "./demo-routing-provider";

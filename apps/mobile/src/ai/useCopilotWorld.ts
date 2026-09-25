@@ -12,6 +12,7 @@ import { useT, type StringKey } from "../i18n";
 import { landmarkConfirmation, landmarkCue, landmarksAround, type LandmarkKind } from "../navigation/landmarks";
 import { actionWords, type StepLike } from "../voice/guidance";
 import { cachedStreet, streetAt } from "../providers/streetAt";
+import { gnssTrendReasons } from "../engine/gnssWords";
 import type { CopilotWorld, PlaceKind, WorldLandmark, WorldPlace } from "./copilotBrain";
 
 const KIND_LABEL_UK: Record<LandmarkKind, string> = {
@@ -113,6 +114,7 @@ export function useCopilotWorld(): CopilotWorld {
         positionMode: state.positionMode ?? null,
         uncertaintyM: state.positionUncertaintyM ?? null,
         hasPosition: !!here,
+        ...(state.gnssTrend?.level === "degrading" ? { trendText: gnssTrendReasons(state.gnssTrend, t) } : {}),
       },
       ...(street || alert?.locationLabel ? { here: { ...(street?.street ? { street: street.street } : {}), ...(street?.area || alert?.locationLabel ? { area: street?.area ?? alert?.locationLabel } : {}) } } : {}),
       ...(alert ? { alert: {

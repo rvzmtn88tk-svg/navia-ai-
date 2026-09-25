@@ -69,8 +69,8 @@ export function useLiveContext() {
   }, [setAlert, setThreat]);
 
   /** Loads one category on demand (chips, nearest shelter). */
-  const loadCategory = useCallback(async (category: FetchCategory, force = false) => {
-    await useNearbyStore.getState().load(category, force);
+  const loadCategory = useCallback(async (category: FetchCategory, force = false, radiusM?: number | null) => {
+    await useNearbyStore.getState().load(category, force, radiusM);
   }, []);
 
   const onLocation = useCallback((loc: Location.LocationObject) => {

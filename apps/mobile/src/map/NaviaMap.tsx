@@ -3,7 +3,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import MapLibreGL from "@maplibre/maplibre-react-native";
-import type { LatLon } from "@navia/core";
+import { destinationPoint, type LatLon } from "@navia/core";
 import type { NearbyPlace } from "../providers/NearbyPlacesProvider";
 import { CATEGORY_META } from "../places/categories";
 import { Icon } from "../components/Icon";
@@ -44,11 +44,20 @@ type Props = {
   onMapReady?: () => void;
   /** Current speed, for the automatic navigation zoom. */
   speedMps?: number | null;
+  /** Strict search circle drawn on the map (radius search). */
+  searchCircle?: { center: LatLon; radiusM: number } | null;
+  /** Navigation view: 3D tilt (buildings stand up) or flat 2D. */
+  view3d?: boolean;
+  /** Called after every rendered frame (dev FPS meter). */
+  onFrame?: () => void;
+  /** Marker follows the phone's compass when slow (see sensors/fuseHeading). */
+  compassHeading?: boolean;
 };
 
 const KYIV: LatLon = { lat: 50.4501, lon: 30.5234 };
 const FOLLOW_ZOOM = 15.5;
-const NAV_PITCH = 45;
+const NAV_PITCH_3D = 60;
+const NAV_PITCH_2D = 0;
 
 /** Navigation zoom by speed: close on foot, wider in town, widest on the highway. */
 export function autoNavZoom(speedMps: number | null | undefined): number {
@@ -63,8 +72,10 @@ export function autoNavZoom(speedMps: number | null | undefined): number {
 export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function NaviaMap(props, ref) {
   const {
     mapStyle, user, quality, cameraMode, onUserGesture, onBearingChange, routeGeometry = [], traveledGeometry = [],
-    destination, places = [], selectedPlaceId, onPlacePress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps,
+    destination, places = [], selectedPlaceId, onPlacePress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame, compassHeading = false,
   } = props;
+  const view3dRef = useRef(view3d);
+  view3dRef.current = view3d;
   const c = useColors();
   const camera = useRef<MapLibreGL.CameraRef | null>(null);
   const mapView = useRef<MapLibreGL.MapViewRef | null>(null);
@@ -94,7 +105,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
       centerCoordinate: [u.lon, u.lat],
       zoomLevel: mode === "navigate" ? userNavZoom.current ?? autoNavZoom(speed.current) : Math.max(zoom.current, 14),
       heading,
-      pitch: mode === "navigate" ? NAV_PITCH : 0,
+      pitch: mode === "navigate" ? (view3dRef.current ? NAV_PITCH_3D : NAV_PITCH_2D) : 0,
       padding: cameraPadding,
       animationDuration: duration,
       animationMode: duration > 0 ? "easeTo" : "moveTo",
@@ -106,6 +117,11 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
   useEffect(() => {
     if (cameraMode !== "free") moveToUser(900, cameraMode);
   }, [user?.lat, user?.lon, user?.headingDeg, cameraMode, moveToUser]);
+
+  // 2D ↔ 3D switch: tilt the camera now.
+  useEffect(() => {
+    if (cameraMode === "navigate") moveToUser(motion.normal, "navigate");
+  }, [view3d]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mode switches (e.g. overview → navigation) get the long cinematic move.
   const previousMode = useRef(cameraMode);
@@ -192,6 +208,8 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           if (Math.abs(h - bearing.current) > 0.5) { bearing.current = h; onBearingChange?.(h); }
         }}
         onDidFinishLoadingMap={onMapReady}
+        // Every rendered frame is reported as either "fully" or "not fully" rendered.
+        {...(onFrame ? { onDidFinishRenderingFrame: onFrame, onDidFinishRenderingFrameFully: onFrame } : {})}
         onDidFailLoadingMap={onMapError}
       >
         <MapLibreGL.Camera ref={camera} defaultSettings={{ centerCoordinate: [initialCenter.lon, initialCenter.lat], zoomLevel: user ? FOLLOW_ZOOM : 12 }} />
@@ -214,7 +232,21 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           </MapLibreGL.ShapeSource>
         )}
 
-        {places.slice(0, 60).map((place) => (
+        {searchCircle && (
+          <MapLibreGL.ShapeSource id="navia-search-circle" shape={circleFeature(searchCircle.center, searchCircle.radiusM)}>
+            <MapLibreGL.FillLayer id="navia-search-circle-fill" style={{ fillColor: c.brandTeal, fillOpacity: 0.07 }} />
+            <MapLibreGL.LineLayer id="navia-search-circle-line" style={{ lineColor: c.brandTeal, lineWidth: 2, lineDasharray: [2, 2], lineOpacity: 0.8 }} />
+          </MapLibreGL.ShapeSource>
+        )}
+
+        {/* Every result: small dots for all, rich markers for the nearest 40. */}
+        {places.length > 40 && (
+          <MapLibreGL.ShapeSource id="navia-places-all" shape={pointsFeature(places.slice(40))}
+            onPress={(e) => { const id = e.features?.[0]?.properties?.id; const hit = places.find((p) => p.id === id); if (hit) onPlacePress?.(hit); }}>
+            <MapLibreGL.CircleLayer id="navia-places-dots" style={{ circleRadius: 5, circleColor: ["get", "color"], circleStrokeColor: c.surface, circleStrokeWidth: 1.5 }} />
+          </MapLibreGL.ShapeSource>
+        )}
+        {places.slice(0, 40).map((place) => (
           <MapLibreGL.MarkerView key={place.id} id={`place-${place.id}`} coordinate={[place.location.lon, place.location.lat]} anchor={{ x: 0.5, y: 0.5 }} allowOverlap>
             <PlaceMarker place={place} selected={place.id === selectedPlaceId} onPress={onPlacePress} />
           </MapLibreGL.MarkerView>
@@ -228,7 +260,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           </MapLibreGL.MarkerView>
         )}
 
-        {user && <UserPuck position={user} quality={quality} />}
+        {user && <UserPuck position={user} quality={quality} billboard={view3d && cameraMode === "navigate"} compass={compassHeading} speedMps={speedMps ?? null} />}
       </MapLibreGL.MapView>
     </View>
   );
@@ -244,6 +276,22 @@ function PlaceMarker({ place, selected, onPress }: { place: NearbyPlace; selecte
       <Icon name={meta.icon} size={selected ? 22 : 16} color={c.onMarker} />
     </Touchable>
   );
+}
+
+function circleFeature(center: LatLon, radiusM: number) {
+  const ring = Array.from({ length: 73 }, (_, i) => destinationPoint(center, (i * 5) % 360, radiusM)).map((p) => [p.lon, p.lat]);
+  return { type: "Feature" as const, properties: {}, geometry: { type: "Polygon" as const, coordinates: [ring] } };
+}
+
+function pointsFeature(places: NearbyPlace[]) {
+  return {
+    type: "FeatureCollection" as const,
+    features: places.map((p) => ({
+      type: "Feature" as const,
+      properties: { id: p.id, color: CATEGORY_META[p.category].color },
+      geometry: { type: "Point" as const, coordinates: [p.location.lon, p.location.lat] },
+    })),
+  };
 }
 
 function lineFeature(points: LatLon[]) {

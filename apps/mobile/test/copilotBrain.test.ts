@@ -147,3 +147,35 @@ test("unknown question: honest, with the current situation and suggestions", () 
   assert.equal(r.intent, "unknown");
   assert.ok(r.actions.length >= 2);
 });
+
+test("GPS weakening: the co-pilot names the reason and warns about a possible loss", () => {
+  const w = world({ gps: { state: "DEGRADED", accuracyM: 38, lastFixAgeS: 1, positionMode: "GNSS", uncertaintyM: null, hasPosition: true, trendText: "точність погіршується" } });
+  const r = answer("що з GPS?", w);
+  assert.match(r.text, /слабшає \(точність погіршується\) — можлива втрата/);
+});
+
+test("standard commands are understood: Куди далі? Через скільки поворот? Статус GPS?", () => {
+  for (const q of ["Куди далі?", "куда дальше", "Через скільки поворот?", "через сколько поворот", "Скільки до повороту?", "Коли поворот?"]) {
+    assert.equal(detectIntent(q), "routeNext", q);
+  }
+  assert.equal(detectIntent("Статус GPS?"), "gps");
+  const w = world({ route: { destination: "ОККО", mode: "car", remainingM: 2400, etaS: 420, offRoute: false, next: { action: "поверніть праворуч", road: "Вознесенський узвіз", distanceM: 650, cue: "біля аптеки «Фармація»" }, landmarkCount: 67 } });
+  assert.match(answer("Через скільки поворот?", w).text, /^Через 650 м, біля аптеки «Фармація», поверніть праворуч на Вознесенський узвіз\./);
+});
+
+test("answers are instant: every standard command is computed in under 20 ms", () => {
+  const w = world({ route: { destination: "ОККО", mode: "car", remainingM: 2400, etaS: 420, offRoute: false, next: { action: "поверніть праворуч", distanceM: 650 }, landmarkCount: 67 } });
+  for (const q of ["Куди далі?", "Через скільки поворот?", "Де я?", "Статус GPS?", "Де укриття?", "Що з тривогою?", "Коли приїдемо?"]) {
+    answer(q, w);
+    // CPU time of this process (not wall clock): other load on the machine
+    // (parallel test files, sync daemons) must not fail the test.
+    let ms = Infinity;
+    for (let b = 0; b < 5; b++) {
+      const c0 = process.cpuUsage();
+      for (let i = 0; i < 10; i++) answer(q, w);
+      const c = process.cpuUsage(c0);
+      ms = Math.min(ms, (c.user + c.system) / 1000 / 10);
+    }
+    assert.ok(ms < 20, `${q}: ${ms.toFixed(2)} ms`);
+  }
+});

@@ -18,7 +18,9 @@ type DecodedTile = { pois: TilePoi[]; rails: TileLine[]; waterways: TileLine[] }
 
 let templatePromise: Promise<string> | null = null;
 const tiles = new Map<string, Promise<DecodedTile>>();
-const MAX_TILES = 150;
+const MAX_TILES = 260;
+/** Largest circle served from tiles (z14 tiles are ~1.5 km at Kyiv's latitude). */
+export const MAX_RADIUS_TILES = 200;
 
 type FetchLike = (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; arrayBuffer(): Promise<ArrayBuffer> }>;
 let doFetch: FetchLike = (url) => fetch(url);
@@ -108,7 +110,16 @@ async function loadTile(x: number, y: number): Promise<DecodedTile> {
 }
 
 async function loadTiles(keys: { x: number; y: number }[]): Promise<DecodedTile[]> {
-  const results = await Promise.allSettled(keys.map((k) => loadTile(k.x, k.y)));
+  // At most 16 downloads at a time.
+  const results: PromiseSettledResult<DecodedTile>[] = new Array(keys.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(16, keys.length) }, async () => {
+    while (next < keys.length) {
+      const i = next++;
+      const k = keys[i]!;
+      results[i] = await loadTile(k.x, k.y).then((value) => ({ status: "fulfilled" as const, value }), (reason) => ({ status: "rejected" as const, reason }));
+    }
+  }));
   const ok = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
   if (ok.length === 0 && keys.length > 0) throw (results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined)?.reason ?? new Error("tiles failed");
   return ok;
@@ -134,6 +145,15 @@ export function poiCategory(p: Pick<TilePoi, "cls" | "sub">): FetchCategory | nu
   return null;
 }
 
+/** How many z14 tiles cover a circle of `radiusM` (to decide tiles vs Overpass). */
+export function tileCountForRadius(center: LatLon, radiusM: number): number {
+  const dLat = radiusM / 110_540;
+  const dLon = radiusM / (111_320 * Math.cos(center.lat * Math.PI / 180));
+  const a = tileOf({ lat: center.lat + dLat, lon: center.lon - dLon });
+  const b = tileOf({ lat: center.lat - dLat, lon: center.lon + dLon });
+  return (b.x - a.x + 1) * (b.y - a.y + 1);
+}
+
 /** Everyday places of one category within `radiusM` (tiles covering the circle). */
 export async function tilePoisNear(center: LatLon, category: FetchCategory, radiusM: number): Promise<(TilePoi & { distanceM: number })[]> {
   const dLat = radiusM / 110_540;
@@ -142,7 +162,9 @@ export async function tilePoisNear(center: LatLon, category: FetchCategory, radi
   const b = tileOf({ lat: center.lat - dLat, lon: center.lon + dLon });
   const keys: { x: number; y: number }[] = [];
   for (let x = a.x; x <= b.x; x++) for (let y = a.y; y <= b.y; y++) keys.push({ x, y });
-  const decoded = await loadTiles(keys.slice(0, 64));
+  // Never silently cover only part of the circle.
+  if (keys.length > MAX_RADIUS_TILES) throw new Error(`tilePoisNear: radius needs ${keys.length} tiles`);
+  const decoded = await loadTiles(keys);
   const seen = new Set<string>();
   return decoded.flatMap((t) => t.pois)
     .filter((p) => poiCategory(p) === category)

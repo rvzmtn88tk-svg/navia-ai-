@@ -31,3 +31,10 @@ export function destinationPoint(origin:LatLon,bearingDeg:number,distanceM:numbe
 export function angleDeltaDeg(a:number,b:number):number {
   return Math.abs(((a-b+540)%360)-180);
 }
+
+/** Signed turn from `beforeDeg` to `afterDeg` in -180..180: positive =
+ * clockwise (a RIGHT turn), negative = counter-clockwise (a LEFT turn). */
+export function signedTurnDeg(beforeDeg:number, afterDeg:number):number {
+  const d=((afterDeg-beforeDeg)%360+540)%360-180;
+  return d===-180 ? 180 : d;
+}

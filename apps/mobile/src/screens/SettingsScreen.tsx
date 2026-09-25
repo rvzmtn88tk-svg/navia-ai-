@@ -8,6 +8,7 @@ import { useAppSettings, type AppLanguage, type ThemePreference, type VoiceGende
 import { useT } from "../i18n";
 import { Button, Card, Divider, ListRow, SectionLabel, Segmented, Text, TextField, useColors } from "../components/ui";
 import { hasGenderVoice, speak } from "../voice/VoiceGuide";
+import { OfflinePackageCard } from "../components/OfflinePackageCard";
 import { radius, space } from "../theme/tokens";
 
 export function SettingsScreen(): JSX.Element {
@@ -71,6 +72,9 @@ export function SettingsScreen(): JSX.Element {
         {voiceGender === "male" && !maleAvailable && <Text variant="caption" color="muted">{t("settings.voice.maleInterim")}</Text>}
         <Button label={t("settings.voice.preview")} icon="volume" variant="secondary" loading={previewing} onPress={() => void preview()} />
       </Card>
+
+      <SectionLabel style={styles.sectionGap}>{t("offline.section")}</SectionLabel>
+      <OfflinePackageCard />
 
       <SectionLabel style={styles.sectionGap}>NAVIA</SectionLabel>
       <Card style={styles.list}>

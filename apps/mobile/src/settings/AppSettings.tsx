@@ -46,6 +46,8 @@ type SettingsContextValue = {
   displayName: string;
   introSoundEnabled: boolean;
   briefingEnabled: boolean;
+  /** Navigation view: 3D (tilted, buildings, relief) or flat 2D. */
+  nav3d: boolean;
   ready: boolean;
   onboardingComplete: boolean;
   mapLayer: MapLayer;
@@ -57,6 +59,7 @@ type SettingsContextValue = {
   setDisplayName: (value: string) => void;
   setIntroSoundEnabled: (value: boolean) => void;
   setBriefingEnabled: (value: boolean) => void;
+  setNav3d: (value: boolean) => void;
   completeOnboarding: () => void;
   resetOnboarding: () => void;
 };
@@ -67,6 +70,7 @@ const LANGUAGE_KEY = "navia.preference.language.v1";
 const DISPLAY_NAME_KEY = "navia.profile.display-name.v1";
 const INTRO_SOUND_KEY = "navia.preference.intro-sound.v1";
 const BRIEFING_KEY = "navia.preference.briefing.v1";
+const NAV3D_KEY = "navia.preference.nav3d.v1";
 const ONBOARDING_KEY = "navia.onboarding.complete.v1";
 const MAP_LAYER_KEY = "navia.preference.map-layer.v1";
 const VOICE_GENDER_KEY = "navia.preference.voice-gender.v1";
@@ -78,6 +82,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [displayName, setDisplayNameState] = useState("");
   const [introSoundEnabled, setIntroSoundState] = useState(true);
   const [briefingEnabled, setBriefingState] = useState(true);
+  const [nav3d, setNav3dState] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [ready, setReady] = useState(false);
   const [mapLayer, setMapLayerState] = useState<MapLayer>("standard");
@@ -94,7 +99,8 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       Storage.getItemAsync(MAP_LAYER_KEY).catch(() => null),
       Storage.getItemAsync(VOICE_GENDER_KEY).catch(() => null),
       Storage.getItemAsync(BRIEFING_KEY).catch(() => null),
-    ]).then(([storedTheme, storedLanguage, storedName, storedSound, storedOnboarding, storedLayer, storedVoice, storedBriefing]) => {
+      Storage.getItemAsync(NAV3D_KEY).catch(() => null),
+    ]).then(([storedTheme, storedLanguage, storedName, storedSound, storedOnboarding, storedLayer, storedVoice, storedBriefing, storedNav3d]) => {
       if (!active) return;
       if (storedTheme === "system" || storedTheme === "light" || storedTheme === "dark") setTheme(storedTheme);
       if (storedLanguage === "uk" || storedLanguage === "en") setAppLanguage(storedLanguage);
@@ -104,6 +110,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       if (storedLayer === "standard" || storedLayer === "satellite" || storedLayer === "terrain") setMapLayerState(storedLayer);
       if (storedVoice === "female" || storedVoice === "male") setVoiceGenderState(storedVoice);
       if (storedBriefing === "no") setBriefingState(false);
+      if (storedNav3d === "yes") setNav3dState(true);
       setReady(true);
     });
     return () => { active = false; };
@@ -121,6 +128,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
     displayName,
     introSoundEnabled,
     briefingEnabled,
+    nav3d,
     ready,
     onboardingComplete,
     mapLayer,
@@ -146,6 +154,10 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       setDisplayNameState(normalized);
       void Storage.setItemAsync(DISPLAY_NAME_KEY, normalized).catch(() => {});
     },
+    setNav3d: (next) => {
+      setNav3dState(next);
+      void Storage.setItemAsync(NAV3D_KEY, next ? "yes" : "no").catch(() => {});
+    },
     setBriefingEnabled: (next) => {
       setBriefingState(next);
       void Storage.setItemAsync(BRIEFING_KEY, next ? "yes" : "no").catch(() => {});
@@ -162,7 +174,7 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
       setOnboardingComplete(false);
       void Storage.setItemAsync(ONBOARDING_KEY, "no").catch(() => {});
     },
-  }), [briefingEnabled, displayName, introSoundEnabled, isDark, language, mapLayer, onboardingComplete, ready, themePreference, voiceGender]);
+  }), [briefingEnabled, nav3d, displayName, introSoundEnabled, isDark, language, mapLayer, onboardingComplete, ready, themePreference, voiceGender]);
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
