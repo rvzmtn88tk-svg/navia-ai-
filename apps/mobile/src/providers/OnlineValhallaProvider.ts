@@ -139,6 +139,7 @@ export function valhallaLegToRoute(leg: ValhallaLeg, tripSummary: { length: numb
       location: geometry[index]!,
       ...(Number.isFinite(maneuver.bearing_before) ? { bearingBefore: maneuver.bearing_before } : {}),
       ...(Number.isFinite(maneuver.bearing_after) ? { bearingAfter: maneuver.bearing_after } : {}),
+      geometryIndex: index,
     };
   });
   return {

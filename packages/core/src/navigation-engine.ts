@@ -26,7 +26,7 @@ import { GNSSMonitor } from "./gnss-monitor";
 import { calculateConfidence } from "./confidence";
 import { SensorFusionEngine } from "./sensor-fusion";
 import type { Route, RoutingProvider, TravelMode } from "./route-engine";
-import { RouteProgressEngine, distanceFromRouteCorridorM } from "./route-engine";
+import { RouteProgressEngine, distanceFromRouteCorridorM, routeMeasure } from "./route-engine";
 import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
 import { TelemetryLogger } from "./telemetry-logger";
@@ -91,6 +91,8 @@ export class NavigationEngine {
   private telemetry = new TelemetryLogger(20_000);
 
   private route: Route | null = null;
+  /** Where the vehicle was on the current route at the last update (m). */
+  private lastProgressM: number | null = null;
   /** Latest received sample (used only to determine whether the stream has stopped). */
   private lastGnssRaw: GNSSRawSample | null = null;
   /** Last sample that passed the integrity checks; rejected fixes never replace it. */
@@ -137,12 +139,15 @@ export class NavigationEngine {
     const route = await this.routingProvider.route({ origin, destination, mode });
     if (revision !== this.routeRevision) throw new Error("NavigationEngine: route request was cancelled or superseded.");
     this.route = route;
+    this.lastProgressM = 0;
     this.offRouteDetector.reset();
     this.deadReckoner.setRoute(route);
     // Seed dead reckoning: from the user-placed start, or the last trusted fix.
     const seedFrom = this.manualStart?.position ?? this.lastTrustedPosition?.position ?? null;
     if (seedFrom) {
-      const seedProgress = this.progressEngine.computeProgress(route, seedFrom, null).distanceCompletedM;
+      // A new route starts where the vehicle is: prefer the start of the line
+      // when the route passes this place more than once.
+      const seedProgress = this.progressEngine.computeProgress(route, seedFrom, null, 0).distanceCompletedM;
       if (this.manualStart) this.deadReckoner.anchorManually(seedProgress, Date.now());
       else this.deadReckoner.anchorFromGnss(seedProgress, this.lastTrustedGnssRaw?.speedMps ?? null, this.lastTrustedGnssRaw?.accuracyM ?? null, this.lastTrustedPosition!.position.timestamp);
     }
@@ -165,6 +170,7 @@ export class NavigationEngine {
   clearRoute(): void {
     this.routeRevision++;
     this.route = null;
+    this.lastProgressM = null;
     this.lastGnssRaw = null;
     this.lastTrustedGnssRaw = null;
     this.lastGnssIntegrity = null;
@@ -197,7 +203,7 @@ export class NavigationEngine {
     this.manualStart = { position, atMs: nowMs };
     this.telemetry.log("MANUAL_POSITION", {}, nowMs);
     if (this.route) {
-      this.deadReckoner.anchorManually(this.progressEngine.computeProgress(this.route, position, null).distanceCompletedM, nowMs);
+      this.deadReckoner.anchorManually(this.progressEngine.computeProgress(this.route, position, null, this.lastProgressM).distanceCompletedM, nowMs);
     }
   }
 
@@ -206,7 +212,7 @@ export class NavigationEngine {
   confirmManeuverReached(nowMs = Date.now()): boolean {
     const s = this.currentState;
     if (!this.route || s.nextStepDistanceM == null) return false;
-    this.deadReckoner.confirmReached(Math.min(this.route.distanceM, s.routeProgressM + s.nextStepDistanceM), nowMs);
+    this.deadReckoner.confirmReached(Math.min(Math.max(this.route.distanceM, routeMeasure(this.route).totalM), s.routeProgressM + s.nextStepDistanceM), nowMs);
     this.telemetry.log("LANDMARK", { kind: "maneuver-confirmed" }, nowMs);
     return true;
   }
@@ -436,7 +442,9 @@ export class NavigationEngine {
       this.lastTrustedPosition = { ...pendingTrustedEstimate, confidence: confidence.value, band: confidence.band };
     }
 
-    let progress = route && fusedPosition && hasFreshTrustedPosition ? this.progressEngine.computeProgress(route, fusedPosition, fusedSpeedMps) : null;
+    let progress = route && fusedPosition && hasFreshTrustedPosition ? this.progressEngine.computeProgress(route, fusedPosition, fusedSpeedMps, this.lastProgressM,
+      // Course over ground is meaningful only while moving.
+      fusedSpeedMps != null && fusedSpeedMps >= 2 ? fusedHeadingDeg : null) : null;
     if (progress && route) {
       this.deadReckoner.anchorFromGnss(progress.distanceCompletedM, fusedSpeedMps, this.lastGnssRaw?.accuracyM ?? null, nowMs);
     }
@@ -445,8 +453,9 @@ export class NavigationEngine {
     let dr: DeadReckoningEstimate | null = null;
     if (route && !hasFreshTrustedPosition && this.deadReckoner.hasAnchor()) {
       dr = this.deadReckoner.estimate(nowMs, this.motion.isMoving(nowMs));
-      if (dr) progress = this.progressEngine.computeProgress(route, dr.position, dr.speedMps > 0 ? dr.speedMps : null);
+      if (dr) progress = this.progressEngine.computeProgress(route, dr.position, dr.speedMps > 0 ? dr.speedMps : null, dr.progressM);
     }
+    if (progress) this.lastProgressM = progress.distanceCompletedM;
     if (dr && !this.drWasActive) this.telemetry.log("DEAD_RECKONING", { started: true }, nowMs);
     if (!dr && this.drWasActive) this.telemetry.log("DEAD_RECKONING", { started: false }, nowMs);
     this.drWasActive = dr != null;

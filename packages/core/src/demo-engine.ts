@@ -235,7 +235,9 @@ export class DemoEngine {
     if (gnssIntegrityState === "DEGRADED") this.telemetry.log("GNSS_DEGRADED", {}, this.simTimeMs);
     if (gnssIntegrityState === "LOST") this.telemetry.log("GNSS_LOST", {}, this.simTimeMs);
 
-    const progress = this.progressEngine.computeProgress(this.route, fused.position, fused.speedMps);
+    // The simulated vehicle drives along the route: its travelled distance is
+    // where it was a moment ago (matters where the route passes a place twice).
+    const progress = this.progressEngine.computeProgress(this.route, fused.position, fused.speedMps, this.distanceTraveledM);
     const distanceOffRouteM = distanceFromRouteCorridorM(this.route, fused.position);
     const offRouteConfirmed = this.offRouteDetector.update({
       distanceFromRouteM: distanceOffRouteM, roadMismatch: false, headingMismatchDeg: null, timestamp: this.simTimeMs,

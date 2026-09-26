@@ -49,7 +49,7 @@
     {
       "step": "arrive",
       "passed": true,
-      "detail": "mode=ARRIVED routeRemainingM=3 ticksUsed=3005"
+      "detail": "mode=ARRIVED routeRemainingM=10 ticksUsed=3007"
     }
   ],
   "finalMode": "ARRIVED",
@@ -21347,6 +21347,20 @@
     },
     {
       "timestamp": 3042000,
+      "type": "GNSS_FIX",
+      "payload": {
+        "accuracyM": 5
+      }
+    },
+    {
+      "timestamp": 3043000,
+      "type": "GNSS_FIX",
+      "payload": {
+        "accuracyM": 5
+      }
+    },
+    {
+      "timestamp": 3044000,
       "type": "GNSS_FIX",
       "payload": {
         "accuracyM": 5

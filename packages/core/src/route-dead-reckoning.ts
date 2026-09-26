@@ -10,7 +10,7 @@
 // reported; it never pretends to be a GNSS fix.
 import type { IMUSample, LatLon } from "./types";
 import type { Route } from "./route-engine";
-import { positionAtDistance } from "./route-engine";
+import { positionAtDistance, stepLegEndsM } from "./route-engine";
 import { haversineMeters, initialBearing } from "./geodesy";
 
 // ——— Motion detection from the accelerometer ———
@@ -78,9 +78,7 @@ export class RouteDeadReckoner {
 
   setRoute(route: Route | null): void {
     this.route = route;
-    this.cumulativeLegEnds = [];
-    let cum = 0;
-    for (const step of route?.steps ?? []) { cum += step.distanceM; this.cumulativeLegEnds.push(cum); }
+    this.cumulativeLegEnds = route ? stepLegEndsM(route) : [];
     this.anchor = null;
     this.trustedSpeedMps = null;
   }

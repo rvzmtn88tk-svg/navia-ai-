@@ -108,6 +108,11 @@ export type RouteStep = {
   bearingBefore?: number;
   bearingAfter?: number;
   roadSegmentId?: string;
+  /** Index of the maneuver point in `route.geometry` (Valhalla's
+   * begin_shape_index). When every step has it, route progress places the
+   * maneuvers on the line itself instead of adding up the router's rounded
+   * leg lengths (which drift from the geometry by tens of metres). */
+  geometryIndex?: number;
 };
 
 export type Landmark = {

@@ -141,6 +141,7 @@ function edgesToRoute(graph: DemoRoadGraph, edges: DemoRoadEdge[], id: string): 
       bearingBefore,
       bearingAfter,
       roadSegmentId: edge.id,
+      geometryIndex: i,
     });
     bearingBefore = bearingAfter;
   }
@@ -155,6 +156,7 @@ function edgesToRoute(graph: DemoRoadGraph, edges: DemoRoadEdge[], id: string): 
     location: lastNode.position,
     bearingBefore,
     roadSegmentId: edges[edges.length - 1]!.id,
+    geometryIndex: edges.length,
   });
 
   const distanceM = legLengths.reduce((a, b) => a + b, 0);

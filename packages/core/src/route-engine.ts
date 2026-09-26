@@ -18,7 +18,7 @@
 // never from a canned string.
 
 import type { LatLon, RouteStep } from "./types";
-import { haversineMeters } from "./geodesy";
+import { haversineMeters, initialBearing, signedTurnDeg } from "./geodesy";
 
 export type TravelMode = "car" | "walk";
 
@@ -132,13 +132,63 @@ export function positionAtDistance(geometry: LatLon[], distanceM: number): LatLo
   return geometry[geometry.length - 1]!;
 }
 
+type RouteMeasure = { cumM: number[]; totalM: number; stepStartsM: number[] | null };
+const measureCache = new WeakMap<Route, RouteMeasure>();
+
+/** Cumulative distance along the route line, and where each maneuver sits on it. */
+export function routeMeasure(route: Route): RouteMeasure {
+  const cached = measureCache.get(route);
+  if (cached) return cached;
+  const g = route.geometry;
+  const cumM = [0];
+  for (let i = 1; i < g.length; i++) cumM.push(cumM[i - 1]! + haversineMeters(g[i - 1]!, g[i]!));
+  const steps = route.steps;
+  const onLine = steps.length > 0 && steps.every((s, i) =>
+    s.geometryIndex != null && Number.isInteger(s.geometryIndex) && s.geometryIndex >= 0 && s.geometryIndex < g.length
+    && (i === 0 || s.geometryIndex >= steps[i - 1]!.geometryIndex!));
+  const measure = { cumM, totalM: cumM[cumM.length - 1] ?? 0, stepStartsM: onLine ? steps.map((s) => cumM[s.geometryIndex!]!) : null };
+  measureCache.set(route, measure);
+  return measure;
+}
+
+/**
+ * Where each step's leg ends, in metres along the route line. With maneuver
+ * points on the line (RouteStep.geometryIndex) this is exact; otherwise the
+ * leg lengths are added up (routes built without an index, e.g. in tests).
+ */
+export function stepLegEndsM(route: Route): number[] {
+  const m = routeMeasure(route);
+  if (m.stepStartsM) {
+    const starts = m.stepStartsM;
+    return route.steps.map((_, i) => (i + 1 < starts.length ? starts[i + 1]! : m.totalM));
+  }
+  let cum = 0;
+  return route.steps.map((s) => (cum += s.distanceM));
+}
+
+/** Other parts of the route closer than this to the nearest one are treated as
+ * the same place (a road driven twice, both sides of a U-turn, a divided road). */
+const SAME_PLACE_M = 20;
+/** Metres of distance-to-line one metre of along-route jump is worth. */
+const JUMP_WEIGHT = 0.5;
+/** Cost of a part of the line running against the vehicle's course (the other
+ * side of a U-turn on the same street). */
+const AGAINST_COURSE_M = 25;
+
 export class RouteProgressEngine {
   /**
    * Find where `currentPosition` sits along `route.geometry`, and derive
    * distance completed/remaining, ETA, current road and next maneuver from
    * that — all real, computed values (spec: "no fake 3.4km or <1min").
+   *
+   * `previousCompletedM` is where the vehicle was on this route a moment
+   * ago. A route can pass the same place twice (a loop around a block, the
+   * way back after a U-turn); without it the nearest part of the line wins
+   * and the next maneuver can come from another part of the route.
+   * `courseDeg` (GNSS course over ground, when moving) tells the two sides of
+   * a U-turn on the same street apart: they are the same line.
    */
-  computeProgress(route: Route, currentPosition: LatLon, speedMps: number | null): RouteProgress {
+  computeProgress(route: Route, currentPosition: LatLon, speedMps: number | null, previousCompletedM?: number | null, courseDeg?: number | null): RouteProgress {
     const geom = route.geometry;
     if (geom.length < 2) {
       return {
@@ -152,22 +202,42 @@ export class RouteProgressEngine {
       };
     }
 
-    // cumulative distance to the start of each geometry segment
-    let cumBeforeSegment = 0;
+    const measure = routeMeasure(route);
+    const candidates: { distM: number; alongM: number; seg: number }[] = [];
     let bestDistToRoute = Infinity;
     let bestCumAtProjection = 0;
-
+    let cumLocalM = 0;
     for (let i = 0; i < geom.length - 1; i++) {
-      const a = geom[i]!, b = geom[i + 1]!;
-      const { distToSegM, alongSegM, segLenM } = projectOntoSegment(currentPosition, a, b);
+      const { distToSegM, alongSegM, segLenM } = projectOntoSegment(currentPosition, geom[i]!, geom[i + 1]!);
+      // With maneuver points on the line, measure on the same (great-circle)
+      // scale as they are; otherwise keep the leg-length scale of old routes.
+      const alongM = measure.stepStartsM
+        ? measure.cumM[i]! + (segLenM > 0 ? (alongSegM / segLenM) * (measure.cumM[i + 1]! - measure.cumM[i]!) : 0)
+        : cumLocalM + alongSegM;
+      cumLocalM += segLenM;
+      candidates.push({ distM: distToSegM, alongM, seg: i });
       if (distToSegM < bestDistToRoute) {
         bestDistToRoute = distToSegM;
-        bestCumAtProjection = cumBeforeSegment + alongSegM;
+        bestCumAtProjection = alongM;
       }
-      cumBeforeSegment += segLenM;
+    }
+    if (previousCompletedM != null && Number.isFinite(previousCompletedM)) {
+      // Where the line passes this place more than once (a loop around a
+      // block, both sides of a U-turn), pick the part that continues from
+      // where the vehicle just was: distance to the line plus how far along
+      // the route it would have jumped (backwards counts double).
+      let bestCost = Infinity;
+      for (const c of candidates) {
+        if (c.distM > bestDistToRoute + SAME_PLACE_M) continue;
+        const jumpM = c.alongM >= previousCompletedM ? c.alongM - previousCompletedM : 2 * (previousCompletedM - c.alongM);
+        let cost = c.distM + JUMP_WEIGHT * jumpM;
+        if (courseDeg != null && Number.isFinite(courseDeg)
+          && Math.abs(signedTurnDeg(courseDeg, initialBearing(geom[c.seg]!, geom[c.seg + 1]!))) > 100) cost += AGAINST_COURSE_M;
+        if (cost < bestCost) { bestCost = cost; bestCumAtProjection = c.alongM; }
+      }
     }
 
-    const distanceCompletedM = Math.max(0, Math.min(route.distanceM, bestCumAtProjection));
+    const distanceCompletedM = Math.max(0, Math.min(Math.max(route.distanceM, measure.totalM), bestCumAtProjection));
     const distanceRemainingM = Math.max(0, route.distanceM - distanceCompletedM);
 
     // ETA: prefer live speed; fall back to the route's own implied average pace.
@@ -189,9 +259,7 @@ export class RouteProgressEngine {
     // distanceCompletedM — fall back to the last real travel leg, so
     // `nextStep` still resolves to the synthetic zero-length "arrive" step
     // instead of null.
-    let cum = 0;
-    const legEnds: number[] = [];
-    for (const step of route.steps) { cum += step.distanceM; legEnds.push(cum); }
+    const legEnds = stepLegEndsM(route);
     let currentStepIndex = legEnds.findIndex((end) => distanceCompletedM < end);
     if (currentStepIndex === -1) currentStepIndex = Math.max(0, route.steps.length - 2);
 
