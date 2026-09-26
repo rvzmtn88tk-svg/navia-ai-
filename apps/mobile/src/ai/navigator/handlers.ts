@@ -372,7 +372,10 @@ function noDataTopic(q: string): { uk: string; en: string; why: string } {
 
 registerHandler("noData", (s, ctx) => {
   const t = noDataTopic(ctx.question);
-  const lines = [L(s, `Про ${t.uk} сказати не можу: ${t.why}.`, `I can't tell you about ${t.en}: NAVIA has no such data.`)];
+  const lines: string[] = [];
+  // An accident may be the driver's own: safety first.
+  if (/дтп|авар|accident/i.test(ctx.question)) lines.push(L(s, "Якщо ви потрапили в ДТП або є постраждалі — телефонуйте 112 (швидка — 103).", "If you were in an accident or someone is hurt, call 112."));
+  lines.push(L(s, `Про ${t.uk} сказати не можу: ${t.why}.`, `I can't tell you about ${t.en}: NAVIA has no such data.`));
   const used: string[] = [];
   if (s.route) {
     lines.push(L(s, `Що відомо точно: до «${s.route.destination}» лишилось ${dist(s, s.route.remainingM)}${s.route.etaS != null ? `, ≈ ${formatDuration(s.route.etaS, "uk")}` : ""}.`, `What is known: ${dist(s, s.route.remainingM)} to “${s.route.destination}”.`));
