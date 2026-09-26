@@ -31,8 +31,13 @@ export type RegionProgress = {
   resourcesTotal: number;
   placesDone: number;
   placesTotal: number;
+  /** Category being downloaded now, and how many sources failed so far. */
+  placesCategory?: string;
+  placesFailed?: number;
   message?: string;
 };
+
+const MAP_SHARE = 0.85;
 
 type StoredMeta = { downloadedAt: string; mapBytes: number; mapResources: number; placesBytes: number; placesCounts: Record<string, number>; failed: string[]; verifiedAt: string | null; mapVersion: string };
 const META_KEY = "navia.offline.region.v1";
@@ -105,24 +110,37 @@ class MapLibreRegionManager implements OfflineMapManager {
       for (const spec of REGION_PACKS) {
         const existing = await packStatus(spec.name);
         if (complete(existing)) { done[spec.name] = existing!; continue; }
-        if (existing) await MapLibreGL.OfflineManager.deletePack(spec.name).catch(() => {});
+        // An interrupted download (app closed, phone locked) is resumed, not
+        // thrown away and started from zero.
+        const onProgress = (_pack: unknown, st: PackStatus) => {
+          done[spec.name] = st;
+          const all = Object.values(done);
+          report.mapBytes = all.reduce((a, s) => a + (s.completedResourceSize ?? 0), 0);
+          report.resourcesDone = all.reduce((a, s) => a + (s.completedResourceCount ?? 0), 0);
+          report.resourcesTotal = all.reduce((a, s) => a + (s.requiredResourceCount ?? 0), 0);
+          const packIndex = REGION_PACKS.findIndex((p) => p.name === spec.name);
+          report.progress = MAP_SHARE * ((packIndex + (st.percentage ?? 0) / 100) / REGION_PACKS.length);
+          emit();
+        };
         await new Promise<void>((resolve, reject) => {
-          void MapLibreGL.OfflineManager.createPack(
-            { name: spec.name, styleURL: config.mapStyleUrl, bounds: spec.bounds, minZoom: spec.minZoom, maxZoom: spec.maxZoom },
-            (_pack: unknown, st: PackStatus) => {
-              done[spec.name] = st;
-              const all = Object.values(done);
-              report.mapBytes = all.reduce((a, s) => a + (s.completedResourceSize ?? 0), 0);
-              report.resourcesDone = all.reduce((a, s) => a + (s.completedResourceCount ?? 0), 0);
-              report.resourcesTotal = all.reduce((a, s) => a + (s.requiredResourceCount ?? 0), 0);
-              const packIndex = REGION_PACKS.findIndex((p) => p.name === spec.name);
-              report.progress = 0.85 * ((packIndex + (st.percentage ?? 0) / 100) / REGION_PACKS.length);
-              emit();
-              if (complete(st)) resolve();
-            },
-            (_pack: unknown, err: { message?: string }) => reject(new Error(err?.message ?? "offline pack error")),
-          ).catch(reject);
+          const progress = (pack: unknown, st: PackStatus) => { onProgress(pack, st); if (complete(st)) resolve(); };
+          const error = (_pack: unknown, err: { message?: string }) => reject(new Error(err?.message ?? "offline pack error"));
+          if (existing) {
+            void MapLibreGL.OfflineManager.getPack(spec.name)
+              .then(async (pack) => {
+                if (!pack) throw new Error("offline pack vanished");
+                await MapLibreGL.OfflineManager.subscribe(spec.name, progress, error);
+                await pack.resume();
+              })
+              .catch(reject);
+          } else {
+            void MapLibreGL.OfflineManager.createPack(
+              { name: spec.name, styleURL: config.mapStyleUrl, bounds: spec.bounds, minZoom: spec.minZoom, maxZoom: spec.maxZoom },
+              progress, error,
+            ).catch(reject);
+          }
         });
+        MapLibreGL.OfflineManager.unsubscribe(spec.name);
       }
 
       report.phase = "places";
@@ -130,7 +148,9 @@ class MapLibreRegionManager implements OfflineMapManager {
       const places = await downloadOfflinePlaces(KYIV_OBLAST_BBOX, (p) => {
         report.placesDone = p.done;
         report.placesTotal = p.total;
-        report.progress = 0.85 + 0.13 * (p.done / p.total);
+        report.placesCategory = p.category;
+        report.placesFailed = p.failed.length;
+        report.progress = MAP_SHARE + (0.99 - MAP_SHARE) * (p.done / p.total);
         emit();
       });
 
@@ -138,9 +158,12 @@ class MapLibreRegionManager implements OfflineMapManager {
       report.progress = 0.99;
       emit();
       const statuses = await Promise.all(REGION_PACKS.map((p) => packStatus(p.name)));
+      // Ready = the map packs are complete on the phone. Places for search are
+      // a separate part: saved as far as the sources answered, gaps listed.
       const packsOk = statuses.every(complete);
       const probe = await offlinePlacesWithin("shelter", { lat: 50.4501, lon: 30.5234 }, 2000);
-      const verified = packsOk && probe.length > 0;
+      const verified = packsOk;
+      if (probe.length === 0) places.failed.push("перевірка: укриття в центрі Києва не знайдено офлайн");
       const meta: StoredMeta = {
         downloadedAt: new Date().toISOString().slice(0, 10),
         mapBytes: statuses.reduce((a, s) => a + (s?.completedResourceSize ?? 0), 0),
@@ -154,7 +177,7 @@ class MapLibreRegionManager implements OfflineMapManager {
       await storage()?.setItemAsync(META_KEY, JSON.stringify(meta));
       report.phase = verified ? "done" : "error";
       report.progress = verified ? 1 : report.progress;
-      report.message = verified ? undefined : !packsOk ? "Карта завантажилась не повністю." : "Не вдалося перевірити офлайн-пошук укриттів.";
+      report.message = verified ? undefined : "Карта завантажилась не повністю — натисніть ще раз, завантаження продовжиться.";
       emit();
       this.downloading = false;
       return this.refresh();

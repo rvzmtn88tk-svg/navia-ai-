@@ -10,6 +10,7 @@ import { Icon } from "../components/Icon";
 import { Touchable, useColors } from "../components/ui";
 import { elevation, motion } from "../theme/tokens";
 import { UserPuck, type PuckQuality } from "./UserPuck";
+import { pickPoi, type BasemapPoi } from "./basemapPoi";
 
 export type CameraMode = "free" | "follow" | "navigate";
 
@@ -38,6 +39,8 @@ type Props = {
   places?: NearbyPlace[];
   selectedPlaceId?: string | null;
   onPlacePress?: (place: NearbyPlace) => void;
+  /** A tap on a point of interest drawn by the base map (shop, pharmacy, …). */
+  onBasemapPoiPress?: (poi: BasemapPoi) => void;
   /** Screen area covered by overlays; keeps the camera target in the visible part. */
   padding?: { top: number; bottom: number; left?: number; right?: number };
   onMapError?: () => void;
@@ -54,7 +57,9 @@ type Props = {
 
 const KYIV: LatLon = { lat: 50.4501, lon: 30.5234 };
 const FOLLOW_ZOOM = 15.5;
-const NAV_PITCH_3D = 60;
+// 55°, not 60°: at steeper tilts most of the frame is far away and drawn
+// from low-zoom tiles, which is what looked blurry.
+const NAV_PITCH_3D = 55;
 const NAV_PITCH_2D = 0;
 
 /** Navigation zoom by speed: close on foot, wider in town, widest on the highway. */
@@ -70,7 +75,7 @@ export function autoNavZoom(speedMps: number | null | undefined): number {
 export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function NaviaMap(props, ref) {
   const {
     mapStyle, user, quality, cameraMode, onUserGesture, onBearingChange, routeGeometry = [], traveledGeometry = [],
-    destination, places = [], selectedPlaceId, onPlacePress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame,
+    destination, places = [], selectedPlaceId, onPlacePress, onBasemapPoiPress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame,
   } = props;
   const view3dRef = useRef(view3d);
   view3dRef.current = view3d;
@@ -152,6 +157,25 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
     },
   }), [cameraMode, cameraPadding, moveToUser, padding.bottom, padding.top]);
 
+  // The base map's POI layers (OpenMapTiles "poi"), for taps on its icons.
+  const poiLayerIds = useMemo(() => {
+    if (!mapStyle.trim().startsWith("{")) return null;
+    try { return (JSON.parse(mapStyle) as { layers?: { id: string; type: string }[] }).layers?.filter((l) => l.type === "symbol" && l.id.startsWith("poi")).map((l) => l.id) ?? null; } catch { return null; }
+  }, [mapStyle]);
+  const onMapPress = useCallback(async (feature: GeoJSON.Feature) => {
+    if (!onBasemapPoiPress) return;
+    const props = (feature.properties ?? {}) as { screenPointX?: number; screenPointY?: number };
+    const coords = (feature.geometry as GeoJSON.Point | undefined)?.coordinates;
+    if (props.screenPointX == null || props.screenPointY == null || !coords) return;
+    const r = 18; // finger-sized hit box, in points
+    const x = props.screenPointX, y = props.screenPointY;
+    // Native order: [top, right, bottom, left] with top = the larger y.
+    const hits = await mapView.current?.queryRenderedFeaturesInRect([y + r, x + r, y - r, x - r], undefined, poiLayerIds ?? []).catch(() => null);
+    const candidates = (hits?.features ?? []).filter((f) => poiLayerIds ? true : isPoiLike(f.properties));
+    const poi = pickPoi(candidates as Parameters<typeof pickPoi>[0], { lat: coords[1]!, lon: coords[0]! }, user ? { lat: user.lat, lon: user.lon } : null);
+    if (poi) onBasemapPoiPress(poi);
+  }, [onBasemapPoiPress, poiLayerIds, user?.lat, user?.lon]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const routeShape = useMemo(() => lineFeature(routeGeometry), [routeGeometry]);
   const traveledShape = useMemo(() => lineFeature(traveledGeometry), [traveledGeometry]);
 
@@ -206,6 +230,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           if (Math.abs(h - bearing.current) > 0.5) { bearing.current = h; onBearingChange?.(h); }
         }}
         onDidFinishLoadingMap={onMapReady}
+        onPress={(f) => { void onMapPress(f); }}
         // Every rendered frame is reported as either "fully" or "not fully" rendered.
         {...(onFrame ? { onDidFinishRenderingFrame: onFrame, onDidFinishRenderingFrameFully: onFrame } : {})}
         onDidFailLoadingMap={onMapError}
@@ -279,6 +304,13 @@ function PlaceMarker({ place, selected, onPress }: { place: NearbyPlace; selecte
 function circleFeature(center: LatLon, radiusM: number) {
   const ring = Array.from({ length: 73 }, (_, i) => destinationPoint(center, (i * 5) % 360, radiusM)).map((p) => [p.lon, p.lat]);
   return { type: "Feature" as const, properties: {}, geometry: { type: "Polygon" as const, coordinates: [ring] } };
+}
+
+// Without the style's layer list: POI features have a class and are not
+// settlement / street labels.
+const PLACE_CLASSES = new Set(["country", "state", "province", "city", "town", "village", "hamlet", "suburb", "quarter", "neighbourhood", "isolated_dwelling", "island", "continent"]);
+function isPoiLike(p: GeoJSON.GeoJsonProperties): boolean {
+  return !!p && (typeof p.subclass === "string" || typeof p.class === "string") && !PLACE_CLASSES.has(String(p.class)) && p.rank != null;
 }
 
 function pointsFeature(places: NearbyPlace[]) {

@@ -36,7 +36,7 @@ import { elevation, iconSize, radius, space, type ThemeColors } from "../theme/t
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 
-type SelectedPlace = PlaceRef & { category?: NearbyPlaceCategory; hours?: string; source?: string; distanceM?: number };
+type SelectedPlace = PlaceRef & { category?: NearbyPlaceCategory; hours?: string; source?: string; distanceM?: number; kindLabel?: string };
 
 const SEARCH_H = 52;
 const CHIPS_H = 36;
@@ -116,10 +116,14 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     setTimeout(() => map.current?.flyTo(point, zoom, halfSheetHeight), 60);
   }, [halfSheetHeight]);
 
-  const openPlace = useCallback((place: NearbyPlace) => {
+  // One place card for every kind of place: search results, category
+  // markers and the base map's own icons (shops, pharmacies, schools, …).
+  const openPlace = useCallback((place: NearbyPlace & { kindLabel?: string }) => {
     setSelected({
       id: place.id, label: place.name, subtitle: place.address, lat: place.location.lat, lon: place.location.lon,
-      category: place.category, hours: place.openingHours, source: place.source, distanceM: place.distanceM,
+      category: place.category, hours: place.openingHours, source: place.sourceDetail ?? place.source,
+      ...(Number.isFinite(place.distanceM) ? { distanceM: place.distanceM } : {}),
+      ...(place.kindLabel ? { kindLabel: place.kindLabel } : {}),
     });
     setSnap("half");
     focusOn(place.location, 16.5);
@@ -205,6 +209,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           speedMps={fix?.speedMps ?? null}
           selectedPlaceId={selected?.id}
           onPlacePress={openPlace}
+          onBasemapPoiPress={openPlace}
           destination={selected && !selected.category ? selected : null}
           padding={cameraPadding}
           onMapError={() => setStyleRetry((n) => n + 1)}
@@ -354,10 +359,13 @@ function PlaceHeader({ place, t, lang, onClose }: { place: SelectedPlace; t: Tra
       <View style={styles.flex}>
         <Text variant="title" numberOfLines={2}>{place.label}</Text>
         <View style={styles.metaRow}>
-          {meta && <Text variant="subhead" style={{ color: meta.color }}>{t(meta.label)}</Text>}
+          {(place.kindLabel || meta) && <Text variant="subhead" style={{ color: meta?.color }} color={meta ? undefined : "secondary"}>{place.kindLabel ?? t(meta!.label)}</Text>}
           {place.distanceM != null && <Text variant="subhead" color="secondary">{t("place.distance", { distance: formatDistance(place.distanceM, lang) })}</Text>}
-          {!meta && place.subtitle ? <Text variant="subhead" color="secondary" numberOfLines={1}>{place.subtitle}</Text> : null}
+          {!meta && !place.kindLabel && place.subtitle ? <Text variant="subhead" color="secondary" numberOfLines={1}>{place.subtitle}</Text> : null}
         </View>
+        {(meta || place.kindLabel) && (place.subtitle || place.source) ? (
+          <Text variant="caption" color="muted" numberOfLines={2}>{[place.subtitle, place.hours, place.source].filter(Boolean).join(" · ")}</Text>
+        ) : null}
       </View>
       <IconButton icon="close" tone="plain" size={40} label={t("common.close")} onPress={onClose} />
     </View>

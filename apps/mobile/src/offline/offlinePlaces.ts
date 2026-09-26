@@ -79,10 +79,24 @@ export async function offlinePlacesWithin(category: FetchCategory, center: LatLo
 
 export type PlacesProgress = { done: number; total: number; category: string; failed: string[] };
 
-/** Downloads the offline places for `bbox` (Kyiv official data + OSM per category). */
-export async function downloadOfflinePlaces(bbox: Bbox, onProgress: (p: PlacesProgress) => void): Promise<Meta> {
+export type DownloadPlacesOptions = {
+  overpassImpl?: typeof overpass;
+  fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
+  /** Per Overpass mirror, per category. */
+  perEndpointTimeoutMs?: number;
+  kyivTimeoutMs?: number;
+};
+
+/** Downloads the offline places for `bbox` (Kyiv official data + OSM per
+ * category). OpenStreetMap is optional: when it does not answer (the public
+ * Overpass servers are often overloaded — one category then fails only after
+ * ~80 s), the remaining OSM categories are skipped instead of waiting ~14 min;
+ * the map and the official data are still saved and the gap is reported. */
+export async function downloadOfflinePlaces(bbox: Bbox, onProgress: (p: PlacesProgress) => void, options: DownloadPlacesOptions = {}): Promise<Meta> {
   const store = storage();
   if (!store) throw new Error("offline places: no storage");
+  const ask = options.overpassImpl ?? overpass;
+  const doFetch = options.fetchImpl ?? ((url: string, init?: RequestInit) => fetch(url, init));
   const center = { lat: (bbox.south + bbox.north) / 2, lon: (bbox.west + bbox.east) / 2 };
   const counts: Record<string, number> = {};
   const failed: string[] = [];
@@ -93,37 +107,55 @@ export async function downloadOfflinePlaces(bbox: Bbox, onProgress: (p: PlacesPr
   // Kyiv official layers, complete (the server allows 10 000 records per call).
   const kyiv: Partial<Record<"shelter" | "resilience", NearbyPlace[]>> = {};
   for (const [layer, cat] of [[0, "shelter"], [1, "resilience"]] as const) {
+    onProgress({ done, total, category: cat, failed });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.kyivTimeoutMs ?? 30_000);
     try {
       const url = `${KYIV_GIS_BASE}/${layer}/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=json`;
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const res = await doFetch(url, { headers: { Accept: "application/json" }, signal: controller.signal });
       const data = await res.json() as ArcGISResponse;
       if (!res.ok || data.error) throw new Error("kyiv gis");
       kyiv[cat] = parseKyivFeatures(data.features, cat, center);
     } catch {
       failed.push(`КМДА: ${cat === "shelter" ? "укриття" : "пункти обігріву"}`);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
+  let osmDown = false;
   for (const category of OFFLINE_CATEGORIES) {
     onProgress({ done, total, category, failed });
     let osm: NearbyPlace[] = [];
-    try {
-      const selectors = CATEGORY_QUERY[category].map((q) => `nwr${q};`).join("");
-      const query = `[out:json][timeout:120][bbox:${bbox.south},${bbox.west},${bbox.north},${bbox.east}];(${selectors});out center tags;`;
-      osm = parseOverpass(await overpass(query, { perEndpointTimeoutMs: 90_000 }), center).filter((p) => p.category === category);
-    } catch {
+    if (osmDown) {
       failed.push(`OpenStreetMap: ${category}`);
+    } else {
+      try {
+        const selectors = CATEGORY_QUERY[category].map((q) => `nwr${q};`).join("");
+        const query = `[out:json][timeout:120][bbox:${bbox.south},${bbox.west},${bbox.north},${bbox.east}];(${selectors});out center tags;`;
+        osm = parseOverpass(await ask(query, { perEndpointTimeoutMs: options.perEndpointTimeoutMs ?? 60_000 }), center).filter((p) => p.category === category);
+      } catch {
+        failed.push(`OpenStreetMap: ${category}`);
+        // Every mirror failed for this category: the servers are down or
+        // overloaded right now — do not wait the same way nine more times.
+        osmDown = true;
+      }
     }
     const official = category === "shelter" || category === "resilience" ? kyiv[category] ?? [] : [];
     const list = [...official, ...osm].map(toStored);
-    // Keep the previous copy when this category failed completely.
-    if (list.length > 0 || !(await store.getItemAsync(KEY(category)).catch(() => null))) {
+    // Keep the previous copy when this category failed completely — and
+    // count what is really on the phone, not zero.
+    const previous = list.length > 0 ? null : await store.getItemAsync(KEY(category)).catch(() => null);
+    if (previous) {
+      bytes += previous.length;
+      counts[category] = (JSON.parse(previous) as unknown[]).length;
+    } else {
       const json = JSON.stringify(list);
       bytes += json.length;
       await store.setItemAsync(KEY(category), json);
       memory.set(category, list);
+      counts[category] = list.length;
     }
-    counts[category] = list.length;
     done += 1;
     onProgress({ done, total, category, failed });
   }

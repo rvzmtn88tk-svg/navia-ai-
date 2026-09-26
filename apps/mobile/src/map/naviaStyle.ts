@@ -8,7 +8,7 @@ type Style = { layers: Layer[]; [key: string]: unknown };
 
 type MapPalette = {
   background: string; residential: string; green: string; wood: string; water: string; waterLabel: string;
-  building: string; building3d: string; roadMinor: string; roadMinorCasing: string; roadMid: string; roadMidCasing: string;
+  building: string; building3d: string; building3dTall: string; roadMinor: string; roadMinorCasing: string; roadMid: string; roadMidCasing: string;
   roadMajor: string; roadMajorCasing: string; motorway: string; motorwayCasing: string; path: string; rail: string;
   label: string; labelHalo: string; poiLabel: string; boundary: string; special: string;
 };
@@ -17,7 +17,7 @@ type MapPalette = {
 // arteries and warm motorways. Teal is reserved for the route.
 const DAY: MapPalette = {
   background: "#E7ECF2", residential: "#E1E7EE", green: "#D3E4E2", wood: "#C8DDDA", water: "#9CCBDA", waterLabel: "#0E4A5C",
-  building: "#D5DDE7", building3d: "#C8D1DD", roadMinor: "#FFFFFF", roadMinorCasing: "#C3CEDA", roadMid: "#FFFFFF", roadMidCasing: "#8C9FB4",
+  building: "#D5DDE7", building3d: "#C8D1DD", building3dTall: "#AEBBCB", roadMinor: "#FFFFFF", roadMinorCasing: "#C3CEDA", roadMid: "#FFFFFF", roadMidCasing: "#8C9FB4",
   roadMajor: "#C7D5EC", roadMajorCasing: "#6C88AE", motorway: "#FFC58A", motorwayCasing: "#C9712A", path: "#A4B3C3", rail: "#96A5B6",
   label: "#0F2238", labelHalo: "#EEF2F7", poiLabel: "#3B4E64", boundary: "#8190A6", special: "#DEE5EC",
 };
@@ -27,7 +27,7 @@ const DAY: MapPalette = {
 // teal is reserved for the route so it can never be confused with a road.
 const NIGHT: MapPalette = {
   background: "#050A14", residential: "#070E1B", green: "#07161C", wood: "#081A20", water: "#0A1C33", waterLabel: "#5FC9D6",
-  building: "#0B1526", building3d: "#122038", roadMinor: "#1C2E4C", roadMinorCasing: "#050A14", roadMid: "#2A4674", roadMidCasing: "#050A14",
+  building: "#0B1526", building3d: "#1B2D4D", building3dTall: "#2A4270", roadMinor: "#1C2E4C", roadMinorCasing: "#050A14", roadMid: "#2A4674", roadMidCasing: "#050A14",
   roadMajor: "#335F8F", roadMajorCasing: "#050A14", motorway: "#9C6638", motorwayCasing: "#1A0E06", path: "#1D2C44", rail: "#27374F",
   label: "#8FA6C0", labelHalo: "#050A14", poiLabel: "#6F86A2", boundary: "#34507A", special: "#08101E",
 };
@@ -49,7 +49,14 @@ function recolor(layer: Layer, p: MapPalette): void {
     if (id.startsWith("landuse_") || id.startsWith("aeroway") || id.startsWith("landcover_")) return set(layer, "fill-color", p.special);
     return;
   }
-  if (layer.type === "fill-extrusion") return set(layer, "fill-extrusion-color", p.building3d);
+  if (layer.type === "fill-extrusion") {
+    // Solid blocks with a light top and darker walls read as crisp volumes;
+    // the base style's 0.8 opacity blended them into the ground ("blurry").
+    set(layer, "fill-extrusion-color", ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 0], 0, p.building3d, 60, p.building3dTall]);
+    set(layer, "fill-extrusion-opacity", 0.95);
+    set(layer, "fill-extrusion-vertical-gradient", true);
+    return;
+  }
   if (layer.type === "line") {
     const casing = id.endsWith("_casing");
     if (id.startsWith("waterway")) return set(layer, "line-color", p.water);

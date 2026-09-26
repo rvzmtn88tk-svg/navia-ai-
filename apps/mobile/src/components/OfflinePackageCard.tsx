@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, Switch, View } from "react-native";
 import { regionPackage, REGION_LABEL, type RegionProgress } from "../offline/regionPackage";
 import { isSimulatedOffline, setSimulatedOffline } from "../offline/network";
+import { CATEGORY_META } from "../places/categories";
 import { useT } from "../i18n";
 import { Button, Card, Divider, ListRow, Text, useColors } from "./ui";
 import { radius, space } from "../theme/tokens";
@@ -62,7 +63,7 @@ export function OfflinePackageCard(): JSX.Element {
             {progress.phase === "map"
               ? t("offline.progressMap", { pct, mb: mb(progress.mapBytes), done: progress.resourcesDone, total: progress.resourcesTotal || "…" })
               : progress.phase === "places"
-                ? t("offline.progressPlaces", { pct, done: progress.placesDone, total: progress.placesTotal })
+                ? `${t("offline.progressPlaces", { pct, done: progress.placesDone, total: progress.placesTotal })}${progress.placesCategory && progress.placesCategory in CATEGORY_META ? ` · ${t(CATEGORY_META[progress.placesCategory as keyof typeof CATEGORY_META].label)}` : ""}${progress.placesFailed ? ` · ${t("offline.sourcesFailed", { count: progress.placesFailed })}` : ""}`
                 : t("offline.progressVerify")}
           </Text>
         </View>

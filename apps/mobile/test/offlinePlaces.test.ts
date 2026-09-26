@@ -61,3 +61,55 @@ test("offline places: nothing downloaded → empty, never invented", async () =>
   assert.equal(await offlinePlacesMeta(), null);
   assert.deepEqual(await offlinePlacesWithin("shelter", maidan, 5000), []);
 });
+
+test("offline package: when OpenStreetMap does not answer, the places step ends after one category, not ten", async () => {
+  setOfflinePlacesStorageForTests(memoryKV());
+  resetOverpassPreference();
+  const realFetch = globalThis.fetch;
+  let overpassCalls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    const json = (o: unknown, status = 200) => ({ ok: status === 200, status, json: async () => o, text: async () => JSON.stringify(o) }) as Response;
+    if (url.includes("Public_protection/MapServer/0/query")) return json({ features: [{ geometry: { x: maidan.lon, y: maidan.lat }, attributes: { OBJECTID: 1, name: "Укриття" } }] });
+    if (url.includes("Public_protection/MapServer/1/query")) return json({ features: [] });
+    if (url.includes("overpass")) { overpassCalls++; await new Promise((r) => setTimeout(r, 300)); return json({}, 504); } // real servers: ~80 s per category
+    throw new Error(`unexpected ${url}`);
+  }) as typeof fetch;
+  try {
+    const t0 = Date.now();
+    const categoriesSeen: string[] = [];
+    const meta = await downloadOfflinePlaces({ south: 50.2, west: 30.2, north: 50.6, east: 30.8 }, (p) => { if (!categoriesSeen.includes(p.category)) categoriesSeen.push(p.category); });
+    const ms = Date.now() - t0;
+    console.log(`places step with OSM down: ${ms} ms, ${overpassCalls} Overpass requests (≈ ${Math.round(overpassCalls / 4 * 80)} s with real ~80 s timeouts); saved ${meta.counts.shelter} official shelters; reported: ${meta.failed.length} gaps`);
+    assert.ok(overpassCalls <= 4, `${overpassCalls} Overpass requests`);
+    assert.equal(meta.counts.shelter, 1, "official data still saved");
+    assert.equal(meta.failed.filter((f) => f.startsWith("OpenStreetMap")).length, 10, "every OSM gap is reported");
+    assert.equal(categoriesSeen.length, 10, "progress walks all categories");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("offline package: an update without network keeps the saved places and counts them", async () => {
+  const kv = memoryKV();
+  setOfflinePlacesStorageForTests(kv);
+  resetOverpassPreference();
+  const realFetch = globalThis.fetch;
+  const json = (o: unknown, status = 200) => ({ ok: status === 200, status, json: async () => o, text: async () => JSON.stringify(o) }) as Response;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.includes("MapServer/0/query")) return json({ features: [{ geometry: { x: maidan.lon, y: maidan.lat }, attributes: { OBJECTID: 1, name: "Укриття" } }] });
+    if (url.includes("MapServer/1/query")) return json({ features: [] });
+    return json({ elements: [] });
+  }) as typeof fetch;
+  const bbox = { south: 50.2, west: 30.2, north: 50.6, east: 30.8 };
+  try {
+    assert.equal((await downloadOfflinePlaces(bbox, () => {})).counts.shelter, 1);
+    globalThis.fetch = (async () => { throw new TypeError("Network request failed"); }) as typeof fetch;
+    const again = await downloadOfflinePlaces(bbox, () => {});
+    assert.equal(again.counts.shelter, 1, "the saved shelter is still there and counted");
+    assert.equal((await offlinePlacesWithin("shelter", maidan, 500)).length, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
