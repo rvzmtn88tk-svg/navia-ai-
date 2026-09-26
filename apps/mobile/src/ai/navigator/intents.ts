@@ -193,32 +193,47 @@ function trigrams(text: string): Vec {
   return v;
 }
 function norm(v: Vec): number { let s = 0; for (const x of v.values()) s += x * x; return Math.sqrt(s); }
-function cosine(a: Vec, na: number, b: Vec, nb: number): number {
-  if (!na || !nb) return 0;
-  let dot = 0;
-  for (const [g, x] of a) { const y = b.get(g); if (y) dot += x * y; }
-  return dot / (na * nb);
-}
-let bank: { intent: NavigatorIntent; v: Vec; n: number }[] | null = null;
-function exampleBank() {
-  bank ??= (Object.entries(EXAMPLES) as [NavigatorIntent, string[]][]).flatMap(([intent, list]) => list.map((e) => { const v = trigrams(e); return { intent, v, n: norm(v) }; }));
+// Inverted index: trigram → examples containing it, so a question is
+// compared only with examples that share something with it.
+type Bank = { intents: NavigatorIntent[]; norms: number[]; index: Map<string, { i: number; w: number }[]> };
+let bank: Bank | null = null;
+export function exampleBank(): Bank {
+  if (bank) return bank;
+  const intents: NavigatorIntent[] = [];
+  const norms: number[] = [];
+  const index = new Map<string, { i: number; w: number }[]>();
+  for (const [intent, examples] of Object.entries(EXAMPLES) as [NavigatorIntent, string[]][]) {
+    for (const e of examples) {
+      const v = trigrams(e);
+      const i = intents.length;
+      intents.push(intent);
+      norms.push(norm(v));
+      for (const [g, w] of v) { const list = index.get(g); if (list) list.push({ i, w }); else index.set(g, [{ i, w }]); }
+    }
+  }
+  bank = { intents, norms, index };
   return bank;
 }
 
-/** Most similar intent by example (mean of the 3 best matches per intent). */
+/** Most similar intent by example (0.6 × best + 0.4 × mean of the 3 best per intent). */
 export function similarIntent(question: string): { intent: NavigatorIntent; score: number } | null {
   const q = trigrams(question);
   const nq = norm(q);
   if (!nq) return null;
+  const b = exampleBank();
+  const dot = new Map<number, number>();
+  for (const [g, x] of q) for (const { i, w } of b.index.get(g) ?? []) dot.set(i, (dot.get(i) ?? 0) + x * w);
   const per = new Map<NavigatorIntent, number[]>();
-  for (const e of exampleBank()) {
-    const c = cosine(q, nq, e.v, e.n);
-    if (c > 0) per.set(e.intent, [...(per.get(e.intent) ?? []), c]);
+  for (const [i, d] of dot) {
+    const c = d / (nq * b.norms[i]!);
+    const intent = b.intents[i]!;
+    const list = per.get(intent);
+    if (list) list.push(c); else per.set(intent, [c]);
   }
   let best: { intent: NavigatorIntent; score: number } | null = null;
   for (const [intent, list] of per) {
-    const top = list.sort((a, b) => b - a).slice(0, 3);
-    const score = 0.6 * top[0]! + 0.4 * (top.reduce((a, b) => a + b, 0) / top.length);
+    const top = list.sort((a, c) => c - a).slice(0, 3);
+    const score = 0.6 * top[0]! + 0.4 * (top.reduce((a, c) => a + c, 0) / top.length);
     if (!best || score > best.score) best = { intent, score };
   }
   return best;

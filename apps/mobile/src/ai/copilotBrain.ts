@@ -99,11 +99,19 @@ export function fold(text: string): string {
 /** True when a stem starts a word of the text ("аптек" ~ "аптеку"). Phrases
  * match word by word the same way. Stems under 4 letters must be whole words,
  * so "реб" (EW) is not found inside "потребую" and "де я" not in "де якась". */
+// Stems are folded once, not on every question.
+const foldedStems = new Map<string, string[]>();
+function stemParts(raw: string): string[] {
+  let p = foldedStems.get(raw);
+  if (!p) { p = fold(raw).split(" ").filter(Boolean); foldedStems.set(raw, p); }
+  return p;
+}
+
 function has(text: string, ...stems: string[]): boolean {
   const words = text.split(" ");
   const wordMatches = (word: string, stem: string) => (stem.length < 4 ? word === stem : word.startsWith(stem));
   return stems.some((raw) => {
-    const parts = fold(raw).split(" ").filter(Boolean);
+    const parts = stemParts(raw);
     if (parts.length === 0) return false;
     for (let i = 0; i + parts.length <= words.length; i++) {
       if (parts.every((p, k) => wordMatches(words[i + k]!, p))) return true;
