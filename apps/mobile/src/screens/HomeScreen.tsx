@@ -25,7 +25,8 @@ import { SafetyPanel } from "../components/SafetyPanel";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { proactiveInsights, suggestions } from "../ai/copilotBrain";
-import { StatusBeacon } from "../components/StatusBeacon";
+import { StatusBeacons } from "../components/StatusBeacons";
+import { gpsTone } from "../engine/liveStatus";
 import { gnssTrendReasons } from "../engine/gnssWords";
 import { NaviaAiMark } from "../components/NaviaAiMark";
 import { Icon, type IconName } from "../components/Icon";
@@ -218,7 +219,8 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
               selected={category === cat} onPress={() => selectCategory(cat)} />
           ))}
         </ScrollView>
-        <StatusBeacons gpsStatus={live.gpsStatus} health={live.health} alert={alert} t={t} onPress={() => setSnap("half")} />
+        <StatusBeacons gpsStatus={live.gpsStatus} health={live.health} alert={alert} style={styles.beacons}
+          onPressGps={() => setSnap("half")} onPressAlert={() => setSnap("half")} />
         {Math.abs(bearing) > 1 && (
           <View style={styles.compassRow} pointerEvents="box-none">
             <Touchable accessibilityRole="button" accessibilityLabel="N" onPress={() => map.current?.resetNorth()}
@@ -301,34 +303,6 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
 }
 
 // ——— Sheet headers ———
-
-function gpsTone(status: GpsStatus, health: GnssHealth): { tone: "success" | "warning" | "critical" | "neutral"; key: Parameters<Translate>[0] } {
-  if (status === "permission") return { tone: "neutral", key: "gps.permission" };
-  if (status === "error") return { tone: "critical", key: "gps.error" };
-  if (status !== "ready") return { tone: "neutral", key: "gps.searching" };
-  return health === "stable" ? { tone: "success", key: "gps.stable" } : health === "unstable" ? { tone: "warning", key: "gps.unstable" } : { tone: "critical", key: "gps.lost" };
-}
-
-function alertTone(alert: GeolocatedAirAlert | null, state: string): { tone: AlertTone; key: Parameters<Translate>[0] } {
-  return alertHeadline(alert, state === "loading");
-}
-
-// Two indicators on the map in the colour of the situation: green when all is
-// well, yellow for an unstable signal or an alert elsewhere in the oblast, red
-// for lost GPS or an alert at the user's location (pulsing). Details live in
-// the pulled-up sheet.
-function StatusBeacons({ gpsStatus, health, alert, t, onPress }: {
-  gpsStatus: GpsStatus; health: GnssHealth; alert: GeolocatedAirAlert | null; t: Translate; onPress: () => void;
-}): JSX.Element {
-  const gps = gpsTone(gpsStatus, health);
-  const al = alertTone(alert, "");
-  return (
-    <View style={styles.beacons} pointerEvents="box-none">
-      <StatusBeacon icon="satellite" tone={gps.tone} label={t(gps.key)} onPress={onPress} />
-      <StatusBeacon icon="alert" tone={alertBeaconTone(alert, false)} label={t(al.key)} onPress={onPress} />
-    </View>
-  );
-}
 
 const RADII: (number | null)[] = [null, 500, 1000, 3000, 5000, 10000];
 
@@ -549,7 +523,7 @@ const styles = StyleSheet.create({
   searchText: { flex: 1 },
   chipsScroll: { marginTop: space.xs, flexGrow: 0 },
   chips: { gap: space.xs, paddingHorizontal: space.md, paddingVertical: space.xxs },
-  beacons: { flexDirection: "row", gap: space.xs, paddingHorizontal: space.md, marginTop: space.sm },
+  beacons: { paddingHorizontal: space.md, marginTop: space.sm },
   compassRow: { alignItems: "flex-end", paddingHorizontal: space.md, marginTop: space.sm },
   compass: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   rightRail: { position: "absolute", right: space.md, gap: space.sm, alignItems: "center" },

@@ -21,6 +21,7 @@ import {
 import { OnlineValhallaProvider } from "../providers/OnlineValhallaProvider";
 import type { GeolocatedAirAlert } from "../providers/GeolocatedAirAlertProvider";
 import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
+import { nextAlertEndedAt } from "./liveStatus";
 
 const idleState: NavigationState = {
   mode: "IDLE", position: null, trustedPosition: null, gnss: "LOST",
@@ -48,6 +49,8 @@ type NaviaStore = {
   setCurrentFix: (fix: GNSSRawSample | null) => void;
   alert: GeolocatedAirAlert | null;
   setAlert: (alert: GeolocatedAirAlert | null) => void;
+  /** When the last alert at the user's place ended (null while one is active or none ended). */
+  alertEndedAt: number | null;
   airThreatSummary: AirThreatSummary | null;
   setAirThreatSummary: (summary: AirThreatSummary | null) => void;
   destination: LatLon | null;
@@ -68,7 +71,8 @@ export const useNaviaStore = create<NaviaStore>((set, get) => ({
   currentFix: null,
   setCurrentFix: (fix) => set({ currentFix: fix }),
   alert: null,
-  setAlert: (alert) => set({ alert }),
+  alertEndedAt: null,
+  setAlert: (alert) => set((s) => ({ alert, alertEndedAt: nextAlertEndedAt(s.alert, alert, s.alertEndedAt, Date.now()) })),
   airThreatSummary: null,
   setAirThreatSummary: (airThreatSummary) => set({ airThreatSummary }),
   destination: null,

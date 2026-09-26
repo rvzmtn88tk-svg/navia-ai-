@@ -12,8 +12,9 @@ import { AirThreatSummaryProvider } from "../providers/AirThreatSummaryProvider"
 import type { FetchCategory } from "../providers/NearbyPlacesProvider";
 import { useNearbyStore } from "../store/nearbyStore";
 
-export type GpsStatus = "checking" | "permission" | "searching" | "ready" | "error";
-export type GnssHealth = "stable" | "unstable" | "lost";
+import { healthFrom, type GnssHealth, type GpsStatus } from "./liveStatus";
+
+export type { GnssHealth, GpsStatus };
 export type LoadState = "idle" | "loading" | "ready" | "error";
 
 const alertProvider = new GeolocatedAirAlertProvider();
@@ -35,10 +36,6 @@ function toSample(loc: Location.LocationObject): GNSSRawSample | null {
   };
 }
 
-function healthFrom(gnss: string): GnssHealth {
-  return gnss === "NORMAL" ? "stable" : gnss === "DEGRADED" ? "unstable" : "lost";
-}
-
 export function useLiveContext() {
   const setCurrentFix = useNaviaStore((s) => s.setCurrentFix);
   const setAlert = useNaviaStore((s) => s.setAlert);
@@ -54,7 +51,7 @@ export function useLiveContext() {
   const probing = useRef(false);
   const lastProbeAt = useRef(0);
 
-  const loadAlert = useCallback(async (point: GNSSRawSample, force = false) => {
+  const loadAlert = useCallback(async (point: { lat: number; lon: number }, force = false) => {
     if (!force && Date.now() - lastAlertAt.current < ALERT_EVERY_MS) return;
     lastAlertAt.current = Date.now();
     setAlertState((s) => (s === "ready" ? s : "loading"));
@@ -145,7 +142,7 @@ export function useLiveContext() {
     if (!navigating) return undefined;
     const every = setInterval(() => {
       const fix = useNaviaStore.getState().state.position?.position ?? useNaviaStore.getState().currentFix;
-      if (fix) void loadAlert({ lat: fix.lat, lon: fix.lon, timestamp: Date.now(), accuracyM: null, speedMps: null, headingDeg: null }, true);
+      if (fix) void loadAlert({ lat: fix.lat, lon: fix.lon }, true);
     }, 60_000);
     return () => clearInterval(every);
   }, [navigating, loadAlert]);

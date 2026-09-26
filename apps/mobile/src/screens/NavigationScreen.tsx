@@ -13,8 +13,9 @@ import { ExpoLocationPositionProvider, probePosition } from "../providers/ExpoLo
 import { ExpoSensorsMotionProvider } from "../providers/ExpoSensorsMotionProvider";
 import { useAppSettings } from "../settings/AppSettings";
 import { NaviaAiMark } from "../components/NaviaAiMark";
-import { StatusBeacon } from "../components/StatusBeacon";
-import { alertBeaconTone } from "../components/AlertStatus";
+import { StatusBeacons } from "../components/StatusBeacons";
+import { StatusDetails, type StatusKind } from "../components/StatusDetails";
+import { healthFrom, type GpsStatus } from "../engine/liveStatus";
 import { useRouteIntel } from "../store/routeIntelStore";
 import { useTripStore } from "../store/tripStore";
 import { gnssTrendReasons } from "../engine/gnssWords";
@@ -291,6 +292,10 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   }, [phase, estimated, state.gnss, isDemo, lang, speakText]);
   // Proactive: announce an air alert starting or ending during the trip.
   const alertNow = useNaviaStore((s) => s.alert);
+  // Map beacons: same colours as the home map (shared StatusBeacons). Before
+  // the first fix GPS reads "searching" (neutral), not "lost".
+  const navGpsStatus: GpsStatus = permissionDenied ? "permission" : isDemo || state.position || state.lastTrustedFixAt != null ? "ready" : "searching";
+  const [details, setDetails] = useState<StatusKind | null>(null);
   const alertSpoken = useRef<boolean | null>(null);
   useEffect(() => {
     if (phase !== "navigating" || isDemo || alertNow?.active == null) return;
@@ -487,15 +492,15 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
               style={[styles.hudCopilot, { backgroundColor: c.maneuverCard, borderColor: c.brandTeal }, elevation(3, c)]}>
               <NaviaAiMark size={38} />
             </Touchable>
-            <View style={styles.hudBeacons}>
-              <StatusBeacon icon="satellite" size={44}
-                tone={state.gnss === "NORMAL" ? "success" : state.gnss === "DEGRADED" ? "warning" : "critical"}
-                label={state.gnss === "NORMAL" ? t("gps.stable") : state.gnss === "DEGRADED" ? t("gps.unstable") : t("gps.lost")} />
-              <StatusBeacon icon="alert" size={44}
-                tone={alertBeaconTone(alertNow, false)}
-                label={alertNow?.active ? t("alert.active") : t("alert.clear")} />
-            </View>
+            <StatusBeacons size={44} gpsStatus={navGpsStatus} health={healthFrom(state.gnss)} alert={alertNow}
+              onPressGps={() => setDetails((k) => (k === "gps" ? null : "gps"))}
+              onPressAlert={() => setDetails((k) => (k === "alert" ? null : "alert"))} />
           </View>
+          {details && (
+            <Appear from={12} style={[styles.hudDetails, { bottom: insets.bottom + 104 + 84 }]}>
+              <StatusDetails kind={details} gpsStatus={navGpsStatus} onClose={() => setDetails(null)} style={styles.fill} />
+            </Appear>
+          )}
           {cameraMode === "free" && (
             <View style={[styles.recenter, { bottom: insets.bottom + 120 }]}>
               <Button label={t("route.recenter")} icon="locateFilled" variant="secondary" onPress={() => setCameraMode("navigate")} />
@@ -645,7 +650,9 @@ const styles = StyleSheet.create({
   // HUD card: deep-space glass with a thin teal edge and glow.
   maneuverCard: { borderRadius: radius.xl, overflow: "hidden", borderWidth: 1, shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 0 } },
   hudRight: { position: "absolute", right: space.md, alignItems: "flex-end", gap: space.sm },
-  hudBeacons: { flexDirection: "row", gap: space.xs },
+  // Left of the HUD column (beacons row = 2 × 44 + gap) and above the speed badge.
+  hudDetails: { position: "absolute", left: space.md, right: space.md + 96 + space.sm, maxWidth: 320 },
+  fill: { width: "100%" },
   hudToggle: { width: 56, height: 44, borderRadius: 22, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
   hudCopilot: { width: 56, height: 56, borderRadius: 28, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
   maneuverMain: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.md },
