@@ -64,6 +64,8 @@ export type CopilotWorld = {
   places: Partial<Record<PlaceKind, WorldPlace[]>>;
   /** Search state per category: an empty list only means "none" when ready. */
   placeStates?: Partial<Record<PlaceKind, "idle" | "loading" | "ready" | "error">>;
+  /** Sources that did not answer for a category (the list may miss closer places). */
+  placeGaps?: Partial<Record<PlaceKind, string[]>>;
   /** Landmarks the user could describe seeing (route + nearby places). */
   landmarks: WorldLandmark[];
   remote: boolean;
@@ -408,10 +410,15 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
       const first = list[0]!;
       const lines = list.map((p, i) => `${i + 1}. ${placeLine(p, w.lang)}`).join("\n");
       const caution = kind === "shelter" || kind === "resilience" ? (uk ? "\nДоступність і стан перевіряйте на місці." : "\nCheck access on arrival.") : "";
+      // Only a far one is known and a source did not answer: say so.
+      const gaps = w.placeGaps?.[kind] ?? [];
+      const partial = gaps.length > 0 && first.distanceM > 1500
+        ? (uk ? `\nУвага: ${gaps.join(", ")} зараз не відповідає — поруч можуть бути ближчі. Це найближче з того, що вдалося отримати.` : `\nNote: ${gaps.join(", ")} is not answering — there may be closer ones. This is the nearest I could get.`)
+        : "";
       const hours = first.hours ? (uk ? `\nГрафік «${first.name}»: ${first.hours}` : `\nHours of “${first.name}”: ${first.hours}`) : "";
       // Shelters: on foot. Fuel and chargers: by car. Others: on foot when close.
       const walk = kind === "shelter" || (kind !== "fuel" && kind !== "charger" && first.distanceM <= 1500);
-      const text = uk ? `${words.uk[1]}:\n${lines}${hours}${caution}` : `Nearest ${words.en[0]}:\n${lines}${hours}${caution}`;
+      const text = uk ? `${words.uk[1]}:\n${lines}${hours}${partial}${caution}` : `Nearest ${words.en[0]}:\n${lines}${hours}${partial}${caution}`;
       const actions: CopilotAction[] = [routeAction(first, walk ? "walk" : "car", w.lang)];
       if (walk && first.distanceM > 400 && kind !== "shelter") actions.push(routeAction(first, "car", w.lang));
       if (!walk && first.distanceM <= 2500) actions.push(routeAction(first, "walk", w.lang));

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { useNavigationState } from "@react-navigation/native";
-import type { GNSSRawSample } from "@navia/core";
+import { haversineMeters, type GNSSRawSample } from "@navia/core";
 import { navigationEngine, useNaviaStore } from "./naviaController";
 import { GeolocatedAirAlertProvider } from "../providers/GeolocatedAirAlertProvider";
 import { AirThreatSummaryProvider } from "../providers/AirThreatSummaryProvider";
@@ -21,6 +21,7 @@ const alertProvider = new GeolocatedAirAlertProvider();
 const threatProvider = new AirThreatSummaryProvider();
 
 const ALERT_EVERY_MS = 30_000;
+const SAFETY_RELOAD_M = 1000;
 
 function toSample(loc: Location.LocationObject): GNSSRawSample | null {
   const { latitude, longitude, accuracy, speed, heading } = loc.coords;
@@ -45,7 +46,8 @@ export function useLiveContext() {
   const [alertState, setAlertState] = useState<LoadState>("idle");
   const [refreshing, setRefreshing] = useState(false);
   const byCategory = useNearbyStore((s) => s.byCategory);
-  const shelterRequested = useRef(false);
+  /** Where shelters / resilience points were last loaded. */
+  const safetyLoadedAt = useRef<{ lat: number; lon: number } | null>(null);
   const sub = useRef<Location.LocationSubscription | null>(null);
   const lastAlertAt = useRef(0);
   const probing = useRef(false);
@@ -83,8 +85,15 @@ export function useLiveContext() {
     if (!accepted || state.trustedPosition?.position.timestamp !== sample.timestamp) return;
     setCurrentFix(sample);
     void loadAlert(sample);
-    // Shelters are always kept ready for the "Nearest shelter" action.
-    if (!shelterRequested.current) { shelterRequested.current = true; setTimeout(() => void loadCategory("shelter"), 1500); }
+    // Shelters and resilience points are always kept ready for the "Nearest
+    // shelter" action and the co-pilot — and reloaded after moving 1 km, so
+    // they are never the ones near where the app happened to start.
+    const last = safetyLoadedAt.current;
+    if (!last || haversineMeters(last, sample) > SAFETY_RELOAD_M) {
+      const first = !last;
+      safetyLoadedAt.current = { lat: sample.lat, lon: sample.lon };
+      setTimeout(() => { void loadCategory("shelter"); void loadCategory("resilience"); }, first ? 1500 : 0);
+    }
   }, [loadAlert, loadCategory, setCurrentFix]);
 
   const start = useCallback(async (ask: boolean) => {

@@ -30,6 +30,23 @@ export function searchByRadius<T extends Locatable>(items: readonly T[], center:
   return out.sort((a, b) => a.distanceM - b.distanceM);
 }
 
+/**
+ * NEAREST-FIRST search, the one method behind "nearest shelter", "resilience
+ * points near me" and every category list: the great-circle distance from
+ * `center` (the user's position now) is computed for each item, items are
+ * sorted by it, optionally cut to `radiusM` and to the first `limit`.
+ */
+export function nearestFirst<T extends Locatable>(items: readonly T[], center: LatLon, options: { radiusM?: number | null; limit?: number; category?: string } = {}): (T & { distanceM: number })[] {
+  const { radiusM = null, limit, category } = options;
+  if (radiusM != null) return searchByRadius(items, center, radiusM, category).slice(0, limit ?? Infinity);
+  const out: (T & { distanceM: number })[] = [];
+  for (const item of items) {
+    if (category != null && item.category !== category) continue;
+    out.push({ ...item, distanceM: haversineMeters(center, item.location) });
+  }
+  return out.sort((a, b) => a.distanceM - b.distanceM).slice(0, limit ?? Infinity);
+}
+
 export class POIEngine {
   private pois: POI[] = [];
 

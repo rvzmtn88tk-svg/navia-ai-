@@ -1,3 +1,4 @@
+import { nearestFirst, type LatLon } from "@navia/core";
 import type { IconName } from "../components/Icon";
 import type { StringKey } from "../i18n";
 import type { NearbyPlace, NearbyPlaceCategory } from "../providers/NearbyPlacesProvider";
@@ -30,10 +31,17 @@ export const CATEGORY_META: Record<NearbyPlaceCategory, Meta> = {
   other: { icon: "pin", label: "category.other", color: "#5B7180" },
 };
 
-export function placesFor(category: ChipCategory, places: NearbyPlace[]): NearbyPlace[] {
+/** Places of one category, nearest first — distances from `here` (the user's
+ * position now) when given, so a list loaded elsewhere is re-measured. */
+export function placesFor(category: ChipCategory, places: NearbyPlace[], here?: LatLon | null): NearbyPlace[] {
+  if (here) return nearestFirst(places, here, { category });
   return places.filter((p) => p.category === category).sort((a, b) => a.distanceM - b.distanceM);
 }
 
-export function nearestShelter(places: NearbyPlace[]): NearbyPlace | null {
-  return placesFor("shelter", places)[0] ?? null;
+export function nearestShelter(places: NearbyPlace[], here?: LatLon | null): NearbyPlace | null {
+  return placesFor("shelter", places, here)[0] ?? null;
+}
+
+export function nearestResilience(places: NearbyPlace[], here?: LatLon | null): NearbyPlace | null {
+  return placesFor("resilience", places, here)[0] ?? null;
 }

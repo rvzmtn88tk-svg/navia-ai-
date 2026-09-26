@@ -2,7 +2,7 @@
 // and position mode from the engine, the alert, the trip and its landmarks,
 // and nearby places with distance and direction from the user.
 import { useEffect, useMemo, useState } from "react";
-import { initialBearing, haversineMeters, type LatLon, type RouteStep } from "@navia/core";
+import { initialBearing, haversineMeters, nearestFirst, type LatLon, type RouteStep } from "@navia/core";
 import { useNaviaStore } from "../engine/naviaController";
 import { useNearbyStore } from "../store/nearbyStore";
 import { useRouteIntel } from "../store/routeIntelStore";
@@ -59,9 +59,15 @@ export function useCopilotWorld(): CopilotWorld {
     const now = Date.now();
     const places: CopilotWorld["places"] = {};
     const placeStates: NonNullable<CopilotWorld["placeStates"]> = {};
-    for (const [kind, entry] of Object.entries(byCategory) as [PlaceKind, { state: "idle" | "loading" | "ready" | "error" }][]) placeStates[kind] = entry.state;
+    const placeGaps: NonNullable<CopilotWorld["placeGaps"]> = {};
+    for (const [kind, entry] of Object.entries(byCategory) as [PlaceKind, { state: "idle" | "loading" | "ready" | "error"; unavailable?: string[] }][]) {
+      placeStates[kind] = entry.state;
+      if (entry.unavailable?.length) placeGaps[kind] = entry.unavailable;
+    }
     for (const [kind, entry] of Object.entries(byCategory) as [PlaceKind, { places: { id: string; name: string; location: LatLon; address?: string; openingHours?: string }[] }][]) {
-      places[kind] = entry.places.slice(0, 12).map<WorldPlace>((p) => ({
+      // Nearest to the user NOW (the one shared nearest-first search), then 12.
+      const ranked = here ? nearestFirst(entry.places.map((p) => ({ ...p, category: kind })), here, { limit: 12 }) : entry.places.slice(0, 12);
+      places[kind] = ranked.map<WorldPlace>((p) => ({
         id: p.id, name: p.name, kind, location: p.location,
         distanceM: here ? haversineMeters(here, p.location) : 0,
         ...(here ? { bearingDeg: initialBearing(here, p.location) } : {}),
@@ -127,6 +133,7 @@ export function useCopilotWorld(): CopilotWorld {
       ...(routeInfo ? { route: routeInfo } : {}),
       places,
       placeStates,
+      placeGaps,
       landmarks,
       remote: false,
     };

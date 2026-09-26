@@ -1,4 +1,4 @@
-import { searchByRadius, type LatLon } from "@navia/core";
+import { nearestFirst, searchByRadius, type LatLon } from "@navia/core";
 import { overpass, type OverpassElement } from "./overpass";
 import { MAX_RADIUS_TILES, tileCountForRadius, tilePoisNear } from "./vectorTiles";
 import { bundledShelters } from "./openDataShelters";
@@ -46,6 +46,11 @@ export type ArcGISResponse = { features?: ArcGISFeature[]; error?: { message?: s
 // an empty layer, which made the official shelter and resilience points vanish.
 export const KYIV_GIS_BASE = "https://gisserver.kyivcity.gov.ua/mayno/rest/services/KYIV_API/Public_protection/MapServer";
 const SEARCH_RADIUS_M = 2600;
+/** Official/community data within this distance counts as "found nearby":
+ * then a slow OpenStreetMap is given only a short grace. */
+const CLOSE_ENOUGH_M = 800;
+/** How long to wait for OpenStreetMap when nothing is known nearby yet. */
+const OSM_PATIENCE_MS = 15_000;
 
 /** Kyiv city limits (bounding box) — where the city's official shelter and
  * resilience-point layers apply. Decided by position, not by the alert feed. */
@@ -288,21 +293,26 @@ export class NearbyPlacesProvider {
     // Official city layers run in parallel with OpenStreetMap; when they
     // already cover the area, a slow OSM mirror is not waited for.
     const wantsOfficial = !!options.includeKyivOfficialData && (category === "shelter" || category === "resilience");
-    const officialTask: Promise<NearbyPlace[] | null> = wantsOfficial
-      ? this.queryKyivLayer(location, category === "shelter" ? 0 : 1, category, strict ? radiusM : SEARCH_RADIUS_M)
-      : Promise.resolve([]);
+    const layer = category === "shelter" ? 0 : 1;
+    const officialTask: Promise<NearbyPlace[] | null> = !wantsOfficial ? Promise.resolve([])
+      : strict ? this.queryKyivLayer(location, layer, category as "shelter" | "resilience", radiusM)
+        // Nothing in the city layer close by (e.g. a suburb inside the Kyiv
+        // box): look wider, a city point 8 km away still beats none.
+        : this.queryKyivLayer(location, layer, category as "shelter" | "resilience", SEARCH_RADIUS_M)
+          .then((near) => (near && near.length === 0 ? this.queryKyivLayer(location, layer, category as "shelter" | "resilience", 15_000) : near));
     const osmTask = strict ? this.osmCategoryWithin(location, category, radiusM) : this.osmCategory(location, category);
     // Community open data (shelters in Kyiv oblast), shipped with the app.
     const bundled = category === "shelter" ? bundledShelters(location, strict ? radiusM : 15_000) : [];
     const officialOrNull = await officialTask;
-    let osmResult: { osm: NearbyPlace[]; error: unknown } | null;
-    // Official / community data already answered: give the (often
-    // overloaded) public OpenStreetMap servers a short grace, not 20 s.
-    if ((officialOrNull?.length ?? 0) + bundled.length > 0) {
-      osmResult = await Promise.race([osmTask, new Promise<null>((resolve) => { setTimeout(() => resolve(null), strict ? 2_500 : 1_500); })]);
-    } else {
-      osmResult = await osmTask;
-    }
+    // Official / community data already has a place close by: give the (often
+    // overloaded) public OpenStreetMap servers a short grace. Otherwise — the
+    // only known one is far (the oblast dataset had a shelter 10 km away while
+    // OpenStreetMap knew one 300 m away) — wait for OpenStreetMap properly.
+    const nearestKnownM = [...(officialOrNull ?? []), ...bundled].reduce((m, p) => Math.min(m, p.distanceM), Infinity);
+    const graceMs = nearestKnownM <= (radiusM != null ? Math.min(radiusM, CLOSE_ENOUGH_M) : CLOSE_ENOUGH_M) ? (strict ? 2_500 : 1_500) : OSM_PATIENCE_MS;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const osmResult: { osm: NearbyPlace[]; error: unknown } | null = await Promise.race([osmTask, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), graceMs); })]);
+    if (timer) clearTimeout(timer);
     const officialFailed = wantsOfficial && officialOrNull == null;
     const osmFailed = !osmResult || !!osmResult.error;
     let official = officialOrNull ?? [];
@@ -321,10 +331,9 @@ export class NearbyPlacesProvider {
     const byId = new Map<string, NearbyPlace>();
     for (const place of [...official, ...bundled, ...osm]) byId.set(place.id, place);
     const merged = [...byId.values()];
-    // Strict: exactly the chosen circle (all of it); auto: the nearest 40.
-    const places = strict
-      ? searchByRadius(merged, location, radiusM)
-      : merged.sort((a, b) => a.distanceM - b.distanceM).slice(0, 40);
+    // One nearest-first search for every category (shelters, resilience
+    // points, …): strict = exactly the chosen circle; auto = the nearest 40.
+    const places = nearestFirst(merged, location, strict ? { radiusM } : { limit: 40 });
     if (unavailable.length === 0) categoryCache.set(key, { location, at: Date.now(), places });
     if (!strict && !usedOffline) void save(category, location, places);
     return { places, unavailable, usedOffline };
@@ -370,7 +379,8 @@ export class NearbyPlacesProvider {
         error = e;
         break;
       }
-      if (osm.length >= 3) break;
+      // Enough to choose from, or already one close by: no wider pass.
+      if (osm.length >= 3 || osm.some((p) => p.distanceM <= CLOSE_ENOUGH_M)) break;
     }
     // Nominatim fallback only where it has a matching category; an empty
     // answer does not clear the failure (the list may simply be incomplete).

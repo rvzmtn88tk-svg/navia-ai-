@@ -7,6 +7,8 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { GeocodeResult } from "@navia/core";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { PhotonGeocoderProvider } from "../providers/PhotonGeocoderProvider";
+import { detectKind } from "../ai/copilotBrain";
+import { CATEGORY_META, CHIP_CATEGORIES, type ChipCategory } from "../places/categories";
 import { placeId, usePlacesStore, type PlaceRef } from "../store/placesStore";
 import { useT } from "../i18n";
 import { Divider, IconButton, ListRow, SectionLabel, Text, TextField, useColors } from "../components/ui";
@@ -65,6 +67,10 @@ export function SearchScreen({ navigation, route }: Props): JSX.Element {
   }
 
   const typing = query.trim().length > 0;
+  // "пункт незламності", "укриття", "аптека"…: a category, not an address —
+  // offer the same nearby search as the map chips.
+  const kind = typing && !pickFor ? detectKind(query) : null;
+  const nearbyCategory = kind && (CHIP_CATEGORIES as string[]).includes(kind) ? (kind as ChipCategory) : null;
   const shortcuts: { key: string; icon: "home" | "work"; title: string; place: PlaceRef | null }[] = [
     { key: "home", icon: "home", title: t("saved.home"), place: home },
     { key: "work", icon: "work", title: t("saved.work"), place: work },
@@ -111,7 +117,12 @@ export function SearchScreen({ navigation, route }: Props): JSX.Element {
           data={results}
           keyExtractor={(item) => item.id}
           ItemSeparatorComponent={() => <Divider inset={52} />}
-          ListEmptyComponent={
+          ListHeaderComponent={nearbyCategory ? (
+            <ListRow icon={CATEGORY_META[nearbyCategory].icon} iconTint={CATEGORY_META[nearbyCategory].color}
+              title={t("search.nearby", { category: t(CATEGORY_META[nearbyCategory].label) })} subtitle={t("search.nearbyHint")}
+              onPress={() => { Keyboard.dismiss(); navigation.navigate("Home", { category: nearbyCategory }); }} />
+          ) : null}
+          ListEmptyComponent={nearbyCategory ? null :
             <View style={styles.state}>
               {error ? <>
                 <Text variant="callout" color="secondary">{t("search.error")}</Text>

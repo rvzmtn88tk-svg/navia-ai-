@@ -11,7 +11,7 @@ import { useNaviaStore } from "../engine/naviaController";
 import { useLiveContext, type GnssHealth, type GpsStatus } from "../engine/useLiveContext";
 import { useAppSettings, type MapLayer } from "../settings/AppSettings";
 import { usePlacesStore, placeId, type PlaceRef } from "../store/placesStore";
-import { CATEGORY_META, CHIP_CATEGORIES, nearestShelter, type ChipCategory } from "../places/categories";
+import { CATEGORY_META, CHIP_CATEGORIES, placesFor, type ChipCategory } from "../places/categories";
 import type { NearbyPlace, NearbyPlaceCategory } from "../providers/NearbyPlacesProvider";
 import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
 import type { GeolocatedAirAlert } from "../providers/GeolocatedAirAlertProvider";
@@ -83,6 +83,14 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     navigation.setParams({ focusPlace: undefined });
   }, [navigation, route.params?.focusPlace]);
 
+  // A category picked in Search ("пункт незламності", "укриття"…).
+  useEffect(() => {
+    const wanted = route.params?.category;
+    if (!wanted || !(CHIP_CATEGORIES as string[]).includes(wanted)) return;
+    navigation.setParams({ category: undefined });
+    if (category !== wanted) selectCategory(wanted as ChipCategory);
+  }, [navigation, route.params?.category]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // The co-pilot's "Safety" button.
   useEffect(() => {
     if (!route.params?.openSafety) return;
@@ -92,8 +100,13 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
 
   const user = useMemo(() => fix ? { lat: fix.lat, lon: fix.lon, headingDeg: fix.headingDeg, accuracyM: fix.accuracyM } : null, [fix]);
   const categoryEntry = category ? live.byCategory[category] : undefined;
-  const categoryPlaces = useMemo(() => categoryEntry?.places ?? [], [categoryEntry]);
-  const shelter = nearestShelter(live.byCategory.shelter?.places ?? []);
+  // Distances from where the user is now (the list may have been loaded
+  // elsewhere); one nearest-first search for every category.
+  const here = useMemo(() => (fix ? { lat: fix.lat, lon: fix.lon } : null), [fix?.lat, fix?.lon]); // eslint-disable-line react-hooks/exhaustive-deps
+  const categoryPlaces = useMemo(() => (here && category ? placesFor(category, categoryEntry?.places ?? [], here) : categoryEntry?.places ?? []), [categoryEntry, category, here]);
+  const shelters = useMemo(() => placesFor("shelter", live.byCategory.shelter?.places ?? [], here), [live.byCategory.shelter, here]);
+  const resilience = useMemo(() => placesFor("resilience", live.byCategory.resilience?.places ?? [], here), [live.byCategory.resilience, here]);
+  const shelter = shelters[0] ?? null;
   const alertActive = alert?.active === true;
 
   // Leave follow mode first, then fly on the next frame, so a GPS update in
@@ -243,8 +256,13 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
       </Animated.View>
       {alertActive && shelter && !selected && (
         <Animated.View style={[styles.leftRail, { bottom: controlsBottom, opacity: controlsOpacity }]} pointerEvents={snap === "full" ? "none" : "box-none"}>
-          <Button label={t("home.nearestShelter")} icon="shelter" variant="critical"
-            onPress={() => startRoute({ id: shelter.id, label: shelter.name, lat: shelter.location.lat, lon: shelter.location.lon }, "walk")} />
+          <Button label={t("home.nearestShelterAt", { distance: formatDistance(shelter.distanceM, lang) })} icon="shelter" variant="critical"
+            onPress={() => {
+              // Far away (only a distant one is known): show the list with its
+              // sources instead of starting a long walk automatically.
+              if (shelter.distanceM > FAR_SHELTER_M) { selectCategory("shelter"); return; }
+              startRoute({ id: shelter.id, label: shelter.name, lat: shelter.location.lat, lon: shelter.location.lon }, "walk");
+            }} />
         </Animated.View>
       )}
 
@@ -293,7 +311,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
       </BottomSheet>
 
       <SafetyPanel open={safetyOpen} onOpenChange={openSafety} alert={alert} threat={threat} alertLoading={live.alertState === "loading"}
-        shelters={live.byCategory.shelter?.places ?? []} resilience={live.byCategory.resilience?.places ?? []}
+        shelters={shelters} resilience={resilience}
         sheltersLoading={live.byCategory.shelter?.state !== "ready" && live.byCategory.shelter?.state !== "error"}
         position={fix ? { lat: fix.lat, lon: fix.lon } : null}
         onRoute={(p) => { setSafetyOpen(false); startRoute({ id: p.id, label: p.name, lat: p.location.lat, lon: p.location.lon }, "walk"); }} />
@@ -305,6 +323,8 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
 // ——— Sheet headers ———
 
 const RADII: (number | null)[] = [null, 500, 1000, 3000, 5000, 10000];
+/** Farther than this, "nearest shelter" opens the list instead of a walking route. */
+const FAR_SHELTER_M = 3000;
 
 function CategoryHeader({ category, count, radiusM, loading, onRadius, t, lang, onClose }: {
   category: ChipCategory; count: number; radiusM: number | null; loading: boolean; onRadius: (r: number | null) => void; t: Translate; lang: "uk" | "en"; onClose: () => void;

@@ -66,6 +66,9 @@ export const uk = {
   "home.layers": "Шари мапи",
   "home.locate": "Моє місце",
   "home.nearestShelter": "Найближче укриття",
+  "home.nearestShelterAt": "Укриття · {distance}",
+  "search.nearby": "{category} поруч з вами",
+  "search.nearbyHint": "Найближчі — на мапі, від вашої позиції",
   "home.sources": "Джерела даних",
 
   "category.shelter": "Укриття",
@@ -425,6 +428,9 @@ export const en: Record<StringKey, string> = {
   "home.layers": "Map layers",
   "home.locate": "My location",
   "home.nearestShelter": "Nearest shelter",
+  "home.nearestShelterAt": "Shelter · {distance}",
+  "search.nearby": "{category} near you",
+  "search.nearbyHint": "Nearest first, on the map, from where you are",
   "home.sources": "Data sources",
 
   "category.shelter": "Shelters",
