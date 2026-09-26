@@ -12,6 +12,8 @@ initializeApp();
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
 const MODEL = "claude-opus-5";
+/** Small and fast: the intent is one word. */
+const INTENT_MODEL = "claude-haiku-4-5-20251001";
 // Keeps a tester group inside the ~$20/month budget; tune in one place.
 const DAILY_LIMIT_PER_USER = 40;
 const MAX_QUESTION_CHARS = 500;
@@ -28,7 +30,19 @@ const SYSTEM_PROMPT = `Ти — штурман NAVIA: спокійний, люд
 - Не давай тактичних порад щодо повітряних загроз і не роби висновків про їхній напрямок.
 - При загрозі життю першим реченням порадь телефонувати 112 або 103.
 - Відповідай коротко: 1–3 речення, без списків і розмітки, простими словами, тепло й по суті.
-- Мова відповіді — мова поля "lang" (uk — українська, en — англійська).`;
+- Мова відповіді — мова поля "lang" (uk — українська, en — англійська).
+- NAVIA — «воно». Про себе говори в середньому роді або безособово: «готово допомогти», «показую маршрут», «веду за маршрутом». Ніколи не вживай жіночого чи чоловічого роду про себе («я могла», «я зробила», «я готова», «я впевнений»).`;
+
+// Intent mode: Claude only recognises WHAT the driver asks; the app builds the
+// answer from its own live state, so no fact comes from the model.
+const INTENTS = ["repeat", "explain", "emergency", "signalLost", "gpsStatus", "onRoute", "reroute", "routeNext", "eta", "whereAmI", "shelter", "alert", "status", "place", "noData", "smalltalk", "unknown"] as const;
+const INTENT_PROMPT = `Класифікуй питання водія до навігатора NAVIA. Відповідай ОДНИМ словом зі списку, без пояснень:
+repeat — повторити попередню відповідь; explain — чому/на основі чого була відповідь; emergency — загроза життю, поранені, потрібна швидка;
+signalLost — GPS/супутники зникли, глушать, або «а якщо сигнал зникне»; gpsStatus — стан, точність GPS; onRoute — чи правильно їду/чи на маршруті;
+reroute — звернув не туди, пропустив поворот, перебудувати, «а якщо зіб'юсь»; routeNext — наступний поворот/маневр, куди далі, скільки до повороту;
+eta — скільки лишилось їхати, коли приїдемо, відстань до кінця; whereAmI — де я, яка вулиця/район; shelter — укриття, куди ховатися;
+alert — повітряна тривога, обстріл, загрози; status — загальна обстановка; place — АЗС, аптека, банкомат, магазин, їжа, вода, пункт незламності;
+noData — пробки, погода, камери, поліція, новини, розваги (даних немає); smalltalk — привітання, подяка, розмова; unknown — інше.`;
 
 type Place = { name: string; category: string; distanceM: number };
 type CopilotState = {
@@ -131,10 +145,28 @@ export const copilot = onCall(
   { secrets: [ANTHROPIC_API_KEY], region: "europe-central2", enforceAppCheck: false, timeoutSeconds: 60, memory: "256MiB" },
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to use the co-pilot.");
-    const data = (request.data ?? {}) as { question?: unknown; state?: unknown; history?: unknown };
+    const data = (request.data ?? {}) as { question?: unknown; state?: unknown; history?: unknown; mode?: unknown };
     const question = str(data.question, MAX_QUESTION_CHARS);
     if (!question) throw new HttpsError("invalid-argument", "question is required");
     if (!(await consumeQuota(request.auth.uid))) throw new HttpsError("resource-exhausted", "Daily co-pilot limit reached.");
+
+    if (data.mode === "intent") {
+      const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+      try {
+        const response = await client.messages.create({
+          model: INTENT_MODEL,
+          max_tokens: 16,
+          system: [{ type: "text", text: INTENT_PROMPT, cache_control: { type: "ephemeral" } }],
+          messages: [{ role: "user", content: question }],
+        });
+        const word = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join(" ").trim().split(/\s+/)[0] ?? "";
+        const intent = (INTENTS as readonly string[]).includes(word) ? word : "unknown";
+        return { intent, source: "claude" };
+      } catch (err) {
+        if (err instanceof Anthropic.RateLimitError) throw new HttpsError("resource-exhausted", "The co-pilot is busy. Try again shortly.");
+        throw new HttpsError("unavailable", "Co-pilot intent service error.");
+      }
+    }
 
     const state = sanitizeState(data.state);
     const history: Turn[] = Array.isArray(data.history)

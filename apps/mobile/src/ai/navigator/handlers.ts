@@ -6,7 +6,7 @@
 // Pure; unit-tested.
 import { answer as classicAnswer, directionWords, walkMinutes, type CopilotAction, type WorldPlace } from "../copilotBrain";
 import { formatClock, formatDistance, formatDuration } from "../../i18n/format";
-import type { NavigatorIntent } from "./intents";
+import { placeKindOf, type NavigatorIntent } from "./intents";
 import type { Snapshot } from "./snapshot";
 
 export type Tone = "calm" | "warning" | "critical";
@@ -21,7 +21,9 @@ export type Draft = {
   /** Places to show as cards under the answer. */
   places?: WorldPlace[];
 };
-export type HandlerContext = { question: string; lastReply: string | null };
+/** The previous answer, for "repeat" and "why did you answer so". */
+export type LastAnswer = { question: string; intent: NavigatorIntent; text: string; used: string[]; missing: string[]; snapshot: Snapshot };
+export type HandlerContext = { question: string; lastReply: string | null; last?: LastAnswer | null };
 export type Handler = (s: Snapshot, ctx: HandlerContext) => Draft;
 
 const registry = new Map<NavigatorIntent, Handler>();
@@ -143,8 +145,13 @@ registerHandler("gpsStatus", (s) => {
   return { lines, actions: s.gnss.mode === "normal" ? [] : [ask(L(s, "Що робити без GPS?", "What to do without GPS?"))], tone: s.gnss.mode === "normal" ? "calm" : s.gnss.mode === "degraded" ? "warning" : "critical", used };
 });
 
-const noRoute = (s: Snapshot): Draft => ({
-  lines: [L(s, "Маршрут не прокладено — підказувати повороти ні з чого. Скажіть, куди їдемо, або оберіть місце на мапі.", "There's no route, so there are no turns to call. Tell me where to go or pick a place on the map.")],
+const noRoute = (s: Snapshot, about: "turns" | "eta" | "track" = "turns"): Draft => ({
+  lines: [
+    about === "eta" ? L(s, "Маршрут не прокладено — рахувати, скільки лишилось і коли приїдемо, немає до чого.", "There's no route, so there's nothing to count the distance or arrival time to.")
+      : about === "track" ? L(s, "Маршрут не прокладено — перевірити, чи правильно ви їдете, немає з чим.", "There's no route to check your way against.")
+        : L(s, "Маршрут не прокладено — підказувати повороти ні з чого.", "There's no route, so there are no turns to call."),
+    L(s, "Скажіть, куди їдемо, або оберіть місце на мапі.", "Tell me where to go or pick a place on the map."),
+  ],
   actions: [{ kind: "search", label: L(s, "Знайти місце", "Find a place"), query: "" }], tone: "calm", used: ["route"], missing: ["route"],
 });
 
@@ -161,7 +168,7 @@ registerHandler("routeNext", (s) => {
 });
 
 registerHandler("onRoute", (s) => {
-  if (!s.route) return noRoute(s);
+  if (!s.route) return noRoute(s, "track");
   if (s.route.offRoute) return handlerFor("reroute")(s, { question: "", lastReply: null });
   const next = nextLine(s, true);
   if (dr(s)) {
@@ -172,7 +179,7 @@ registerHandler("onRoute", (s) => {
 });
 
 registerHandler("reroute", (s) => {
-  if (!s.route) return noRoute(s);
+  if (!s.route) return noRoute(s, "track");
   if (s.route.offRoute) {
     if (s.gnss.mode !== "normal") return { lines: [L(s, "Ви зійшли з маршруту, а сигнал GPS ненадійний — перебудувати маршрут не можу.", "You've left the route and the GPS signal is unreliable — I can't rebuild the route."), L(s, "Поверніться туди, де звернули, і далі за маршрутом; або скажіть, що бачите навколо.", "Go back to where you turned and continue on the route, or tell me what you see.")], actions: [ask(L(s, "Бачу ", "I see "))], tone: "critical", used: ["route.offRoute", "gnss.mode"] };
     if (!s.online) return { lines: [L(s, "Ви зійшли з маршруту. Інтернету немає — новий маршрут не збудую.", "You've left the route. There's no internet, so I can't build a new route."), L(s, "Поверніться на маршрут — він збережений на телефоні.", "Go back to the route — it's saved on the phone.")], actions: [], tone: "warning", used: ["route.offRoute", "online"] };
@@ -182,14 +189,40 @@ registerHandler("reroute", (s) => {
 });
 
 registerHandler("eta", (s) => {
-  if (!s.route) return noRoute(s);
+  if (!s.route) return noRoute(s, "eta");
   const eta = s.route.etaS != null ? L(s, `, прибуття ≈ о ${formatClock(s.at + s.route.etaS * 1000, "uk")} (${formatDuration(s.route.etaS, "uk")})`, `, arriving ≈ ${formatClock(s.at + s.route.etaS * 1000, "en")} (${formatDuration(s.route.etaS, "en")})`) : "";
   const lines = [L(s, `До «${s.route.destination}» залишилось ${dist(s, s.route.remainingM)}${eta}.`, `${dist(s, s.route.remainingM)} to “${s.route.destination}”${eta}.`)];
   if (dr(s)) lines.push(L(s, "Без GPS час і відстань орієнтовні.", "Without GPS the time and distance are estimates."));
   return { lines, actions: [], tone: "calm", used: ["route.remainingM", "route.etaS", "route.destination", "gnss.mode"], ...(s.route.etaS == null ? { missing: ["route.etaS"] } : {}) };
 });
 
-registerHandler("whereAmI", (s, ctx) => classic(s, ctx.question, ["position.known", "position.street", "position.area", "position.uncertaintyM", "gnss.mode", "route.behind", "route.ahead"], dr(s) ? "warning" : "calm"));
+registerHandler("whereAmI", (s, ctx) => {
+  const lost = /заблук|заблуд|загуб|потерял|lost/i.test(ctx.question);
+  const where = [s.position.street, s.position.area].filter(Boolean).join(", ");
+  const lines: string[] = [];
+  const used: string[] = [];
+  if (dr(s)) {
+    lines.push(where ? L(s, `Остання підтверджена позиція: ${where}${s.gnss.sinceFixS != null ? ` (${ago(s, s.gnss.sinceFixS)})` : ""}.`, `Last confirmed position: ${where}.`) : L(s, "Підтвердженої позиції зараз немає.", "There's no confirmed position right now."));
+    used.push("position.street", "position.area", "gnss.sinceFixS");
+    if (s.route && !s.route.offRoute) {
+      lines.push(L(s, `Зараз — за рахунком шляху, на маршруті до «${s.route.destination}»${s.position.uncertaintyM != null ? `, похибка ±${m(s.position.uncertaintyM)} м` : ""}.`, `Now: by dead reckoning, on the route to “${s.route.destination}”.`));
+      if (s.route.behind || s.route.ahead) lines.push(L(s, `Між ${s.route.behind ? `«${s.route.behind}»` : "стартом"} і ${s.route.ahead ? `«${s.route.ahead}»` : "наступним орієнтиром"}.`, `Between ${s.route.behind ?? "the start"} and ${s.route.ahead ?? "the next landmark"}.`));
+      const next = nextLine(s, true);
+      if (next) lines.push(next);
+      used.push("route.destination", "position.uncertaintyM", "route.behind", "route.ahead", "route.next");
+    }
+    lines.push(L(s, "Якщо бачите назву вулиці, вивіску чи АЗС — напишіть «бачу …», позицію буде уточнено.", "If you see a street name, a sign or a fuel station, type “I see …” to refine the position."));
+    return { lines, actions: [turned(s), ask(L(s, "Бачу ", "I see "))], tone: "warning", used };
+  }
+  if (!s.position.known) return { lines: [L(s, "GPS ще не визначив позицію. Опишіть, що бачите навколо.", "GPS has not found your position yet. Describe what you see around.")], actions: [ask(L(s, "Бачу ", "I see "))], tone: "warning", used: ["position.known"], missing: ["position"] };
+  lines.push(where ? L(s, `Ви тут: ${where}.`, `You are here: ${where}.`) : L(s, "Ваша позиція — позначка NAVIA на мапі (назва вулиці ще не визначена).", "Your position is the NAVIA marker on the map (street not resolved yet)."));
+  used.push("position.street", "position.area");
+  const g = gpsLine(s);
+  lines.push(g.line); used.push(...g.used);
+  if (s.route && !s.route.offRoute) { const next = nextLine(s, true); if (next) { lines.push(next); used.push("route.next"); } }
+  if (lost) lines.push(L(s, "Якщо потрібна допомога — 112.", "If you need help, call 112."));
+  return { lines, actions: lost ? [{ kind: "call", label: L(s, "Подзвонити 112", "Call 112"), number: "112" }] : [], tone: "calm", used, ...(where ? {} : { missing: ["position.street"] }) };
+});
 
 registerHandler("shelter", (s) => {
   const lines: string[] = [];
@@ -213,13 +246,29 @@ registerHandler("shelter", (s) => {
 });
 
 registerHandler("alert", (s, ctx) => {
-  const d = classic(s, ctx.question, ["alert.active", "alert.scope", "alert.since", "alert.reasons", "places.shelter"], s.alert?.active ? "critical" : "calm");
+  const d = classic(s, "що з тривогою", ["alert.active", "alert.scope", "alert.since", "alert.reasons", "places.shelter"], s.alert?.active ? "critical" : "calm");
   if (!s.alert || s.alert.active == null) d.missing = ["alert"];
   return d;
 });
 
-registerHandler("place", (s, ctx) => classic(s, ctx.question, ["places", "placeStates", "placeGaps"]));
-registerHandler("emergency", (s, ctx) => classic(s, ctx.question, ["position.street", "position.area"], "critical"));
+registerHandler("place", (s, ctx) => {
+  // A typo-tolerant category, then the place search answer for it.
+  const k = placeKindOf(ctx.question);
+  const q = k ? L(s, `де ${k.canonical}`, `where is ${k.canonical}`) : ctx.question;
+  const d = classic(s, q, [`places.${k?.kind ?? "?"}`, `placeStates.${k?.kind ?? "?"}`, `placeGaps.${k?.kind ?? "?"}`]);
+  if (k && !(s.places[k.kind]?.length)) d.missing = [`places.${k.kind}`];
+  return d;
+});
+
+registerHandler("emergency", (s) => {
+  const where = [s.position.street, s.position.area].filter(Boolean).join(", ");
+  const lines = [
+    L(s, "Телефонуйте 112 (або 103 — швидка) зараз.", "Call 112 (or 103 — ambulance) now."),
+    where ? L(s, `Назвіть місце: ${where}${dr(s) ? " (приблизно — GPS немає)" : ""}.`, `Give the place: ${where}${dr(s) ? " (approximate — no GPS)" : ""}.`) : L(s, "Назвіть найближчий орієнтир — адресу, АЗС, зупинку.", "Name the nearest landmark — an address, a fuel station, a stop."),
+    L(s, "Не рухайте постраждалого без потреби; якщо кровотеча — тисніть на рану.", "Don't move the injured person unless needed; if bleeding, press on the wound."),
+  ];
+  return { lines, actions: [{ kind: "call", label: L(s, "Подзвонити 112", "Call 112"), number: "112" }, { kind: "call", label: L(s, "Швидка 103", "Ambulance 103"), number: "103" }], tone: "critical", used: ["position.street", "position.area", "gnss.mode"] };
+});
 registerHandler("classic", (s, ctx) => classic(s, ctx.question, ["world"]));
 
 registerHandler("status", (s) => {
@@ -252,13 +301,118 @@ registerHandler("status", (s) => {
 
 registerHandler("repeat", (s, ctx) => ctx.lastReply
   ? { lines: [ctx.lastReply], actions: [], tone: "calm", used: ["lastReply"] }
-  : { lines: [L(s, "Я ще нічого не казала в цій розмові.", "I haven't said anything yet in this conversation.")], actions: [], tone: "calm", used: [], missing: ["lastReply"] });
+  : { lines: [L(s, "У цій розмові ще не було відповіді, яку можна повторити.", "I haven't said anything yet in this conversation.")], actions: [], tone: "calm", used: [], missing: ["lastReply"] });
+
+// ——— explain: which real data an answer was built from ———
+
+const INTENT_WORDS: Record<NavigatorIntent, string> = {
+  repeat: "повтор", explain: "пояснення", emergency: "екстрена ситуація", signalLost: "втрата сигналу GPS", gpsStatus: "стан GPS",
+  onRoute: "чи правильно їдете", reroute: "відхилення від маршруту", routeNext: "наступний маневр", eta: "скільки лишилось",
+  whereAmI: "де ви", shelter: "укриття", alert: "тривога", status: "загальна обстановка", place: "місця поруч",
+  noData: "дані, яких NAVIA не має", smalltalk: "розмова", classic: "загальне питання", unknown: "нерозпізнане питання",
+};
+
+/** A snapshot field in words, with its value at the time of the answer. */
+export function fieldWords(field: string, s: Snapshot): string | null {
+  const r = s.route;
+  switch (field) {
+    case "gnss.state": return `стан GNSS від рушія навігації: ${s.gnss.state === "NORMAL" ? "норма" : s.gnss.state === "DEGRADED" ? "погіршений" : "втрачено"}`;
+    case "gnss.mode": return `режим: ${s.gnss.mode === "normal" ? "звичайний" : s.gnss.mode === "degraded" ? "сигнал нестабільний" : "штурман (рахунок шляху)"}`;
+    case "gnss.sinceFixS": return s.gnss.sinceFixS != null ? `останній надійний сигнал ${ago(s, s.gnss.sinceFixS)}` : null;
+    case "gnss.accuracyM": return s.gnss.accuracyM != null ? `точність сигналу ±${m(s.gnss.accuracyM)} м` : null;
+    case "gnss.trend": return s.gnss.trend ? `ознаки погіршення: ${s.gnss.trend}` : null;
+    case "position.source": return `джерело позиції: ${s.position.source === "GNSS" ? "супутники" : s.position.source === "FUSED" ? "супутники + датчики" : s.position.source === "DEAD_RECKONING" ? "рахунок шляху" : s.position.source === "MANUAL" ? "точка, вказана вручну" : "немає"}`;
+    case "position.uncertaintyM": return s.position.uncertaintyM != null ? `похибка позиції ±${m(s.position.uncertaintyM)} м` : null;
+    case "position.street": return s.position.street ? `вулиця: ${s.position.street}` : null;
+    case "position.area": return s.position.area ? `район: ${s.position.area}` : null;
+    case "position.known": return s.position.known ? "позиція відома" : "позиції немає";
+    case "route": case "route.destination": return r ? `маршрут до «${r.destination}»` : "маршруту немає";
+    case "route.next": return r?.next ? `наступний маневр: ${r.next.action}${r.next.road ? ` на ${r.next.road}` : ""}${r.next.distanceM != null ? `, ${dist(s, r.next.distanceM)}` : ""}` : null;
+    case "route.then": return r?.then ? `потім: ${r.then}` : null;
+    case "route.remainingM": return r ? `лишилось ${dist(s, r.remainingM)}` : null;
+    case "route.etaS": return r?.etaS != null ? `час у дорозі ≈ ${formatDuration(r.etaS, "uk")}` : null;
+    case "route.offRoute": return r ? (r.offRoute ? "ви поза маршрутом" : "ви на маршруті") : null;
+    case "route.landmarks": return r ? `орієнтирів на маршруті: ${r.landmarks}` : null;
+    case "route.behind": return r?.behind ? `позаду: ${r.behind}` : null;
+    case "route.ahead": return r?.ahead ? `попереду: ${r.ahead}` : null;
+    case "alert": case "alert.active": return s.alert?.active == null ? "статус тривоги невідомий" : s.alert.active ? "тривога активна" : "тривоги немає";
+    case "alert.scope": return s.alert?.scope ? `де тривога: ${s.alert.scope === "region" ? "область" : s.alert.scope === "city" ? "місто" : "ваш район"}` : null;
+    case "alert.since": return s.alert?.since ? `оголошено о ${formatClock(s.alert.since, "uk")}` : null;
+    case "places.shelter": { const p = s.places.shelter?.[0]; return p ? `найближче укриття: ${p.name}, ${dist(s, p.distanceM)}` : "укриттів у даних немає"; }
+    case "online": return s.online ? "інтернет є" : "інтернету немає";
+    case "lastReply": return "попередня відповідь";
+    default: return null;
+  }
+}
+
+registerHandler("explain", (s, ctx) => {
+  const last = ctx.last;
+  if (!last) return { lines: [L(s, "Пояснювати ще нічого: у цій розмові ще не було відповіді.", "Nothing to explain yet: there has been no answer in this conversation.")], actions: [], tone: "calm", used: [], missing: ["lastAnswer"] };
+  const facts = [...new Set(last.used.map((f) => fieldWords(f, last.snapshot)).filter((x): x is string => !!x))];
+  const lack = [...new Set(last.missing.map((f) => fieldWords(f, last.snapshot) ?? f))];
+  const lines = [L(s, `Питання «${last.question}» розпізнано як «${INTENT_WORDS[last.intent]}».`, `The question “${last.question}” was recognised as “${last.intent}”.`)];
+  if (facts.length) lines.push(L(s, `Відповідь зібрано з поточних даних NAVIA: ${facts.join("; ")}.`, `The answer was built from NAVIA's current data: ${facts.join("; ")}.`));
+  else lines.push(L(s, "Ця відповідь не спиралась на дані навігації — це загальне пояснення можливостей.", "That answer did not rely on navigation data — it was a general explanation."));
+  if (lack.length) lines.push(L(s, `Чого в даних не було: ${lack.join("; ")} — тому відповідь про це чесно каже.`, `Missing from the data: ${lack.join("; ")} — so the answer says so.`));
+  lines.push(L(s, "Цифри й назви беруться лише з рушія навігації, карти й офіційних джерел — нічого не вигадується.", "Numbers and names come only from the navigation engine, the map and official sources — nothing is made up."));
+  return { lines, actions: [], tone: "calm", used: ["lastAnswer"] };
+});
+
+// ——— data NAVIA does not have ———
+
+function noDataTopic(q: string): { uk: string; en: string; why: string } {
+  const f = q.toLocaleLowerCase("uk-UA");
+  if (/пробк|затор|траф|traffic|корок/.test(f)) return { uk: "пробки", en: "traffic", why: "NAVIA не отримує даних про трафік — навігатор працює без онлайн-сервісів трафіку, щоб не залежати від зв'язку під час тривоги" };
+  if (/погод|дощ|дожд|сніг|снег|ожелед|гололед|туман|weather|rain|snow|температур/.test(f)) return { uk: "погоду", en: "the weather", why: "прогнозу погоди в NAVIA немає" };
+  if (/камер|радар|штраф|speed/.test(f)) return { uk: "камери й штрафи", en: "cameras and fines", why: "бази камер і радарів у NAVIA немає" };
+  if (/дтп|авар|accident|ремонт|roadwork|перекр|блокпост|checkpoint/.test(f)) return { uk: "ДТП, ремонти й перекриття", en: "accidents, roadworks and closures", why: "даних про події на дорогах у реальному часі NAVIA не має" };
+  if (/бензин|пальн|топлив|курс|цін|цен/.test(f)) return { uk: "ціни й курси", en: "prices and rates", why: "цін і курсів у NAVIA немає" };
+  return { uk: "це", en: "that", why: "NAVIA — навігатор і штурман для дороги; новин, розваг чи довідки на загальні теми в ньому немає" };
+}
+
+registerHandler("noData", (s, ctx) => {
+  const t = noDataTopic(ctx.question);
+  const lines = [L(s, `Про ${t.uk} сказати не можу: ${t.why}.`, `I can't tell you about ${t.en}: NAVIA has no such data.`)];
+  const used: string[] = [];
+  if (s.route) {
+    lines.push(L(s, `Що відомо точно: до «${s.route.destination}» лишилось ${dist(s, s.route.remainingM)}${s.route.etaS != null ? `, ≈ ${formatDuration(s.route.etaS, "uk")}` : ""}.`, `What is known: ${dist(s, s.route.remainingM)} to “${s.route.destination}”.`));
+    const next = s.route.offRoute ? null : nextLine(s, true);
+    if (next) lines.push(next);
+    used.push("route.remainingM", "route.etaS", "route.next");
+  } else {
+    const g = gpsLine(s);
+    lines.push(g.line);
+    used.push(...g.used);
+  }
+  return { lines, actions: [], tone: "calm", used, missing: [t.uk] };
+});
+
+// ——— small talk: short, then the situation in one line ———
+
+registerHandler("smalltalk", (s, ctx) => {
+  const f = ctx.question.toLocaleLowerCase("uk-UA");
+  const thanks = /дяку|спасиб|thank|мерси/.test(f);
+  const who = /хто ти|ти хто|кто ты|ты кто|who are you/.test(f);
+  const head = who
+    ? L(s, "Це NAVIA — штурман для дороги під час тривог і глушіння GPS: веде за маршрутом навіть без сигналу й підказує, де укриття.", "This is NAVIA — a navigator for driving during air alerts and GPS jamming.")
+    : thanks ? L(s, "Будь ласка.", "You're welcome.")
+      : L(s, "На зв'язку.", "Here with you.");
+  const g = gpsLine(s);
+  const lines = [head, g.line];
+  if (s.alert?.active) lines.push(L(s, "Увага: тривога у вашому районі.", "Note: air alert in your area."));
+  if (s.route && !s.route.offRoute) { const n = nextLine(s, true); if (n) lines.push(n); }
+  return { lines, actions: [], tone: s.alert?.active ? "critical" : "calm", used: [...g.used, "alert.active", "route.next"] };
+});
 
 registerHandler("unknown", (s) => {
   const g = gpsLine(s);
   return {
-    lines: [L(s, "Не зрозуміла питання.", "I didn't understand the question."), g.line, L(s, "Можу сказати, куди далі, чи ви на маршруті, де найближче укриття, що з GPS і тривогою.", "I can tell you what's next, whether you're on the route, the nearest shelter, and the GPS and alert status.")],
+    lines: [
+      L(s, "Не можу визначити, про що питання: штурман працює на телефоні без мовної моделі й розуміє питання про маршрут, GPS, тривоги, укриття й місця поруч — це питання не схоже на жодне з них.", "I can't tell what the question is about: the navigator runs on the phone without a language model and understands questions about the route, GPS, alerts, shelters and places nearby."),
+      g.line,
+      L(s, "Спробуйте інакше, наприклад: «куди далі», «що з GPS», «де укриття», «скільки лишилось».", "Try, for example: “what's next”, “what about GPS”, “where's a shelter”, “how far is it”."),
+    ],
     actions: [ask(L(s, "Що далі?", "What's next?")), ask(L(s, "Де укриття?", "Where's a shelter?")), ask(L(s, "Статус", "Status"))],
-    tone: "calm", used: g.used,
+    tone: "calm", used: g.used, missing: ["intent"],
   };
 });

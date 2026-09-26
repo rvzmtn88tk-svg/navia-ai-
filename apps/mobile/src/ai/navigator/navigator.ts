@@ -6,7 +6,7 @@
 import type { NavigationState } from "@navia/core";
 import { NavigatorModeTracker, modeFacts } from "../../navigation/navigatorMode";
 import { classify, type NavigatorIntent } from "./intents";
-import { handlerFor, type Draft, type Tone } from "./handlers";
+import { fieldWords, handlerFor, type Draft, type LastAnswer, type Tone } from "./handlers";
 import type { Snapshot } from "./snapshot";
 import type { CopilotAction, WorldPlace } from "../copilotBrain";
 import { formatClock } from "../../i18n/format";
@@ -44,13 +44,21 @@ export function generate(draft: Draft): { text: string; speech: string } {
 
 export class Navigator {
   private lastReply: string | null = null;
+  private last: LastAnswer | null = null;
 
-  ask(question: string, snapshot: Snapshot): NavigatorReply {
+  /** `forced`: the intent recognised by the server's language model (it
+   * decides only what is asked; the answer still comes from the snapshot). */
+  ask(question: string, snapshot: Snapshot, forced?: NavigatorIntent): NavigatorReply {
     const t0 = now();
-    const intent = classify(question);
-    const draft = handlerFor(intent)(snapshot, { question, lastReply: this.lastReply });
+    const intent = forced ?? classify(question);
+    const draft = handlerFor(intent)(snapshot, { question, lastReply: this.lastReply, last: this.last });
+    // Only fields that really had a value (so "why" never cites empty data).
+    draft.used = draft.used.filter((f) => f === "lastAnswer" || f === "lastReply" || f.startsWith("places") || f.startsWith("placeStates") || f.startsWith("placeGaps") || fieldWords(f, snapshot) !== null);
     const { text, speech } = generate(draft);
-    if (intent !== "repeat") this.lastReply = text;
+    if (intent !== "repeat" && intent !== "explain") {
+      this.lastReply = text;
+      this.last = { question, intent, text, used: draft.used, missing: draft.missing ?? [], snapshot };
+    }
     return { intent, text, speech, actions: draft.actions, tone: draft.tone, used: draft.used, missing: draft.missing ?? [], computeMs: now() - t0, ...(draft.places ? { places: draft.places } : {}) };
   }
 }

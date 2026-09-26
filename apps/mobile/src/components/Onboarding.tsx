@@ -139,7 +139,8 @@ function HelloScene({ active, slogan }: { active: boolean; slogan: string }): JS
     spin.start();
     return () => { intro.stop(); breathe.stop(); spin.stop(); };
   }, [active, draw, glow, orbit, words]);
-  const sentences = slogan.replace(/\.\s+/g, ".|").split("|").filter(Boolean);
+  // One phrase per line, no final full stops (an open, calm slogan).
+  const sentences = slogan.split(/\n|\.\s+/).map((x) => x.trim().replace(/\.+$/, "")).filter(Boolean);
   return (
     <View style={styles.hello}>
       <View style={styles.emblemWrap}>

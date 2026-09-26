@@ -39,3 +39,26 @@ export async function askRemote(question: string, state: CopilotState, history: 
     clearTimeout(timer);
   }
 }
+
+/** The server's language model says only WHAT is asked (one intent word);
+ * the answer is then built on the phone from its own live state. */
+export async function classifyRemote(question: string, timeoutMs = 4000): Promise<string | null> {
+  const token = await idTokenProvider?.();
+  if (!config.aiBackendUrl || !token) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(config.aiBackendUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ data: { question, mode: "intent" } }),
+      signal: controller.signal,
+    });
+    const body = await response.json() as { result?: { intent?: string } };
+    return response.ok ? body.result?.intent ?? null : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

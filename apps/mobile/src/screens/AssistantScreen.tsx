@@ -10,8 +10,8 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
 import { useAppSettings } from "../settings/AppSettings";
-import { askRemote, remoteCopilotAvailable, type CopilotTurn } from "../ai/copilotClient";
-import { stateFromWorld } from "../ai/copilotState";
+import { classifyRemote, remoteCopilotAvailable } from "../ai/copilotClient";
+import type { NavigatorIntent } from "../ai/navigator/intents";
 import { detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type PlaceKind, type WorldPlace } from "../ai/copilotBrain";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { Navigator } from "../ai/navigator/navigator";
@@ -85,7 +85,6 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     const text = raw.trim();
     if (!text) return;
     const t0 = nowMs();
-    const history: CopilotTurn[] = messages.slice(1).map((m) => ({ role: m.role, text: m.text }));
     const w = worldRef.current;
     const reply = navigatorRef.current.ask(text, snapshotRef.current);
     const local: CopilotReply = { intent: detectIntent(text), text: reply.text, actions: reply.actions, ...(reply.places ? { places: reply.places } : {}) };
@@ -103,12 +102,18 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
       setFollowUps((f) => [...f, { id: replyId, text, kind, spoken }]);
       void useNearbyStore.getState().load(kind);
     }
-    if (remote) {
+    // Not understood on the phone: the server's language model (when signed
+    // in and connected) says only what was asked; the facts still come from
+    // the phone's own live snapshot.
+    if (remote && reply.intent === "unknown") {
       setBusy(true);
-      void askRemote(text, stateFromWorld(w), history)
-        // Claude words the answer; the buttons stay NAVIA's own.
-        .then((r) => setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: r.answer } : m))))
-        .catch(() => { /* the on-device answer is already shown */ })
+      void classifyRemote(text)
+        .then((intent) => {
+          if (!intent || intent === "unknown") return;
+          const r = navigatorRef.current.ask(text, snapshotRef.current, intent as NavigatorIntent);
+          setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: r.text, actions: r.actions, ...(r.places ? { places: r.places } : {}) } : m)));
+          if (spoken) void say(r.speech);
+        })
         .finally(() => setBusy(false));
     }
     setTimeout(() => list.current?.scrollToEnd({ animated: true }), 60);

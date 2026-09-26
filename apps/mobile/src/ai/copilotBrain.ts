@@ -138,7 +138,7 @@ export function detectKind(q: string): PlaceKind | null {
 export function detectIntent(q: string): Intent {
   const f = fold(q);
   if (!f) return "unknown";
-  if (has(f, "поранен", "ранен", "ранил", "кров", "кровотеч", "без свідом", "без сознан", "швидк", "скорую", "скорая", "103", "112", "101", "102", "пожеж", "пожар", "emergency", "injured", "bleeding", "ambulance", "допоможіть", "помогите", "sos")) return "emergency";
+  if (has(f, "поранен", "ранен", "ранил", "кров", "кровотеч", "без свідом", "без сознан", "швидку", "швидка допомог", "швидкої", "скорую", "скорая", "103", "112", "101", "102", "пожеж", "пожар", "emergency", "injured", "bleeding", "ambulance", "допоможіть", "помогите", "sos")) return "emergency";
   if (has(f, "фото", "сфотограф", "камер", "photo", "picture", "camera")) return "photo";
   if (/^(бачу|вижу|я бачу|я вижу|i see|поруч|рядом|я биля|я возле|я около|стою биля|стою возле|стою у)( |$)/.test(f) || has(f, "бачу", "вижу", "i can see")) return "describe";
   if (has(f, "заблук", "загубив", "загубил", "заблуд", "потерял", "не знаю де я", "не знаю где я", "i am lost", "im lost", "i'm lost")) return "lost";
@@ -403,7 +403,7 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
           return { intent, text: uk ? "У відкритих даних поруч немає пунктів незламності. Актуальні адреси дає офіційний бот «Незламність» у Telegram або Viber." : "Open data has no resilience points nearby. The official “Nezlamnist” bot on Telegram or Viber has current addresses.", actions: [{ kind: "open", label: uk ? "Бот «Незламність» (Telegram)" : "Nezlamnist bot (Telegram)", url: "https://t.me/nezlamnistbot" }] };
         }
         if (kind === "shelter") {
-          return { intent, text: uk ? "У відкритих даних поруч немає укриттів (шукала до 15 км). Уточніть найближче укриття у своїй громаді або в застосунку «Дія». Під час тривоги — капітальне приміщення без вікон, подалі від скла." : "Open data lists no shelters nearby (searched up to 15 km). Check with your community or the Diia app. During an alert, stay in a solid room without windows, away from glass.", actions: [{ kind: "safety", label: uk ? "Безпека" : "Safety" }] };
+          return { intent, text: uk ? "У відкритих даних поруч немає укриттів (пошук до 15 км). Уточніть найближче укриття у своїй громаді або в застосунку «Дія». Під час тривоги — капітальне приміщення без вікон, подалі від скла." : "Open data lists no shelters nearby (searched up to 15 km). Check with your community or the Diia app. During an alert, stay in a solid room without windows, away from glass.", actions: [{ kind: "safety", label: uk ? "Безпека" : "Safety" }] };
         }
         return { intent, text: uk ? `Поки не бачу ${words.uk[2]} поруч у даних NAVIA. Спробуйте ще раз за хвилину — я оновлю пошук.` : `I don't see ${words.en[1]} nearby in NAVIA's data yet. Try again in a minute — I'll refresh the search.`, actions: [ask(uk ? `Де ${words.uk[0]}?` : `Where is a ${words.en[0]}?`)] };
       }
@@ -556,13 +556,13 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
       };
 
     case "about":
-      return { intent, text: uk ? "NAVIA — навігатор для дороги під час тривоги. Коли РЕБ глушить або підміняє GPS, звичайна навігація губиться. Я перевіряю кожну точку, відкидаю підробки, а без сигналу веду за збереженим маршрутом, датчиками руху й орієнтирами на кожному повороті. І завжди чесно кажу, наскільки впевнена в позиції." : "NAVIA is a navigator for travelling during air alerts. When EW jams or spoofs GPS, ordinary navigation gets lost. I check every fix, reject fakes, and without a signal I guide along the saved route using motion sensors and a landmark at every turn — always honest about how sure I am.", actions: [ask(uk ? "Що робити без GPS?" : "What to do without GPS?")] };
+      return { intent, text: uk ? "NAVIA — навігатор для дороги під час тривоги. Коли РЕБ глушить або підміняє GPS, звичайна навігація губиться. Я перевіряю кожну точку, відкидаю підробки, а без сигналу веду за збереженим маршрутом, датчиками руху й орієнтирами на кожному повороті. І завжди чесно кажу, наскільки точна позиція." : "NAVIA is a navigator for travelling during air alerts. When EW jams or spoofs GPS, ordinary navigation gets lost. I check every fix, reject fakes, and without a signal I guide along the saved route using motion sensors and a landmark at every turn — always honest about how sure I am.", actions: [ask(uk ? "Що робити без GPS?" : "What to do without GPS?")] };
 
     default: {
       // A place name the user typed? Try the known places and landmarks.
       const hits = matchDescription(question, w.landmarks);
       if (hits.length) return describe(question, w);
-      return { intent: "unknown", text: uk ? `Я вас почула, але поки не зрозуміла. ${situation(w)} Спробуйте так:` : `I heard you but didn't get that. ${situation(w)} Try:`, actions: suggestions(w).slice(0, 4) };
+      return { intent: "unknown", text: uk ? `Питання почуто, але не розпізнано. ${situation(w)} Спробуйте так:` : `I heard you but didn't get that. ${situation(w)} Try:`, actions: suggestions(w).slice(0, 4) };
     }
   }
 }
@@ -607,7 +607,7 @@ function describe(question: string, w: CopilotWorld): CopilotReply {
   const uk = w.lang === "uk";
   const hits = matchDescription(question, w.landmarks);
   if (hits.length === 0) {
-    return { intent: "describe", text: uk ? "Не знайшла цього серед відомих мені місць поруч і на маршруті. Спробуйте назву вулиці, номер будинку, бренд АЗС (ОККО, WOG, SOCAR) чи магазину." : "I couldn't find that among the places I know nearby or on the route. Try a street name, a house number, or a fuel/shop brand.", actions: [{ kind: "ask", label: uk ? "Бачу " : "I see ", question: uk ? "Бачу " : "I see " }] };
+    return { intent: "describe", text: uk ? "Цього немає серед відомих NAVIA місць поруч і на маршруті. Спробуйте назву вулиці, номер будинку, бренд АЗС (ОККО, WOG, SOCAR) чи магазину." : "I couldn't find that among the places I know nearby or on the route. Try a street name, a house number, or a fuel/shop brand.", actions: [{ kind: "ask", label: uk ? "Бачу " : "I see ", question: uk ? "Бачу " : "I see " }] };
   }
   const best = hits[0]!;
   const others = hits.slice(1).map((h) => `«${h.name}»`).join(", ");

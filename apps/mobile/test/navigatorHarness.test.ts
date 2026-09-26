@@ -104,7 +104,8 @@ const QUESTIONS: [string, NavigatorIntent][] = [
   ["Статус", "status"],
   ["Що відбувається?", "status"],
   ["Повтори", "repeat"],
-  ["розкажи анекдот", "unknown"],
+  ["розкажи анекдот", "noData"],
+  ["ыварпа олдж", "unknown"],
 ];
 
 const km = (m: number) => formatDistance(m, "uk");
@@ -152,6 +153,7 @@ function grounded(intent: NavigatorIntent, s: Snapshot, text: string): string {
       if (g.mode === "navigator") assert.match(text, /GPS|приблизно|маршрут/);
       return "position";
     case "repeat": return "lastReply";
+    case "noData": assert.match(text, /сказати не можу/); return "honest: no such data";
     default: return "gnss (situation)";
   }
 }
@@ -195,7 +197,7 @@ test("navigator harness: every scenario × every question is answered from the s
 
 test("every intent the classifier can return has a registered handler", () => {
   const handled = new Set(registeredIntents());
-  for (const i of ["repeat", "emergency", "signalLost", "gpsStatus", "onRoute", "reroute", "routeNext", "eta", "whereAmI", "shelter", "alert", "status", "place", "classic", "unknown"] as NavigatorIntent[]) assert.ok(handled.has(i), i);
+  for (const i of ["repeat", "explain", "noData", "smalltalk", "emergency", "signalLost", "gpsStatus", "onRoute", "reroute", "routeNext", "eta", "whereAmI", "shelter", "alert", "status", "place", "classic", "unknown"] as NavigatorIntent[]) assert.ok(handled.has(i), i);
 });
 
 test("proactive layer: degraded → lost → alert → off route → recovered, most urgent first, each once", async () => {
