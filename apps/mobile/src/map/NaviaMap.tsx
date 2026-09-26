@@ -11,6 +11,7 @@ import { Touchable, useColors } from "../components/ui";
 import { elevation, motion } from "../theme/tokens";
 import { UserPuck, type PuckQuality } from "./UserPuck";
 import { pickPoi, type BasemapPoi } from "./basemapPoi";
+import { perfEnd, perfPending, perfStart } from "../perf/perf";
 
 export type CameraMode = "free" | "follow" | "navigate";
 
@@ -176,6 +177,14 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
     if (poi) onBasemapPoiPress(poi);
   }, [onBasemapPoiPress, poiLayerIds, user?.lat, user?.lon]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Timings: first map, style switch (day/night/satellite), 2D↔3D.
+  useState(() => { perfStart("map: open → first map"); return null; });
+  const firstStyle = useRef(true);
+  useEffect(() => { if (firstStyle.current) { firstStyle.current = false; return; } perfStart("map: style switch"); }, [mapStyle]);
+  const first3d = useRef(true);
+  useEffect(() => { if (first3d.current) { first3d.current = false; return; } perfStart("map: 2D↔3D → frame"); }, [view3d]);
+  const frame = useCallback(() => { if (perfPending("map: 2D↔3D → frame")) perfEnd("map: 2D↔3D → frame"); onFrame?.(); }, [onFrame]);
+
   const routeShape = useMemo(() => lineFeature(routeGeometry), [routeGeometry]);
   const traveledShape = useMemo(() => lineFeature(traveledGeometry), [traveledGeometry]);
 
@@ -229,10 +238,10 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           const h = feature.properties.heading ?? 0;
           if (Math.abs(h - bearing.current) > 0.5) { bearing.current = h; onBearingChange?.(h); }
         }}
-        onDidFinishLoadingMap={onMapReady}
+        onDidFinishLoadingMap={() => { perfEnd("map: open → first map"); perfEnd("map: style switch"); onMapReady?.(); }}
         onPress={(f) => { void onMapPress(f); }}
         // Every rendered frame is reported as either "fully" or "not fully" rendered.
-        {...(onFrame ? { onDidFinishRenderingFrame: onFrame, onDidFinishRenderingFrameFully: onFrame } : {})}
+        {...(onFrame || __DEV__ ? { onDidFinishRenderingFrame: frame, onDidFinishRenderingFrameFully: frame } : {})}
         onDidFailLoadingMap={onMapError}
       >
         <MapLibreGL.Camera ref={camera} defaultSettings={{ centerCoordinate: [initialCenter.lon, initialCenter.lat], zoomLevel: user ? FOLLOW_ZOOM : 12 }} />

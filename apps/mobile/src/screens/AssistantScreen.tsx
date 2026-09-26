@@ -12,8 +12,10 @@ import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
 import { useAppSettings } from "../settings/AppSettings";
 import { askRemote, remoteCopilotAvailable, type CopilotTurn } from "../ai/copilotClient";
 import { stateFromWorld } from "../ai/copilotState";
-import { answer, detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type PlaceKind, type WorldPlace } from "../ai/copilotBrain";
+import { detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type PlaceKind, type WorldPlace } from "../ai/copilotBrain";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
+import { Navigator } from "../ai/navigator/navigator";
+import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { useNearbyStore } from "../store/nearbyStore";
 import { speak, stopSpeaking } from "../voice/VoiceGuide";
@@ -43,6 +45,11 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
   const world = useCopilotWorld();
   const worldRef = useRef<CopilotWorld>(world);
   worldRef.current = world;
+  // The navigator (5 layers): every answer from the live snapshot.
+  const snapshot = useNavigatorSnapshot();
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+  const navigatorRef = useRef(new Navigator());
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -80,14 +87,16 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     const t0 = nowMs();
     const history: CopilotTurn[] = messages.slice(1).map((m) => ({ role: m.role, text: m.text }));
     const w = worldRef.current;
-    const local: CopilotReply = answer(text, w);
+    const reply = navigatorRef.current.ask(text, snapshotRef.current);
+    const local: CopilotReply = { intent: detectIntent(text), text: reply.text, actions: reply.actions, ...(reply.places ? { places: reply.places } : {}) };
     const computeMs = nowMs() - t0;
+    if (__DEV__) console.log(`[navigator] «${text}» → ${reply.intent} (${reply.used.join(", ")}${reply.missing.length ? `; missing ${reply.missing.join(", ")}` : ""}) ${reply.computeMs.toFixed(1)} ms`);
     const userId = ++seq.current;
     const replyId = ++seq.current;
     timing.current = { id: replyId, t0, computeMs, question: text };
     setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) }]);
     setQuestion("");
-    if (spoken) void say(local.text);
+    if (spoken) void say(reply.speech);
     const kind = detectKind(text);
     const intent = detectIntent(text);
     if (kind && intent === "place" && w.placeStates?.[kind] !== "ready") {
@@ -114,8 +123,8 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     setMessages((old) => old.map((m) => {
       const f = doneNow.find((x) => x.id === m.id);
       if (!f) return m;
-      const r = answer(f.text, world);
-      if (f.spoken) void say(r.text);
+      const r = navigatorRef.current.ask(f.text, snapshotRef.current);
+      if (f.spoken) void say(r.speech);
       return { ...m, text: r.text, actions: r.actions, ...(r.places ? { places: r.places } : {}) };
     }));
   }, [world, followUps, say]);

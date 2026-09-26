@@ -28,8 +28,11 @@ import { Icon } from "../components/Icon";
 import { Button, IconButton, Segmented, Text, Touchable, useColors } from "../components/ui";
 import { Appear, Crossfade } from "../components/Crossfade";
 import { formatClock, formatDistance, formatDuration, useT, type Translate } from "../i18n";
-import { GuidanceAnnouncer, actionWords, alertPhrase, cautiousPhrase, instructionPhrase, type StepLike } from "../voice/guidance";
-import { NavigatorModeTracker, modeFacts, navigatorModeOf, type ModeEvent, type NavigatorMode } from "../navigation/navigatorMode";
+import { GuidanceAnnouncer, cautiousPhrase, instructionPhrase, type StepLike } from "../voice/guidance";
+import { navigatorModeOf, type NavigatorMode } from "../navigation/navigatorMode";
+import { ProactiveMonitor } from "../ai/navigator/navigator";
+import { perfEnd, perfStart } from "../perf/perf";
+import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { saveRouteOffline, type OfflineProgress } from "../map/offlineRoute";
 import { config } from "../config";
 import { speak, stopSpeaking } from "../voice/VoiceGuide";
@@ -47,11 +50,11 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const { t, lang } = useT();
   const insets = useSafeAreaInsets();
   const { isDark, mapLayer, voiceGender, briefingEnabled, nav3d, setNav3d } = useAppSettings();
-  // 3D: tilted camera, buildings stand up (fill-extrusion). 2D: flat, clean.
-  // Relief shading is NOT added on top in 3D: measured on the simulator it
-  // halves the frame rate (2D 45 fps, 3D 31 fps, 3D + hillshade 15 fps);
-  // the "Рельєф" layer (shading baked into the tiles) gives relief for free.
-  const style = useMapStyle(mapLayer, isDark, 0, !nav3d, false);
+  // One style for 2D and 3D: the switch only tilts the camera. (A separate
+  // flat style made every 2D↔3D switch reload the whole map, ≈520 ms on the
+  // simulator; seen from straight above the building blocks cannot hide the
+  // route anyway.) Relief shading is NOT added in 3D: it halves the frame rate.
+  const style = useMapStyle(mapLayer, isDark, 0, false, false);
   const fps = useFrameCounter(__DEV__);
   const { height: screenH } = useWindowDimensions();
   const state = useNaviaStore((s) => s.state);
@@ -113,7 +116,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
 
     async function requestRoute(origin: { lat: number; lon: number }) {
       try {
+        perfStart("route: request → ready");
         await navigationEngine.requestRoute(origin, destination, modeRef.current);
+        perfEnd("route: request → ready");
         if (!cancelled) { setRouteError(null); refresh(); }
       } catch (err) {
         if (!cancelled) setRouteError((err as Error).message);
@@ -181,7 +186,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
 
     async function startDemo() {
       try {
+        perfStart("route: request → ready");
         await demoEngine.start();
+        perfEnd("route: request → ready");
         if (cancelled) { demoEngine.reset(); return; }
         refresh();
       } catch (err) {
@@ -279,28 +286,28 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   }, [phase, nextStep?.id, state.nextStepDistanceM, positionReliable, estimated, uncertaintyM, mode, lang, speakText, nextCue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cautiousSpoken = useRef<string | null>(null);
-  // Navigator mode: GNSS unstable → lost (NAVIA guides by dead reckoning) →
-  // back. One tracker drives the voice, the banner and the log; the words come
-  // from the engine state (also in Demo Mode, where the GNSS is simulated).
-  const modeTracker = useRef(new NavigatorModeTracker()).current;
-  const [modeNote, setModeNote] = useState<ModeEvent | null>(null);
+  // Proactive navigator (layer 4): GNSS unstable / lost / back, air alert
+  // start / end, off route / back — each change once, from the live snapshot,
+  // most urgent first; spoken at once (interrupting a stale prompt). The GNSS
+  // events also drive the banner (the same words).
+  const monitor = useRef(new ProactiveMonitor()).current;
+  const snapshot = useNavigatorSnapshot();
+  const [modeNote, setModeNote] = useState<{ kind: "recovered" | "stable"; text: string } | null>(null);
   const navMode = navigatorModeOf(state);
   useEffect(() => {
-    if (phase !== "navigating") { modeTracker.reset(); setModeNote(null); return; }
-    const words = nextStep ? actionWords(nextStep as StepLike, lang) : null;
-    const facts = modeFacts(state, {
-      reasons: gnssTrendReasons(state.gnssTrend, t) || undefined,
-      hasRoute: !!route,
-      next: words && nextStep?.maneuver !== "arrive" ? { text: words.road ? `${words.action} ${lang === "uk" ? "на" : "onto"} ${words.road}` : words.action, distanceM: state.nextStepDistanceM ?? null } : null,
-    });
-    const event = modeTracker.update(state, facts, lang, Date.now());
-    if (!event) return;
-    console.log(`[navigator] ${new Date(event.atMs).toISOString()} ${event.from ?? "—"} → ${event.to} (${event.kind}, gnss=${state.gnss}${isDemo ? ", demo" : ""}): ${event.text}`);
-    setModeNote(event);
-    if (event.spoken) speakText(event.text);
-  }, [phase, state]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (phase !== "navigating") { monitor.reset(); setModeNote(null); return; }
+    const events = monitor.update(state, snapshot, Date.now());
+    if (events.length === 0) return;
+    for (const e of events) console.log(`[navigator] ${new Date(e.atMs).toISOString()} ${e.kind} p${e.priority} (gnss=${state.gnss}${isDemo ? ", demo" : ""}): ${e.text.replace(/\n/g, " ")}`);
+    const gnss = events.find((e) => e.kind === "gnssRecovered" || e.kind === "gnssStable");
+    if (gnss) setModeNote({ kind: gnss.kind === "gnssRecovered" ? "recovered" : "stable", text: gnss.text });
+    else if (events.some((e) => e.kind === "gnssLost" || e.kind === "gnssDegraded")) setModeNote(null);
+    // The most urgent message is spoken now; the others follow it.
+    const spoken = events.filter((e) => e.spoken);
+    if (spoken[0]) void speak(spoken.map((e) => e.speech).join(" "), { lang, gender: voiceGender, interrupt: true });
+  }, [phase, state, snapshot.alert?.active]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!modeNote || (modeNote.kind !== "recovered" && modeNote.kind !== "stable")) return;
+    if (!modeNote) return;
     const timer = setTimeout(() => setModeNote(null), 8000);
     return () => clearTimeout(timer);
   }, [modeNote]);
@@ -310,14 +317,6 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   // the first fix GPS reads "searching" (neutral), not "lost".
   const navGpsStatus: GpsStatus = permissionDenied ? "permission" : isDemo || state.position || state.lastTrustedFixAt != null ? "ready" : "searching";
   const [details, setDetails] = useState<StatusKind | null>(null);
-  const alertSpoken = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (phase !== "navigating" || isDemo || alertNow?.active == null) return;
-    if (alertSpoken.current === null) { alertSpoken.current = alertNow.active; if (!alertNow.active) return; }
-    else if (alertSpoken.current === alertNow.active) return;
-    alertSpoken.current = alertNow.active;
-    speakText(alertPhrase(alertNow.active, alertNow.scope, lang));
-  }, [phase, isDemo, alertNow?.active, alertNow?.scope, lang, speakText]); // eslint-disable-line react-hooks/exhaustive-deps
   const conflictSpoken = useRef<number | null>(null);
   useEffect(() => {
     const since = state.gnssConflict?.sinceMs ?? null;
@@ -325,12 +324,6 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     conflictSpoken.current = since;
     speakText(t("resilient.conflictSpoken"));
   }, [phase, state.gnssConflict?.sinceMs, speakText, t]); // eslint-disable-line react-hooks/exhaustive-deps
-  const offRouteSpoken = useRef(false);
-  useEffect(() => {
-    if (phase !== "navigating") return;
-    if (state.offRoute && !offRouteSpoken.current) { offRouteSpoken.current = true; speakText(lang === "uk" ? "Ви відхилилися від маршруту. Перераховую." : "You left the route. Recalculating."); }
-    if (!state.offRoute) offRouteSpoken.current = false;
-  }, [state.offRoute, phase, lang, speakText]);
   useEffect(() => { if (phase === "arrived") speakText(instructionPhrase({ id: "arrive", maneuver: "arrive", roadName: "" }, 0, lang)); }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ——— Actions ———
@@ -536,7 +529,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
 // Navigator-mode banner: unstable signal (yellow), GPS lost → navigator mode
 // (red), and for a few seconds after a change back, what happened (green).
 // The lines are live engine values.
-function NavigatorBanner({ mode, note, state, t, lang, c }: { mode: NavigatorMode; note: ModeEvent | null; state: NavigationState; t: Translate; lang: "uk" | "en"; c: ThemeColors }): JSX.Element | null {
+function NavigatorBanner({ mode, note, state, t, lang, c }: { mode: NavigatorMode; note: { kind: "recovered" | "stable"; text: string } | null; state: NavigationState; t: Translate; lang: "uk" | "en"; c: ThemeColors }): JSX.Element | null {
   const d = gpsDetails(state);
   // Just back from navigator mode: show that first (for a few seconds); its
   // words already say if the signal is still unstable.

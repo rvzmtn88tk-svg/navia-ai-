@@ -1,0 +1,4 @@
+import { classify } from "../src/ai/navigator/intents";
+const Q: [string, string][] = [["Що робити, пропав сигнал?","signalLost"],["Сигнал зник, що тепер?","signalLost"],["глушать gps що робити","signalLost"],["Що з GPS?","gpsStatus"],["Яка зараз точність?","gpsStatus"],["Куди далі?","routeNext"],["Через скільки поворот?","routeNext"],["Я правильно їду?","onRoute"],["Я на правильній дорозі?","onRoute"],["Здається, я звернув не туди","reroute"],["Коли приїдемо?","eta"],["Де я?","whereAmI"],["Де найближче укриття?","shelter"],["Куди ховатися?","shelter"],["Що з тривогою?","alert"],["Статус","status"],["Що відбувається?","status"],["Повтори","repeat"],["розкажи анекдот","unknown"]];
+for (const [q, e] of Q) { const c = classify(q); if (c !== e) console.log(`MISS «${q}» → ${c} (want ${e})`); }
+console.log("done");
