@@ -6,7 +6,7 @@ import { Animated, Linking, StyleSheet, View, useWindowDimensions } from "react-
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeepAwake } from "expo-keep-awake";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { haversineMeters, initialBearing, positionAtDistance, type GNSSRawSample, type IMUSample, type RouteStep } from "@navia/core";
+import { haversineMeters, initialBearing, positionAtDistance, type GNSSRawSample, type IMUSample, type NavigationState, type RouteStep } from "@navia/core";
 import type { RootStackParamList, RouteMode } from "../navigation/RootNavigator";
 import { demoEngine, navigationEngine, useNaviaStore } from "../engine/naviaController";
 import { ExpoLocationPositionProvider, probePosition } from "../providers/ExpoLocationPositionProvider";
@@ -15,7 +15,7 @@ import { useAppSettings } from "../settings/AppSettings";
 import { NaviaAiMark } from "../components/NaviaAiMark";
 import { StatusBeacons } from "../components/StatusBeacons";
 import { StatusDetails, type StatusKind } from "../components/StatusDetails";
-import { healthFrom, type GpsStatus } from "../engine/liveStatus";
+import { gpsDetails, healthFrom, type GpsStatus } from "../engine/liveStatus";
 import { useRouteIntel } from "../store/routeIntelStore";
 import { useTripStore } from "../store/tripStore";
 import { gnssTrendReasons } from "../engine/gnssWords";
@@ -28,7 +28,8 @@ import { Icon } from "../components/Icon";
 import { Button, IconButton, Segmented, Text, Touchable, useColors } from "../components/ui";
 import { Appear, Crossfade } from "../components/Crossfade";
 import { formatClock, formatDistance, formatDuration, useT, type Translate } from "../i18n";
-import { GuidanceAnnouncer, alertPhrase, cautiousPhrase, instructionPhrase, resiliencePhrase, type StepLike } from "../voice/guidance";
+import { GuidanceAnnouncer, actionWords, alertPhrase, cautiousPhrase, instructionPhrase, type StepLike } from "../voice/guidance";
+import { NavigatorModeTracker, modeFacts, navigatorModeOf, type ModeEvent, type NavigatorMode } from "../navigation/navigatorMode";
 import { saveRouteOffline, type OfflineProgress } from "../map/offlineRoute";
 import { config } from "../config";
 import { speak, stopSpeaking } from "../voice/VoiceGuide";
@@ -277,19 +278,32 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     }
   }, [phase, nextStep?.id, state.nextStepDistanceM, positionReliable, estimated, uncertaintyM, mode, lang, speakText, nextCue]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Spoken resilience transitions: degrading → lost (route guidance) → recovered.
   const cautiousSpoken = useRef<string | null>(null);
-  const resilience = useRef<"ok" | "degraded" | "lost">("ok");
+  // Navigator mode: GNSS unstable → lost (NAVIA guides by dead reckoning) →
+  // back. One tracker drives the voice, the banner and the log; the words come
+  // from the engine state (also in Demo Mode, where the GNSS is simulated).
+  const modeTracker = useRef(new NavigatorModeTracker()).current;
+  const [modeNote, setModeNote] = useState<ModeEvent | null>(null);
+  const navMode = navigatorModeOf(state);
   useEffect(() => {
-    if (phase !== "navigating" || isDemo) return;
-    const now = estimated ? "lost" : state.gnss === "DEGRADED" ? "degraded" : "ok";
-    const prev = resilience.current;
-    if (now === prev) return;
-    resilience.current = now;
-    if (now === "lost") speakText(resiliencePhrase("lost", lang));
-    else if (now === "degraded" && prev === "ok") speakText(resiliencePhrase("degraded", lang));
-    else if (now === "ok" && prev === "lost") speakText(resiliencePhrase("recovered", lang));
-  }, [phase, estimated, state.gnss, isDemo, lang, speakText]);
+    if (phase !== "navigating") { modeTracker.reset(); setModeNote(null); return; }
+    const words = nextStep ? actionWords(nextStep as StepLike, lang) : null;
+    const facts = modeFacts(state, {
+      reasons: gnssTrendReasons(state.gnssTrend, t) || undefined,
+      hasRoute: !!route,
+      next: words && nextStep?.maneuver !== "arrive" ? { text: words.road ? `${words.action} ${lang === "uk" ? "на" : "onto"} ${words.road}` : words.action, distanceM: state.nextStepDistanceM ?? null } : null,
+    });
+    const event = modeTracker.update(state, facts, lang, Date.now());
+    if (!event) return;
+    console.log(`[navigator] ${new Date(event.atMs).toISOString()} ${event.from ?? "—"} → ${event.to} (${event.kind}, gnss=${state.gnss}${isDemo ? ", demo" : ""}): ${event.text}`);
+    setModeNote(event);
+    if (event.spoken) speakText(event.text);
+  }, [phase, state]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!modeNote || (modeNote.kind !== "recovered" && modeNote.kind !== "stable")) return;
+    const timer = setTimeout(() => setModeNote(null), 8000);
+    return () => clearTimeout(timer);
+  }, [modeNote]);
   // Proactive: announce an air alert starting or ending during the trip.
   const alertNow = useNaviaStore((s) => s.alert);
   // Map beacons: same colours as the home map (shared StatusBeacons). Before
@@ -443,24 +457,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
         <>
           <Appear from={-24} style={[styles.maneuverWrap, { top: topInset }]}>
             <ManeuverCard step={nextStep} cue={nextCue ? landmarkCue(nextCue, lang) : null} distanceM={state.nextStepDistanceM ?? null} following={followingStep} reliable={positionReliable} estimated={estimated} uncertaintyM={uncertaintyM} offRoute={state.offRoute} t={t} lang={lang} c={c} />
-            {!estimated && state.gnssTrend?.level === "degrading" && (
-              <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
-                <Icon name="satellite" size={iconSize.md} color={c.warning} />
-                <View style={styles.flex}>
-                  <Text variant="subhead" color="warning">{t("gps.warnDegrading")}</Text>
-                  <Text variant="caption" color="secondary">{[gnssTrendReasons(state.gnssTrend, t), t("gps.warnDegradingHint")].filter(Boolean).join(" · ")}</Text>
-                </View>
-              </Appear>
-            )}
-            {estimated && (
-              <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
-                <Icon name="satellite" size={iconSize.md} color={c.warning} />
-                <View style={styles.flex}>
-                  <Text variant="subhead" color="warning">{state.positionMode === "MANUAL" ? t("resilient.bannerManual") : t("resilient.banner")}</Text>
-                  {uncertaintyM != null && <Text variant="caption" color="secondary">{t("resilient.uncertainty", { meters: uncertaintyM })}</Text>}
-                </View>
-              </Appear>
-            )}
+            <NavigatorBanner mode={navMode} note={modeNote} state={state} t={t} lang={lang} c={c} />
             {state.gnssConflict && (
               <Appear from={-8} style={[styles.resilientBanner, styles.conflict, { backgroundColor: c.criticalSoft, borderColor: c.critical }]}>
                 <Text variant="subhead" color="critical">{t("resilient.conflict", { distance: formatDistance(state.gnssConflict.distanceM, lang) })}</Text>
@@ -534,6 +531,51 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       )}
     </View>
   );
+}
+
+// Navigator-mode banner: unstable signal (yellow), GPS lost → navigator mode
+// (red), and for a few seconds after a change back, what happened (green).
+// The lines are live engine values.
+function NavigatorBanner({ mode, note, state, t, lang, c }: { mode: NavigatorMode; note: ModeEvent | null; state: NavigationState; t: Translate; lang: "uk" | "en"; c: ThemeColors }): JSX.Element | null {
+  const d = gpsDetails(state);
+  // Just back from navigator mode: show that first (for a few seconds); its
+  // words already say if the signal is still unstable.
+  if (mode !== "navigator" && note && (note.kind === "recovered" || (note.kind === "stable" && mode === "normal"))) {
+    return (
+      <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.successSoft, borderColor: c.success }]}>
+        <Icon name="satellite" size={iconSize.md} color={c.success} />
+        <View style={styles.flex} testID="navigator-banner-recovered">
+          <Text variant="subhead" color="success">{note.text}</Text>
+        </View>
+      </Appear>
+    );
+  }
+  if (mode === "degraded") {
+    const lines = [d.accuracyM != null ? t("gps.accuracy", { meters: Math.round(d.accuracyM) }) : null, gnssTrendReasons(state.gnssTrend, t) || null, t("gps.warnDegradingHint")].filter(Boolean).join(" · ");
+    return (
+      <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
+        <Icon name="satellite" size={iconSize.md} color={c.warning} />
+        <View style={styles.flex} testID="navigator-banner-degraded">
+          <Text variant="subhead" color="warning">{t("navmode.degradedTitle")}</Text>
+          <Text variant="caption" color="secondary">{lines}</Text>
+        </View>
+      </Appear>
+    );
+  }
+  if (mode === "navigator") {
+    const age = d.lastTrustedFixAgeS != null ? t("navmode.lastFix", { time: d.lastTrustedFixAgeS < 120 ? `${d.lastTrustedFixAgeS} ${lang === "uk" ? "с" : "s"}` : `${Math.round(d.lastTrustedFixAgeS / 60)} ${lang === "uk" ? "хв" : "min"}` }) : null;
+    const lines = [d.source === "MANUAL" ? t("navmode.fromManual") : t("navmode.deadReckoning"), d.uncertaintyM != null ? t("resilient.uncertainty", { meters: Math.round(d.uncertaintyM) }) : t("navmode.approx"), age].filter(Boolean).join(" · ");
+    return (
+      <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.criticalSoft, borderColor: c.critical }]}>
+        <NaviaAiMark size={28} active />
+        <View style={styles.flex} testID="navigator-banner-navigator">
+          <Text variant="subhead" color="critical">{t("navmode.navigatorTitle")}</Text>
+          <Text variant="caption" color="secondary">{lines}</Text>
+        </View>
+      </Appear>
+    );
+  }
+  return null;
 }
 
 function ManeuverCard({ step, cue, distanceM, following, reliable, estimated, uncertaintyM, offRoute, t, lang, c }: {

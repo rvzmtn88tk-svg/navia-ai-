@@ -134,20 +134,8 @@ export function cautiousPhrase(step: StepLike, lang: Lang, cue?: StepLandmark | 
   return `${head}${lead ? `, ${lead},` : ""} ${action(step, lang)}${onto(step, lang)}.${confirm ? ` ${confirm}` : ""} ${ask}`;
 }
 
-/**
- * Spoken status changes for resilient navigation. Each transition is spoken
- * once: signal degrading, GNSS lost (switching to route guidance), recovered.
- */
-export type ResilienceEvent = "degraded" | "lost" | "recovered";
-
-export function resiliencePhrase(event: ResilienceEvent, lang: Lang): string {
-  const uk = lang === "uk";
-  switch (event) {
-    case "degraded": return uk ? "Сигнал GPS слабшає, можлива втрата. Маршрут і орієнтири збережено — я поведу і без GPS." : "The GPS signal is weakening and may be lost. The route and landmarks are saved — I'll keep guiding without GPS.";
-    case "lost": return uk ? "Сигнал GPS втрачено. Продовжуйте маршрутом — я веду за датчиками, позиція приблизна." : "GPS signal lost. Keep following the route — I'm guiding from motion sensors; the position is approximate.";
-    case "recovered": return uk ? "GPS відновлено. Позицію підтверджено." : "GPS restored. Position confirmed.";
-  }
-}
+// Spoken GNSS status changes (unstable / lost / back) live in
+// navigation/navigatorMode.ts, built from the engine state.
 
 /** Spoken notice when an air alert starts or ends at the user's location. */
 export function alertPhrase(active: boolean, scope: "district" | "city" | "region" | undefined, lang: Lang): string {

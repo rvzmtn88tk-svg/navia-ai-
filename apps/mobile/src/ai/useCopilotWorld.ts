@@ -14,6 +14,7 @@ import { actionWords, type StepLike } from "../voice/guidance";
 import { cachedStreet, streetAt } from "../providers/streetAt";
 import { gnssTrendReasons } from "../engine/gnssWords";
 import type { CopilotWorld, PlaceKind, WorldLandmark, WorldPlace } from "./copilotBrain";
+import { worldGps } from "./worldGps";
 
 const KIND_LABEL_UK: Record<LandmarkKind, string> = {
   traffic_signals: "світлофор", rail_crossing: "залізничний переїзд", bridge: "міст", roundabout: "круговий рух", fuel: "АЗС", pharmacy: "аптека",
@@ -107,15 +108,11 @@ export function useCopilotWorld(): CopilotWorld {
       lang,
       now,
       ...(displayName ? { userName: displayName } : {}),
-      gps: {
-        state: state.gnss === "NORMAL" || state.gnss === "DEGRADED" ? state.gnss : "LOST",
-        accuracyM: fix?.accuracyM ?? null,
-        lastFixAgeS: state.lastTrustedFixAt ? Math.round((now - state.lastTrustedFixAt) / 1000) : null,
-        positionMode: state.positionMode ?? null,
-        uncertaintyM: state.positionUncertaintyM ?? null,
+      gps: worldGps(state, {
         hasPosition: !!here,
+        fixAccuracyM: fix?.accuracyM ?? null,
         ...(state.gnssTrend?.level === "degrading" ? { trendText: gnssTrendReasons(state.gnssTrend, t) } : {}),
-      },
+      }),
       ...(street || alert?.locationLabel ? { here: { ...(street?.street ? { street: street.street } : {}), ...(street?.area || alert?.locationLabel ? { area: street?.area ?? alert?.locationLabel } : {}) } } : {}),
       ...(alert ? { alert: {
         active: alert.active,

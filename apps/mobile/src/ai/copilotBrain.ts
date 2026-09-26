@@ -42,6 +42,8 @@ export type CopilotWorld = {
     hasPosition: boolean;
     /** Early-warning reasons in words when the signal is getting worse. */
     trendText?: string;
+    /** Navigator mode from the engine (navigation/navigatorMode.ts). */
+    mode?: "normal" | "degraded" | "navigator";
   };
   here?: { street?: string; area?: string };
   alert?: { active: boolean | null; scope?: "district" | "city" | "region"; level?: string; reasons?: string[]; since?: number; otherDistricts?: number; area?: string };
@@ -226,18 +228,26 @@ export function regionalSentence(w: CopilotWorld): string {
   return w.lang === "uk" ? `В області ${r.state === "reported" ? "повідомляють" : "спостерігають"}: ${r.kindsText}.` : `The oblast reports: ${r.kindsText}.`;
 }
 
+function ageWords(s: number, uk: boolean): string {
+  return s < 120 ? (uk ? `${Math.max(1, Math.round(s))} с тому` : `${Math.max(1, Math.round(s))} s ago`) : (uk ? `${Math.round(s / 60)} хв тому` : `${Math.round(s / 60)} min ago`);
+}
+
 export function gpsSentence(w: CopilotWorld): string {
   const uk = w.lang === "uk";
   const g = w.gps;
   if (!g.hasPosition && g.state === "LOST") return uk ? "GPS ще не визначив вашу позицію." : "GPS has not found your position yet.";
-  if (g.positionMode === "DEAD_RECKONING") return uk ? `GPS зараз недоступний — веду за маршрутом, позиція приблизна${g.uncertaintyM ? ` (±${Math.round(g.uncertaintyM)} м)` : ""}.` : `GPS is unavailable — I'm guiding along the route; the position is approximate${g.uncertaintyM ? ` (±${Math.round(g.uncertaintyM)} m)` : ""}.`;
+  if (g.positionMode === "DEAD_RECKONING") {
+    const since = g.lastFixAgeS != null ? (uk ? ` (останній надійний сигнал — ${ageWords(g.lastFixAgeS, true)})` : ` (last trusted fix ${ageWords(g.lastFixAgeS, false)})`) : "";
+    const head = g.state === "LOST" ? (uk ? "Сигнал GPS втрачено" : "GPS signal lost") : (uk ? "Сигнал GPS ненадійний — точки відкидаю" : "The GPS signal is unreliable — I'm ignoring its fixes");
+    return uk ? `${head}${since}. Я в режимі штурмана: веду за маршрутом за рахунком шляху, позиція приблизна${g.uncertaintyM ? ` (±${Math.round(g.uncertaintyM)} м)` : ""}.` : `${head}${since}. I'm in navigator mode: guiding along the route by dead reckoning; the position is approximate${g.uncertaintyM ? ` (±${Math.round(g.uncertaintyM)} m)` : ""}.`;
+  }
   if (g.positionMode === "MANUAL") return uk ? "GPS недоступний — ведемо від точки, яку ви вказали." : "GPS is unavailable — guiding from the point you set.";
   if (g.state === "NORMAL") return uk ? `GPS стабільний${g.accuracyM != null ? ` (±${Math.round(g.accuracyM)} м)` : ""}.` : `GPS is stable${g.accuracyM != null ? ` (±${Math.round(g.accuracyM)} m)` : ""}.`;
   if (g.state === "DEGRADED") {
     if (g.trendText) return uk ? `Сигнал GPS слабшає (${g.trendText}) — можлива втрата. Маршрут і орієнтири збережено, я поведу і без GPS.` : `The GPS signal is weakening (${g.trendText}) and may be lost. The route and landmarks are saved; I'll guide without GPS.`;
     return uk ? "GPS нестабільний: сумнівні точки я відсіюю, позиція може бути неточною." : "GPS is unstable: I filter out suspicious fixes; the position may be off.";
   }
-  const age = g.lastFixAgeS != null ? (uk ? ` Остання надійна позиція — ${Math.max(1, Math.round(g.lastFixAgeS / 60))} хв тому.` : ` Last trusted position: ${Math.max(1, Math.round(g.lastFixAgeS / 60))} min ago.`) : "";
+  const age = g.lastFixAgeS != null ? (uk ? ` Остання надійна позиція — ${ageWords(g.lastFixAgeS, true)}.` : ` Last trusted position: ${ageWords(g.lastFixAgeS, false)}.`) : "";
   return uk ? `Сигнал GPS втрачено.${age}` : `GPS signal lost.${age}`;
 }
 
@@ -434,25 +444,46 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
     }
 
     case "noGps": {
-      const text = uk
+      // First what is happening right now (from the engine), then what to do.
+      const g = w.gps;
+      const r = w.route;
+      const lost = g.mode === "navigator" || g.state === "LOST" || g.positionMode === "DEAD_RECKONING" || g.positionMode === "MANUAL";
+      const now: string[] = [];
+      if (lost) {
+        now.push(gpsSentence(w));
+        if (r?.next && !r.offRoute) {
+          const cue = r.next.cue ? (uk ? `, ${r.next.cue}` : `, ${r.next.cue}`) : "";
+          const road = r.next.road ? (uk ? ` на ${r.next.road}` : ` onto ${r.next.road}`) : "";
+          now.push(uk ? `Наступний маневр: ${r.next.action}${road}${cue}. Після повороту натисніть «Я вже повернув» — я уточню позицію.` : `Next: ${r.next.action}${road}${cue}. After the turn tap “I've turned” so I can correct the position.`);
+        } else if (!r) {
+          now.push(uk ? "Активного маршруту немає — без GPS я можу вести лише за маршрутом, збудованим заздалегідь. Скажіть, що бачите навколо (вулицю, вивіску), — я порівняю з картою." : "There is no active route — without GPS I can only guide along a route built beforehand. Tell me what you see (a street, a sign) and I'll match it with the map.");
+        }
+      } else if (g.state === "DEGRADED" || g.mode === "degraded") {
+        now.push(gpsSentence(w));
+      } else {
+        now.push(uk ? `Зараз сигнал GPS у нормі${g.accuracyM != null ? ` (±${Math.round(g.accuracyM)} м)` : ""}. Якщо він зникне:` : `The GPS signal is fine right now${g.accuracyM != null ? ` (±${Math.round(g.accuracyM)} m)` : ""}. If it drops:`);
+      }
+      const how = uk
         ? [
-          "Без GPS я не губляюся, а веду вас за збереженим маршрутом:",
+          lost ? "Як я веду без GPS:" : g.state === "DEGRADED" ? "Якщо сигнал зникне:" : "",
           "• рахую пройдене за швидкістю й датчиками руху телефона;",
           "• перед кожним поворотом називаю орієнтир — світлофор, АЗС, міст, переїзд;",
           "• після повороту натисніть «Я вже повернув» — я уточню позицію;",
           "• якщо загубилися — напишіть, що бачите (назву вулиці, вивіску, АЗС), і я порівняю з картою.",
-          w.route ? `Зараз на маршруті я знаю ${w.route.landmarkCount} орієнтирів.` : "Порада: будуйте маршрут, поки сигнал є — я збережу його разом з орієнтирами й мапою.",
-        ].join("\n")
+          r ? (r.landmarkCount > 0 ? `На цьому маршруті я знаю ${r.landmarkCount} орієнтирів.` : "Орієнтирів уздовж цього маршруту поки немає — орієнтуйтеся за назвами вулиць і дорожніми знаками.") : "Порада: будуйте маршрут, поки сигнал є — я збережу його разом з орієнтирами й мапою.",
+        ]
         : [
-          "Without GPS I keep guiding you along the saved route:",
+          lost ? "How I guide without GPS:" : g.state === "DEGRADED" ? "If the signal drops:" : "",
           "• I count the distance from speed and the phone's motion sensors;",
           "• before each turn I name a landmark — traffic lights, a fuel station, a bridge, a crossing;",
           "• after the turn tap “I've turned” so I can correct the position;",
           "• if you get lost, tell me what you see (a street name, a sign, a fuel station) and I'll match it with the map.",
-          w.route ? `On this route I know ${w.route.landmarkCount} landmarks.` : "Tip: build the route while there is a signal — I'll save it with its landmarks and the map.",
-        ].join("\n");
+          r ? (r.landmarkCount > 0 ? `On this route I know ${r.landmarkCount} landmarks.` : "There are no landmarks along this route yet — go by street names and road signs.") : "Tip: build the route while there is a signal — I'll save it with its landmarks and the map.",
+        ];
+      const text = [now.join(" "), ...how.filter(Boolean)].join("\n");
       const actions: CopilotAction[] = [];
-      if (w.route?.next) actions.push(ask(uk ? "Що далі?" : "What's next?"));
+      if (lost && r?.next) actions.push({ kind: "confirmTurn", label: uk ? "Я вже повернув" : "I've turned" });
+      if (r?.next) actions.push(ask(uk ? "Що далі?" : "What's next?"));
       actions.push(ask(uk ? "Де я зараз?" : "Where am I?"));
       return { intent, text, actions };
     }
