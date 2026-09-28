@@ -12,7 +12,7 @@ import { useLiveContext, type GnssHealth, type GpsStatus } from "../engine/useLi
 import { useAppSettings, type MapLayer } from "../settings/AppSettings";
 import { usePlacesStore, placeId, type PlaceRef } from "../store/placesStore";
 import { CATEGORY_META, CHIP_CATEGORIES, placesFor, type ChipCategory } from "../places/categories";
-import { CategoryWheel } from "../components/CategoryWheel";
+import { CategoryWheelButton, CategoryWheelOverlay } from "../components/CategoryWheel";
 import { benchHooks, benchMode, runBench } from "../perf/bench";
 import type { NearbyPlace, NearbyPlaceCategory } from "../providers/NearbyPlacesProvider";
 import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
@@ -78,6 +78,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   useEffect(() => {
     if (!benchMode()) return undefined;
     benchHooks.setLayer = setMapLayer;
+    benchHooks.restyle = () => setStyleRetry((n) => n + 1);
     benchHooks.orbit = (ms, pitch, z) => { setCameraMode("free"); map.current?.orbit(ms, pitch, z); };
     const id = setTimeout(() => void runBench(mapLayer), 9000);
     return () => clearTimeout(id);
@@ -242,7 +243,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           </Touchable>
           <IconButton icon="user" label={t("home.openSettings")} onPress={() => navigation.navigate("Settings")} size={SEARCH_H} />
         </View>
-        <CategoryWheel categories={CHIP_CATEGORIES} selected={category} onSelect={selectCategory} />
+        <CategoryWheelButton categories={CHIP_CATEGORIES} selected={category} onSelect={selectCategory} />
         <StatusBeacons gpsStatus={live.gpsStatus} health={live.health} alert={alert} style={styles.beacons}
           onPressGps={() => setSnap("half")} onPressAlert={() => setSnap("half")} />
         {Math.abs(bearing) > 1 && (
@@ -326,6 +327,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
         sheltersLoading={live.byCategory.shelter?.state !== "ready" && live.byCategory.shelter?.state !== "error"}
         position={fix ? { lat: fix.lat, lon: fix.lon } : null}
         onRoute={(p) => { setSafetyOpen(false); startRoute({ id: p.id, label: p.name, lat: p.location.lat, lon: p.location.lon }, "walk"); }} />
+      <CategoryWheelOverlay categories={CHIP_CATEGORIES} selected={category} onSelect={selectCategory} />
       <LayersModal open={layersOpen} value={mapLayer} onClose={() => setLayersOpen(false)} onPick={(layer) => { setMapLayer(layer); setLayersOpen(false); }} t={t} c={c} />
     </View>
   );

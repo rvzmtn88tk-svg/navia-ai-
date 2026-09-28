@@ -36,6 +36,8 @@ for (const [name, w, h, top, bottom] of SCREENS) {
         assert.ok(!overlaps(x, y), `${CHIP_CATEGORIES[i]} and ${CHIP_CATEGORIES[j]} overlap`);
       }
     }
+    // A true circle, not an oval, on every phone but the 320-pt SE.
+    if (w >= 360) assert.equal(g.ry, g.rx, "true circle");
     // Where there is room (every phone but the 320-pt SE) the ring opens under the button, not over the search bar.
     if (h >= 667) assert.ok(g.cy - g.ry - g.disc / 2 >= topY, "ring under the button row");
     // The close button in the middle stays clear of every item.

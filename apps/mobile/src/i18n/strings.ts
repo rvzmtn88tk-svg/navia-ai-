@@ -69,6 +69,7 @@ export const uk = {
   "home.nearestShelterAt": "Укриття · {distance}",
   "search.nearby": "{category} поруч з вами",
   "wheel.open": "Місця поруч",
+  "wheel.short.resilience": "Незламність",
   "search.nearbyHint": "Найближчі — на мапі, від вашої позиції",
   "home.sources": "Джерела даних",
 
@@ -452,6 +453,7 @@ export const en: Record<StringKey, string> = {
   "home.nearestShelterAt": "Shelter · {distance}",
   "search.nearby": "{category} near you",
   "wheel.open": "Places nearby",
+  "wheel.short.resilience": "Resilience",
   "search.nearbyHint": "Nearest first, on the map, from where you are",
   "home.sources": "Data sources",
 

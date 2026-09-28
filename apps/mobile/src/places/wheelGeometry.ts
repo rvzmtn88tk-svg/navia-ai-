@@ -24,13 +24,13 @@ export const WHEEL_GUTTER = 12;
  */
 export function wheelGeometry(n: number, width: number, height: number, preferredTop: number, safeTop: number, bottomInset: number): WheelGeometry {
   const narrow = width < 360;
-  const disc = narrow ? 44 : 56;
-  // Wide enough for the longest single word ("Банкомати", "незламності").
-  const labelW = narrow ? 72 : width < 390 ? 80 : 88;
-  const labelH = 34;
-  // Taller than wide: the side items, stacked above each other, need
-  // vertical room for disc + label (more so on the narrowest phones).
-  const aspect = narrow ? 1.6 : 1.4;
+  const disc = narrow ? 40 : 44;
+  // One line: short names on the ring ("Незламність"), full ones for VoiceOver.
+  const labelW = narrow ? 68 : 76;
+  const labelH = 20;
+  // A true circle on every phone from 375 pt; the 320-pt iPhone SE (1st gen)
+  // is too narrow for 10 labelled items on a circle and gets a slight oval.
+  const aspect = narrow ? 1.3 : 1;
   const rx = Math.max(80, Math.min(150, (width - 2 * WHEEL_GUTTER - labelW) / 2));
   const extra = 2 * WHEEL_GUTTER + disc + labelH + 4;
   const topY = Math.max(safeTop, Math.min(preferredTop, height - bottomInset - extra - 2 * rx * aspect));

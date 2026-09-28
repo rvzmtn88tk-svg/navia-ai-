@@ -25,6 +25,14 @@ const DEM_SOURCE = { type: "raster-dem", tiles: [TERRARIUM_TILES], tileSize: 256
 
 type AnyLayer = { id: string; type: string; source?: string; "source-layer"?: string; minzoom?: number; filter?: unknown; layout?: Record<string, unknown>; paint?: Record<string, unknown> };
 
+/** Benchmark only (perf/bench.ts): "none" drops relief shading, 3D buildings
+ * and light, to measure what they cost. */
+let depth: "full" | "none" = "full";
+export function setBenchDepth(d: "full" | "none"): void {
+  depth = d;
+  styleCache.clear();
+}
+
 /** Sun from the south-west, a little above the horizon: walls facing it are
  * lit, the others darker — buildings read as volumes, not flat blocks. */
 function sunLight(dark: boolean): Record<string, unknown> {
@@ -69,7 +77,7 @@ const ESRI_IMAGERY = "https://server.arcgisonline.com/ArcGIS/rest/services/World
  * for production, an ArcGIS/MapTiler key — this is the test source.
  */
 async function satelliteHybrid(flat = false): Promise<string> {
-  const key = `satellite:${flat ? "2d" : "3d"}`;
+  const key = `satellite:${flat ? "2d" : "3d"}:${depth}`;
   const cached = styleCache.get(key);
   if (cached) return cached;
   const base = await baseStyle();
@@ -81,7 +89,7 @@ async function satelliteHybrid(flat = false): Promise<string> {
       : { ...l, paint: { ...(l.paint ?? {}), "text-color": "#FFFFFF", "text-halo-color": "#0A1220", "text-halo-width": 1.4 } });
   // 3D buildings over the photo from zoom 15: real heights, warm stone
   // colour, lit by the sun — the photo's roofs show through a little.
-  const extrusion = flat ? [] : baseLayers.filter((l) => l.type === "fill-extrusion").map((l) => ({
+  const extrusion = flat || depth === "none" ? [] : baseLayers.filter((l) => l.type === "fill-extrusion").map((l) => ({
     ...l,
     paint: {
       ...(l.paint ?? {}),
@@ -102,7 +110,7 @@ async function satelliteHybrid(flat = false): Promise<string> {
       { id: "background", type: "background", paint: { "background-color": "#0A1220" } },
       // A touch of contrast and saturation: the raw mosaic looks washed out.
       { id: "navia-imagery", type: "raster", source: "navia-imagery", paint: { "raster-contrast": 0.08, "raster-saturation": 0.08, "raster-fade-duration": 150 } },
-      hillshadeLayer(false, 0.45, true),
+      ...(depth === "none" ? [] : [hillshadeLayer(false, 0.45, true)]),
       ...layers.filter((l) => l.type === "line"),
       ...extrusion,
       ...layers.filter((l) => l.type === "symbol"),
@@ -201,18 +209,21 @@ function pinTiles(style: StyleJson, template: string): void {
 async function brandedStyle(dark: boolean, relief: boolean, flat: boolean): Promise<string> {
   const base = await baseStyleWithState();
   const pin = await pinnedTemplate(base.online);
-  const key = `${dark ? "night" : "day"}:${relief ? "relief" : "plain"}:${flat ? "2d" : "3d"}:${pin ?? "live"}`;
+  const key = `${dark ? "night" : "day"}:${relief ? "relief" : "plain"}:${flat ? "2d" : "3d"}:${pin ?? "live"}:${depth}`;
   const cached = styleCache.get(key);
   if (cached) return cached;
   const style = naviaStyle(base.style as never, dark) as unknown as StyleJson;
   if (pin) pinTiles(style, pin);
   // Navigation: flat buildings, so 3D blocks never hide the route.
   if (flat) style.layers = style.layers.filter((layer) => layer.type !== "fill-extrusion");
-  (style as { light?: unknown }).light = sunLight(dark);
-  // Relief: strong for the Terrain layer, subtle on the standard map (the
-  // Dnipro hills and ravines give the city depth without hiding streets).
-  style.sources["navia-dem"] = DEM_SOURCE;
-  style.layers.splice(reliefIndex(style.layers as AnyLayer[]), 0, hillshadeLayer(dark, relief ? 1 : dark ? 0.3 : 0.3));
+  if (depth === "none") style.layers = style.layers.filter((layer) => layer.type !== "fill-extrusion");
+  else {
+    (style as { light?: unknown }).light = sunLight(dark);
+    // Relief: strong for the Terrain layer, subtle on the standard map (the
+    // Dnipro hills and ravines give the city depth without hiding streets).
+    style.sources["navia-dem"] = DEM_SOURCE;
+    style.layers.splice(reliefIndex(style.layers as AnyLayer[]), 0, hillshadeLayer(dark, relief ? 1 : dark ? 0.3 : 0.3));
+  }
   const json = JSON.stringify(style);
   styleCache.set(key, json);
   return json;
