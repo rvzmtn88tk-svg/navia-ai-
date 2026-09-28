@@ -41,7 +41,7 @@ export function useCopilotActions(onAsk?: (question: string) => void): (action: 
         // During a trip, going "Home" would end the navigation: answer here instead.
         const inTrip = (navigation.getState()?.routes ?? []).some((r) => r.name === "Navigation");
         if (inTrip && onAsk) { onAsk(lang === "uk" ? "Де найближче укриття?" : "Where is the nearest shelter?"); return; }
-        navigation.navigate("Home", { openSafety: true });
+        navigation.popTo("Home", { openSafety: true });
         return;
       }
       case "ask":

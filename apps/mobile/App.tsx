@@ -7,6 +7,9 @@ import { AppSettingsProvider, useAppSettings } from "./src/settings/AppSettings"
 import { IntroOverlay } from "./src/components/IntroOverlay";
 import { AuthProvider } from "./src/auth/AuthProvider";
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
+// Loaded at start: when NAVIA was launched in "no internet" test mode, the
+// app's own requests must fail from the first one, like the map's.
+import "./src/offline/network";
 
 export default function App(): JSX.Element {
   return (

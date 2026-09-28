@@ -165,7 +165,7 @@ export function isProtectiveShelter(tags: Record<string, string>): boolean {
   return false;
 }
 
-function placeName(tags: Record<string, string>, category: NearbyPlaceCategory): string {
+export function placeName(tags: Record<string, string>, category: NearbyPlaceCategory): string {
   const named = tags["name:uk"] ?? tags.name ?? tags.brand ?? tags.operator;
   if (named) return named;
   switch (category) {

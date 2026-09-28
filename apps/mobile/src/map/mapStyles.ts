@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { config } from "../config";
 import type { MapLayer } from "../settings/AppSettings";
 import { naviaStyle } from "./naviaStyle";
+import { tileTemplate } from "../providers/vectorTiles";
 
 export type ResolvedStyle =
   | { status: "ready"; style: string }
@@ -66,28 +67,85 @@ function kv(): KV | null {
   try { return (require("expo-sqlite/kv-store") as { default: KV }).default; } catch { return null; }
 }
 
-async function baseStyle(): Promise<StyleJson> {
+const STYLE_TIMEOUT_MS = 6000;
+let onlineBaseText: string | null = null;
+
+/** The base style and whether it came from the network now (false: the copy kept on the phone). */
+async function baseStyleWithState(): Promise<{ style: StyleJson; online: boolean }> {
   // The detailed "liberty" style is the base for both day and night. Kept on
   // the phone so the map (with an offline package) works without network.
+  if (onlineBaseText) return { style: JSON.parse(onlineBaseText) as StyleJson, online: true };
+  const controller = new AbortController();
+  // A network that answers nothing (weak signal, captive Wi-Fi) must not
+  // keep the map blank for a minute: fall back to the kept copy quickly.
+  const timer = setTimeout(() => controller.abort(), STYLE_TIMEOUT_MS);
   try {
-    const response = await fetch(config.mapStyleUrl);
+    const response = await fetch(config.mapStyleUrl, { signal: controller.signal });
     if (!response.ok) throw new Error(`style HTTP ${response.status}`);
     const text = await response.text();
     void kv()?.setItemAsync(BASE_STYLE_KEY, text).catch(() => {});
-    return JSON.parse(text) as StyleJson;
+    onlineBaseText = text;
+    return { style: JSON.parse(text) as StyleJson, online: true };
   } catch (error) {
     const saved = await kv()?.getItemAsync(BASE_STYLE_KEY).catch(() => null);
-    if (saved) return JSON.parse(saved) as StyleJson;
+    if (saved) return { style: JSON.parse(saved) as StyleJson, online: false };
     throw error;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+async function baseStyle(): Promise<StyleJson> {
+  return (await baseStyleWithState()).style;
+}
+
+let pinOnline: Promise<string | null> | null = null;
+/**
+ * The tile version to draw. Offline packs hold the tiles of the version they
+ * were downloaded with; OpenFreeMap publishes a new version every few weeks
+ * and the live TileJSON then points at tiles the phone does not have. So with
+ * an offline package the map is pinned to the package's version: always
+ * without network, and online while the server still serves that version
+ * (then losing the network mid-drive changes nothing). null = live version.
+ */
+async function pinnedTemplate(online: boolean): Promise<string | null> {
+  const { packageTileTemplate } = require("../offline/regionPackage") as typeof import("../offline/regionPackage");
+  const template = await packageTileTemplate().catch(() => null);
+  if (!template) return null;
+  if (!online) return template;
+  pinOnline ??= (async () => {
+    const live = await tileTemplate().catch(() => null);
+    if (!live || live === template) return template;
+    const probe = template.replace("{z}", "14").replace("{x}", "9571").replace("{y}", "5544");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const served = await fetch(probe, { signal: controller.signal }).then((r) => r.ok).catch(() => false).finally(() => clearTimeout(timer));
+    return served ? template : null;
+  })();
+  return pinOnline;
+}
+
+/** After a new offline package: re-check which tile version to draw. */
+export function resetMapStyleCache(): void {
+  pinOnline = null;
+  styleCache.clear();
+}
+
+function pinTiles(style: StyleJson, template: string): void {
+  const source = style.sources.openmaptiles as { type?: string; url?: string } | undefined;
+  if (!source || source.type !== "vector") return;
+  style.sources.openmaptiles = { type: "vector", tiles: [template], minzoom: 0, maxzoom: 14, attribution: "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors" };
 }
 
 /** NAVIA-coloured standard map, optionally with hillshading for terrain. */
 async function brandedStyle(dark: boolean, relief: boolean, flat: boolean): Promise<string> {
-  const key = `${dark ? "night" : "day"}:${relief ? "relief" : "plain"}:${flat ? "2d" : "3d"}`;
+  const base = await baseStyleWithState();
+  const pin = await pinnedTemplate(base.online);
+  const key = `${dark ? "night" : "day"}:${relief ? "relief" : "plain"}:${flat ? "2d" : "3d"}:${pin ?? "live"}`;
   const cached = styleCache.get(key);
   if (cached) return cached;
-  const style = naviaStyle(await baseStyle() as never, dark) as unknown as StyleJson;
+  const style = naviaStyle(base.style as never, dark) as unknown as StyleJson;
+  if (pin) pinTiles(style, pin);
   // Navigation: flat buildings, so 3D blocks never hide the route.
   if (flat) style.layers = style.layers.filter((layer) => layer.type !== "fill-extrusion");
   if (relief) {

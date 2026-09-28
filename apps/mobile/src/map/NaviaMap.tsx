@@ -52,6 +52,8 @@ type Props = {
   searchCircle?: { center: LatLon; radiusM: number } | null;
   /** Navigation view: 3D tilt (buildings stand up) or flat 2D. */
   view3d?: boolean;
+  /** How "me on the map" is turned: where the phone points, or the route course. */
+  headingMode?: "device" | "course";
   /** Called after every rendered frame (dev FPS meter). */
   onFrame?: () => void;
 };
@@ -76,7 +78,7 @@ export function autoNavZoom(speedMps: number | null | undefined): number {
 export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function NaviaMap(props, ref) {
   const {
     mapStyle, user, quality, cameraMode, onUserGesture, onBearingChange, routeGeometry = [], traveledGeometry = [],
-    destination, places = [], selectedPlaceId, onPlacePress, onBasemapPoiPress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame,
+    destination, places = [], selectedPlaceId, onPlacePress, onBasemapPoiPress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame, headingMode = "device",
   } = props;
   const view3dRef = useRef(view3d);
   view3dRef.current = view3d;
@@ -292,7 +294,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           </MapLibreGL.MarkerView>
         )}
 
-        {user && <UserPuck position={user} quality={quality} billboard={view3d && cameraMode === "navigate"} speedMps={speedMps ?? null} />}
+        {user && <UserPuck position={user} quality={quality} billboard={view3d && cameraMode === "navigate"} speedMps={speedMps ?? null} headingMode={headingMode} />}
       </MapLibreGL.MapView>
     </View>
   );

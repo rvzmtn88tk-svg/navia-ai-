@@ -82,7 +82,7 @@ export function SettingsScreen(): JSX.Element {
         <Divider inset={52} />
         <ListRow icon="route" title={t("settings.briefing")} subtitle={t("settings.briefingHint")} trailing={<Switch value={briefingEnabled} onValueChange={setBriefingEnabled} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("settings.briefing")} />} />
         <Divider inset={52} />
-        <ListRow icon="sparkle" title={t("settings.replayOnboarding")} onPress={() => { resetOnboarding(); navigation.navigate("Home"); }} />
+        <ListRow icon="sparkle" title={t("settings.replayOnboarding")} onPress={() => { resetOnboarding(); navigation.popTo("Home"); }} />
         <Divider inset={52} />
         <ListRow icon="info" title={t("settings.sources")} onPress={() => navigation.navigate("Sources")} />
         <Divider inset={52} />

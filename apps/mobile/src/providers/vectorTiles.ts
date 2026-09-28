@@ -22,13 +22,22 @@ const MAX_TILES = 260;
 /** Largest circle served from tiles (z14 tiles are ~1.5 km at Kyiv's latitude). */
 export const MAX_RADIUS_TILES = 200;
 
-type FetchLike = (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; arrayBuffer(): Promise<ArrayBuffer> }>;
+export type FetchLike = (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; arrayBuffer(): Promise<ArrayBuffer> }>;
 let doFetch: FetchLike = (url) => fetch(url);
+/** The fetch used for tiles (tests replace it). */
+export function tileFetch(url: string) {
+  return doFetch(url);
+}
 /** For tests. */
 export function setTileFetchForTests(f: FetchLike | null): void {
   doFetch = f ?? ((url) => fetch(url));
   templatePromise = null;
   tiles.clear();
+}
+
+/** The live tile URL template (versioned) from OpenFreeMap's TileJSON. */
+export async function tileTemplate(): Promise<string> {
+  return template();
 }
 
 async function template(): Promise<string> {
@@ -52,7 +61,7 @@ export function tileOf(p: LatLon, z = Z): { x: number; y: number } {
   };
 }
 
-function toLatLon(x: number, y: number, tx: number, ty: number, extent: number, z = Z): LatLon {
+export function toLatLon(x: number, y: number, tx: number, ty: number, extent: number, z = Z): LatLon {
   const n = 2 ** z;
   const lon = (tx + x / extent) / n * 360 - 180;
   const merc = Math.PI * (1 - 2 * (ty + y / extent) / n);

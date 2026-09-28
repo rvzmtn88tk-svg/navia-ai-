@@ -51,12 +51,19 @@ export function useGlide(target: UserPosition): UserPosition {
 /** Marker heading: compass + gyroscope fused (see sensors/headingFusion),
  * GPS course only as a fallback when the phone has no compass. Applied per
  * sensor event (≈30 Hz) with no animation, without re-rendering screens. */
-function useMarkerHeading(courseDeg: number | null, speedMps: number | null): number | null {
-  const [reading, setReading] = useState<HeadingReading | null>(() => lastHeading());
+/** `live`: follow where the phone points (compass + gyro); otherwise the
+ * arrow stays on the given course (route direction) and does not move with
+ * the phone. */
+function useMarkerHeading(courseDeg: number | null, speedMps: number | null, live: boolean): number | null {
+  const [reading, setReading] = useState<HeadingReading | null>(() => (live ? lastHeading() : null));
   const pendingAt = useRef<number | null>(null);
-  useEffect(() => subscribeHeading((r) => { pendingAt.current = r.at; setReading(r); }), []);
-  useEffect(() => { feedCourse(courseDeg, speedMps); }, [courseDeg, speedMps]);
-  const deg = reading?.deg ?? courseDeg;
+  useEffect(() => {
+    if (!live) { setReading(null); return undefined; }
+    setReading(lastHeading());
+    return subscribeHeading((r) => { pendingAt.current = r.at; setReading(r); });
+  }, [live]);
+  useEffect(() => { if (live) feedCourse(courseDeg, speedMps); }, [courseDeg, speedMps, live]);
+  const deg = live ? reading?.deg ?? courseDeg : courseDeg;
   // Latency: sensor event → this marker's new heading committed.
   useEffect(() => {
     if (pendingAt.current != null) { recordHeadingLatency(Date.now() - pendingAt.current, deg); pendingAt.current = null; }
@@ -77,13 +84,15 @@ function usePulse(): number {
 /** `billboard`: in 3D the disc and arrow face the screen (not laid flat on
  * the tilted ground), so they stay readable at any camera pitch. The puck is
  * the last layer on the map: above buildings, route and labels. */
-export const UserPuck = React.memo(function UserPuck({ position, quality, billboard = false, speedMps = null }: {
+export const UserPuck = React.memo(function UserPuck({ position, quality, billboard = false, speedMps = null, headingMode = "device" }: {
   position: UserPosition; quality: PuckQuality; billboard?: boolean;
+  /** "device": where the phone points; "course": the direction of travel (static). */
+  headingMode?: "device" | "course";
   /** For the GPS-course fallback. */
   speedMps?: number | null;
 }): JSX.Element {
   const c = useColors();
-  const heading = useMarkerHeading(position.headingDeg, speedMps);
+  const heading = useMarkerHeading(position.headingDeg, speedMps, headingMode === "device");
   const shown = { ...useGlide(position), headingDeg: heading };
   const pulse = usePulse();
   const tone = quality === "good" ? c.accent : quality === "degraded" ? c.warning : c.critical;

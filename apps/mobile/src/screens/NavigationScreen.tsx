@@ -37,6 +37,7 @@ import { saveRouteOffline, type OfflineProgress } from "../map/offlineRoute";
 import { config } from "../config";
 import { speak, stopSpeaking } from "../voice/VoiceGuide";
 import { easing, elevation, iconSize, motion, radius, space, type ThemeColors } from "../theme/tokens";
+import { isNetworkError } from "../providers/netError";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Navigation">;
 type Phase = "overview" | "navigating" | "arrived";
@@ -66,6 +67,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const [mode, setMode] = useState<RouteMode>(navRoute.params.mode ?? "car");
   const [phase, setPhase] = useState<Phase>("overview");
   const [cameraMode, setCameraMode] = useState<CameraMode>("free");
+  /** Compass button: the arrow shows where the phone points (off = route direction). */
+  const [phoneHeading, setPhoneHeading] = useState(false);
 
   // Share the trip with the co-pilot.
   useEffect(() => {
@@ -372,6 +375,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           padding={padding}
           speedMps={state.speedMps}
           view3d={nav3d}
+          // During a trip the arrow follows the route; the compass button
+          // shows where the phone points instead.
+          headingMode={phase === "navigating" && !phoneHeading ? "course" : "device"}
           {...(__DEV__ ? { onFrame: fps.onFrame } : {})}
         />
       )}
@@ -409,7 +415,10 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
             {permissionDenied ? (
               <StateBlock title={t("route.permissionDenied")} action={t("gps.openSettings")} onAction={() => void Linking.openSettings()} />
             ) : routeError ? (
-              <StateBlock title={t("route.failed")} body={t("route.failedHint")} debug={__DEV__ ? routeError : undefined} action={t("common.retry")} onAction={() => setRetry((n) => n + 1)} />
+              <StateBlock
+                title={isNetworkError(routeError) ? t("route.offlineTitle") : t("route.failed")}
+                body={isNetworkError(routeError) ? t("route.offlineBody") : t("route.failedHint")}
+                debug={__DEV__ ? routeError : undefined} action={t("common.retry")} onAction={() => setRetry((n) => n + 1)} />
             ) : route ? (
               <>
                 {briefingEnabled && !isDemo && <Briefing distanceM={route.distanceM} gnss={state.gnss} t={t} lang={lang} c={c} />}
@@ -473,6 +482,12 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           <SpeedBadge speedMps={state.gnss === "NORMAL" ? state.speedMps : null} bottom={insets.bottom + 104} t={t} c={c} />
           {/* HUD: co-pilot and the two status beacons (GPS, air alert) */}
           <View style={[styles.hudRight, { bottom: insets.bottom + 104 }]} pointerEvents="box-none">
+            <Touchable accessibilityRole="button" accessibilityLabel={phoneHeading ? t("nav.compassOff") : t("nav.compassOn")} accessibilityState={{ selected: phoneHeading }}
+              onPress={() => setPhoneHeading((v) => !v)}
+              style={[styles.hudToggle, { backgroundColor: phoneHeading ? c.brandTeal : c.maneuverCard, borderColor: phoneHeading ? c.brandTeal : c.border }]}>
+              <Icon name="compass" size={iconSize.md} color={phoneHeading ? c.onAccent : c.onManeuver} />
+            </Touchable>
+            {phoneHeading && <Text variant="caption" color={{ custom: c.brandTeal }}>{t("nav.compassHint")}</Text>}
             <Touchable accessibilityRole="button" accessibilityLabel={nav3d ? t("nav.to2d") : t("nav.to3d")} onPress={() => setNav3d(!nav3d)}
               style={[styles.hudToggle, { backgroundColor: c.maneuverCard, borderColor: nav3d ? c.brandTeal : c.border }]}>
               <Text variant="headline" color={{ custom: nav3d ? c.brandTeal : c.onManeuver }}>{nav3d ? "3D" : "2D"}</Text>

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, Switch, View } from "react-native";
 import { regionPackage, REGION_LABEL, type RegionProgress } from "../offline/regionPackage";
 import { isSimulatedOffline, setSimulatedOffline } from "../offline/network";
+import { resetMapStyleCache } from "../map/mapStyles";
 import { CATEGORY_META } from "../places/categories";
 import { useT } from "../i18n";
 import { Button, Card, Divider, ListRow, Text, useColors } from "./ui";
@@ -31,6 +32,8 @@ export function OfflinePackageCard(): JSX.Element {
   const start = async () => {
     setProgress({ phase: "map", progress: 0, mapBytes: 0, resourcesDone: 0, resourcesTotal: 0, placesDone: 0, placesTotal: 1 });
     const final = await regionPackage.downloadWithDetails(setProgress);
+    // The map is drawn from the package's tile version from now on.
+    resetMapStyleCache();
     setStatus(final);
     setDetails(await regionPackage.details());
   };
@@ -51,6 +54,10 @@ export function OfflinePackageCard(): JSX.Element {
             date: details.downloadedAt, total: mb(details.mapBytes + details.placesBytes), map: mb(details.mapBytes),
             places: Object.values(details.placesCounts).reduce((a, b) => a + b, 0),
           })}
+          {details.directoryCounts ? `\n${t("offline.directoryDetails", {
+            settlements: (details.directoryCounts.city ?? 0) + (details.directoryCounts.town ?? 0) + (details.directoryCounts.village ?? 0) + (details.directoryCounts.hamlet ?? 0),
+            streets: details.directoryCounts.street ?? 0, named: details.directoryCounts.poi ?? 0,
+          })}` : ""}
           {details.failed.length ? `\n${t("offline.partialPlaces", { list: details.failed.join(", ") })}` : ""}
         </Text>
       )}
@@ -62,6 +69,8 @@ export function OfflinePackageCard(): JSX.Element {
           <Text variant="caption" color="secondary">
             {progress.phase === "map"
               ? t("offline.progressMap", { pct, mb: mb(progress.mapBytes), done: progress.resourcesDone, total: progress.resourcesTotal || "…" })
+              : progress.phase === "directory"
+                ? t("offline.progressDirectory", { pct, done: progress.directoryDone ?? 0, total: progress.directoryTotal ?? "…" })
               : progress.phase === "places"
                 ? `${t("offline.progressPlaces", { pct, done: progress.placesDone, total: progress.placesTotal })}${progress.placesCategory && progress.placesCategory in CATEGORY_META ? ` · ${t(CATEGORY_META[progress.placesCategory as keyof typeof CATEGORY_META].label)}` : ""}${progress.placesFailed ? ` · ${t("offline.sourcesFailed", { count: progress.placesFailed })}` : ""}`
                 : t("offline.progressVerify")}

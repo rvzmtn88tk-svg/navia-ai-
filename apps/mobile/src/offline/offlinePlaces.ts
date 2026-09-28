@@ -85,6 +85,10 @@ export type DownloadPlacesOptions = {
   /** Per Overpass mirror, per category. */
   perEndpointTimeoutMs?: number;
   kyivTimeoutMs?: number;
+  /** Places to keep for a category whose OpenStreetMap download failed (e.g. read from the map tiles). */
+  fallback?: Partial<Record<FetchCategory, NearbyPlace[]>>;
+  /** How the fallback is described in the list of gaps. */
+  fallbackLabel?: string;
 };
 
 /** Downloads the offline places for `bbox` (Kyiv official data + OSM per
@@ -142,7 +146,10 @@ export async function downloadOfflinePlaces(bbox: Bbox, onProgress: (p: PlacesPr
       }
     }
     const official = category === "shelter" || category === "resilience" ? kyiv[category] ?? [] : [];
-    const list = [...official, ...osm].map(toStored);
+    // Overpass did not answer: the map's own places, where there are some.
+    const substitute = osm.length === 0 && failed[failed.length - 1] === `OpenStreetMap: ${category}` ? options.fallback?.[category] ?? [] : [];
+    if (substitute.length > 0) failed[failed.length - 1] = `OpenStreetMap: ${category} (${options.fallbackLabel ?? "замінено"})`;
+    const list = [...official, ...osm, ...substitute].map(toStored);
     // Keep the previous copy when this category failed completely — and
     // count what is really on the phone, not zero.
     const previous = list.length > 0 ? null : await store.getItemAsync(KEY(category)).catch(() => null);

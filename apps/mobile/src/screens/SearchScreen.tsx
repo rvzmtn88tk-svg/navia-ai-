@@ -14,11 +14,16 @@ import { useT } from "../i18n";
 import { Divider, IconButton, ListRow, SectionLabel, Text, TextField, useColors } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { elevation, iconSize, radius, space } from "../theme/tokens";
+import { useNaviaStore } from "../engine/naviaController";
+import { gazetteerMeta, searchOffline, warmOfflineSearch, type OfflineHit } from "../offline/offlineGazetteer";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Search">;
 const MIN_QUERY_LENGTH = 3;
 const DEBOUNCE_MS = 350;
 const geocoder = new PhotonGeocoderProvider();
+/** Online search this slow: show what the offline package has meanwhile. */
+const OFFLINE_AFTER_MS = 3500;
+type OfflineState = null | "results" | "none" | "noPackage";
 
 export function toPlaceRef(result: GeocodeResult): PlaceRef {
   const [title, ...rest] = result.label.split(",").map((part) => part.trim()).filter(Boolean);
@@ -36,9 +41,16 @@ export function SearchScreen({ navigation, route }: Props): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [offline, setOffline] = useState<OfflineState>(null);
   const seq = useRef(0);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); warmOfflineSearch(); }, [load]);
+
+  function offlineRef(h: OfflineHit): PlaceRef {
+    const cat = h.category && h.category in CATEGORY_META ? t(CATEGORY_META[h.category as keyof typeof CATEGORY_META].label) : null;
+    const kind = h.kind === "poi" ? cat ?? t("search.kind.poi") : t(`search.kind.${h.kind}` as "search.kind.city");
+    return { id: placeId(h.location.lat, h.location.lon), label: h.name, subtitle: [kind, h.area, t("search.offlineTag")].filter(Boolean).join(" · "), lat: h.location.lat, lon: h.location.lon };
+  }
 
   useEffect(() => {
     const id = ++seq.current;
@@ -46,11 +58,29 @@ export function SearchScreen({ navigation, route }: Props): JSX.Element {
     if (trimmed.length < MIN_QUERY_LENGTH) { setResults([]); setLoading(false); setError(false); return; }
     setLoading(true);
     setError(false);
+    setOffline(null);
     const handle = setTimeout(() => {
+      // The offline directory is searched alongside: its results show when
+      // the network fails or is too slow; online results replace them.
+      const nav = useNaviaStore.getState();
+      const here = nav.state.position?.position ?? (nav.currentFix ? { lat: nav.currentFix.lat, lon: nav.currentFix.lon } : null);
+      const local = searchOffline(trimmed, here, 8).catch(() => [] as OfflineHit[]);
+      let answered = false;
+      const showOffline = async (final: boolean) => {
+        const hits = await local;
+        if (id !== seq.current || answered) return;
+        if (hits.length > 0) { setResults(hits.map(offlineRef)); setOffline("results"); if (final) setLoading(false); return; }
+        if (!final) return;
+        setOffline((await gazetteerMeta().catch(() => null)) ? "none" : "noPackage");
+        setError(true);
+        setResults([]);
+        setLoading(false);
+      };
+      const slow = setTimeout(() => void showOffline(false), OFFLINE_AFTER_MS);
       geocoder.search(trimmed, { limit: 8, language: lang })
-        .then((found) => { if (id === seq.current) setResults(dedupe(found.map(toPlaceRef))); })
-        .catch(() => { if (id === seq.current) { setError(true); setResults([]); } })
-        .finally(() => { if (id === seq.current) setLoading(false); });
+        .then((found) => { if (id === seq.current) { answered = true; setOffline(null); setResults(dedupe(found.map(toPlaceRef))); setLoading(false); } })
+        .catch(() => void showOffline(true))
+        .finally(() => clearTimeout(slow));
     }, DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [query, retry, lang]);
@@ -63,7 +93,7 @@ export function SearchScreen({ navigation, route }: Props): JSX.Element {
       return;
     }
     addRecent(place);
-    navigation.navigate("Home", { focusPlace: place });
+    navigation.popTo("Home", { focusPlace: place });
   }
 
   const typing = query.trim().length > 0;
@@ -117,15 +147,25 @@ export function SearchScreen({ navigation, route }: Props): JSX.Element {
           data={results}
           keyExtractor={(item) => item.id}
           ItemSeparatorComponent={() => <Divider inset={52} />}
-          ListHeaderComponent={nearbyCategory ? (
-            <ListRow icon={CATEGORY_META[nearbyCategory].icon} iconTint={CATEGORY_META[nearbyCategory].color}
-              title={t("search.nearby", { category: t(CATEGORY_META[nearbyCategory].label) })} subtitle={t("search.nearbyHint")}
-              onPress={() => { Keyboard.dismiss(); navigation.navigate("Home", { category: nearbyCategory }); }} />
-          ) : null}
+          ListHeaderComponent={<>
+            {nearbyCategory && (
+              <ListRow icon={CATEGORY_META[nearbyCategory].icon} iconTint={CATEGORY_META[nearbyCategory].color}
+                title={t("search.nearby", { category: t(CATEGORY_META[nearbyCategory].label) })} subtitle={t("search.nearbyHint")}
+                onPress={() => { Keyboard.dismiss(); navigation.popTo("Home", { category: nearbyCategory }); }} />
+            )}
+            {offline === "results" && (
+              <View style={styles.offlineNote}>
+                <Icon name="globe" size={iconSize.sm} color={c.warning} />
+                <Text variant="caption" color="secondary" style={{ flex: 1 }}>
+                  {t("search.offlineBanner")}{/\d/.test(query) ? ` ${t("search.offlineHouse")}` : ""}
+                </Text>
+              </View>
+            )}
+          </>}
           ListEmptyComponent={nearbyCategory ? null :
             <View style={styles.state}>
               {error ? <>
-                <Text variant="callout" color="secondary">{t("search.error")}</Text>
+                <Text variant="callout" color="secondary">{offline === "none" ? t("search.offlineNone") : offline === "noPackage" ? t("search.offlineNoPackage") : t("search.error")}</Text>
                 <Text variant="bodyStrong" color="accent" onPress={() => setRetry((n) => n + 1)} style={styles.retry}>{t("common.retry")}</Text>
               </> : query.trim().length < MIN_QUERY_LENGTH ? <Text variant="callout" color="secondary">{t("search.typeMore")}</Text>
                 : loading ? <Text variant="callout" color="secondary">{t("search.searching")}</Text>
@@ -157,6 +197,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   bar: { marginHorizontal: space.md, minHeight: 52, borderRadius: radius.pill, flexDirection: "row", alignItems: "center", paddingHorizontal: space.xxs, gap: space.xxs },
   trailing: { width: 40 },
+  offlineNote: { flexDirection: "row", alignItems: "center", gap: space.xs, paddingVertical: space.xs },
   list: { paddingHorizontal: space.md, paddingTop: space.lg, paddingBottom: space.xl },
   state: { paddingVertical: space.lg, alignItems: "flex-start" },
   retry: { marginTop: space.sm },
