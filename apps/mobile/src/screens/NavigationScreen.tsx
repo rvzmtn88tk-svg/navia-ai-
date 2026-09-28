@@ -56,6 +56,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   // simulator; seen from straight above the building blocks cannot hide the
   // route anyway.) Relief shading is NOT added in 3D: it halves the frame rate.
   const style = useMapStyle(mapLayer, isDark, 0, false, false);
+  const haze = useMemo(() => ({ dark: isDark, satellite: mapLayer === "satellite" }), [isDark, mapLayer]);
   const fps = useFrameCounter(__DEV__);
   const { height: screenH } = useWindowDimensions();
   const state = useNaviaStore((s) => s.state);
@@ -375,6 +376,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           padding={padding}
           speedMps={state.speedMps}
           view3d={nav3d}
+          haze={haze}
           // During a trip the arrow follows the route; the compass button
           // shows where the phone points instead.
           headingMode={phase === "navigating" && !phoneHeading ? "course" : "device"}

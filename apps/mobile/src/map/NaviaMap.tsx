@@ -1,5 +1,6 @@
 // NAVIA map: MapLibre with the branded position puck, route, places and a
 // camera that can follow the user heading-up in 3D during navigation.
+import { HorizonHaze } from "./HorizonHaze";
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import MapLibreGL from "@maplibre/maplibre-react-native";
@@ -23,6 +24,8 @@ export type NaviaMapHandle = {
   flyTo: (point: LatLon, zoom?: number, bottomPadding?: number) => void;
   fitPoints: (points: LatLon[], bottomPadding?: number) => void;
   resetNorth: () => void;
+  /** Benchmark: turn the camera around the centre, tilted (perf/bench.ts). */
+  orbit: (durationMs: number, pitch: number, zoom: number) => void;
   /** Map centre (used for "I am here" placement). */
   getCenter: () => Promise<LatLon | null>;
 };
@@ -52,6 +55,8 @@ type Props = {
   searchCircle?: { center: LatLon; radiusM: number } | null;
   /** Navigation view: 3D tilt (buildings stand up) or flat 2D. */
   view3d?: boolean;
+  /** Sky/haze towards the horizon while the camera is tilted (3D navigation). */
+  haze?: { dark: boolean; satellite: boolean };
   /** How "me on the map" is turned: where the phone points, or the route course. */
   headingMode?: "device" | "course";
   /** Called after every rendered frame (dev FPS meter). */
@@ -78,7 +83,7 @@ export function autoNavZoom(speedMps: number | null | undefined): number {
 export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function NaviaMap(props, ref) {
   const {
     mapStyle, user, quality, cameraMode, onUserGesture, onBearingChange, routeGeometry = [], traveledGeometry = [],
-    destination, places = [], selectedPlaceId, onPlacePress, onBasemapPoiPress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame, headingMode = "device",
+    destination, places = [], selectedPlaceId, onPlacePress, onBasemapPoiPress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame, headingMode = "device", haze,
   } = props;
   const view3dRef = useRef(view3d);
   view3dRef.current = view3d;
@@ -154,6 +159,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
       camera.current?.fitBounds([maxLon, maxLat], [minLon, minLat], [padding.top + 32, 48, (bottomPadding ?? padding.bottom) + 32, 48], motion.camera);
     },
     resetNorth: () => camera.current?.setCamera({ heading: 0, pitch: 0, animationDuration: motion.normal, animationMode: "easeTo" }),
+    orbit: (durationMs, pitch, z) => camera.current?.setCamera({ heading: (bearing.current + 150) % 360, pitch, zoomLevel: z, animationDuration: durationMs, animationMode: "easeTo" }),
     getCenter: async () => {
       const center = await mapView.current?.getCenter().catch(() => null);
       return center ? { lon: center[0]!, lat: center[1]! } : null;
@@ -296,6 +302,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
 
         {user && <UserPuck position={user} quality={quality} billboard={view3d && cameraMode === "navigate"} speedMps={speedMps ?? null} headingMode={headingMode} />}
       </MapLibreGL.MapView>
+      {haze && <HorizonHaze visible={view3d && cameraMode === "navigate"} dark={haze.dark} satellite={haze.satellite} />}
     </View>
   );
 }));

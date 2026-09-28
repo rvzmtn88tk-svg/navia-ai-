@@ -68,6 +68,7 @@ export const uk = {
   "home.nearestShelter": "Найближче укриття",
   "home.nearestShelterAt": "Укриття · {distance}",
   "search.nearby": "{category} поруч з вами",
+  "wheel.open": "Місця поруч",
   "search.nearbyHint": "Найближчі — на мапі, від вашої позиції",
   "home.sources": "Джерела даних",
 
@@ -327,7 +328,7 @@ export const uk = {
   "layers.needsKey": "Потрібен ключ MapTiler",
 
   "sources.title": "Джерела даних",
-  "sources.map": "Мапа: © учасники OpenStreetMap, OpenFreeMap, MapTiler. Рельєф: © OpenTopoMap (CC-BY-SA). Супутник: Esri World Imagery (Esri, Maxar, Earthstar Geographics).",
+  "sources.map": "Мапа: © учасники OpenStreetMap, OpenFreeMap, MapTiler. Рельєф: Terrain Tiles (Mapzen / AWS Open Data). Супутник: Esri World Imagery (Esri, Maxar, Earthstar Geographics).",
   "sources.places": "Місця: OpenStreetMap і відкриті дані Києва. Доступність перевіряйте на місці.",
   "sources.alerts": "Тривоги: Kyiv Digital (Київ), NEPTUN (інші регіони). Це інформаційні дані, а не система оповіщення — не вимикайте офіційні сповіщення.",
   "sources.routing": "Маршрути: Valhalla (FOSSGIS). Пошук: Photon.",
@@ -450,6 +451,7 @@ export const en: Record<StringKey, string> = {
   "home.nearestShelter": "Nearest shelter",
   "home.nearestShelterAt": "Shelter · {distance}",
   "search.nearby": "{category} near you",
+  "wheel.open": "Places nearby",
   "search.nearbyHint": "Nearest first, on the map, from where you are",
   "home.sources": "Data sources",
 
@@ -709,7 +711,7 @@ export const en: Record<StringKey, string> = {
   "layers.needsKey": "MapTiler key required",
 
   "sources.title": "Data sources",
-  "sources.map": "Map: © OpenStreetMap contributors, OpenFreeMap, MapTiler. Terrain: © OpenTopoMap (CC-BY-SA). Satellite: Esri World Imagery (Esri, Maxar, Earthstar Geographics).",
+  "sources.map": "Map: © OpenStreetMap contributors, OpenFreeMap, MapTiler. Terrain: Terrain Tiles (Mapzen / AWS Open Data). Satellite: Esri World Imagery (Esri, Maxar, Earthstar Geographics).",
   "sources.places": "Places: OpenStreetMap and Kyiv open data. Check access on arrival.",
   "sources.alerts": "Alerts: Kyiv Digital (Kyiv), NEPTUN (other regions). Informational only, not a warning system — keep official alerts on.",
   "sources.routing": "Routing: Valhalla (FOSSGIS). Search: Photon.",

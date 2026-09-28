@@ -1,7 +1,14 @@
 // Map layer styles. Standard uses OpenFreeMap (no key) recoloured to NAVIA.
-// Satellite needs a MapTiler key. Terrain uses MapTiler Outdoor when a key
-// exists, otherwise the OpenTopoMap topographic raster (contours, shading,
-// elevation) — hillshade alone is invisible on flat Ukrainian terrain.
+// Satellite: Esri World Imagery (MapTiler hybrid with a key) with relief
+// shading from real elevation data, NAVIA roads/labels and 3D buildings.
+// Terrain: the NAVIA map with strong relief shading from the same elevation
+// data (MapTiler Outdoor with a key). Depth cues used everywhere:
+// - hillshade from the AWS/Mapzen Terrain Tiles DEM (terrarium encoding);
+// - a directional light, so extruded building walls facing away from it are
+//   darker than the lit ones (the style's `light`);
+// - building heights from OpenStreetMap (`render_height`).
+// MapLibre Native (6.x) has no 3D terrain mesh and no sky layer; the haze
+// towards the horizon in 3D is drawn over the map (map/HorizonHaze.tsx).
 import { useEffect, useState } from "react";
 import { config } from "../config";
 import type { MapLayer } from "../settings/AppSettings";
@@ -14,6 +21,40 @@ export type ResolvedStyle =
   | { status: "unavailable"; reason: "needsKey" | "network" };
 
 const TERRARIUM_TILES = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+const DEM_SOURCE = { type: "raster-dem", tiles: [TERRARIUM_TILES], tileSize: 256, maxzoom: 14, encoding: "terrarium", attribution: "Terrain Tiles: Mapzen / AWS Open Data" };
+
+type AnyLayer = { id: string; type: string; source?: string; "source-layer"?: string; minzoom?: number; filter?: unknown; layout?: Record<string, unknown>; paint?: Record<string, unknown> };
+
+/** Sun from the south-west, a little above the horizon: walls facing it are
+ * lit, the others darker — buildings read as volumes, not flat blocks. */
+function sunLight(dark: boolean): Record<string, unknown> {
+  return { anchor: "map", color: dark ? "#9FB6D9" : "#FFF6E8", intensity: dark ? 0.3 : 0.5, position: [1.4, 225, 40] };
+}
+
+/** Relief shading from elevation data: `strength` 0..1. */
+function hillshadeLayer(dark: boolean, strength: number, overImagery = false): AnyLayer {
+  return {
+    id: "navia-hillshade", type: "hillshade", source: "navia-dem",
+    paint: {
+      "hillshade-exaggeration": strength,
+      "hillshade-illumination-direction": 315,
+      "hillshade-illumination-anchor": "map",
+      // Night: the dark ground cannot get much darker, so the relief is
+      // carried by moonlit slopes (a steel-blue highlight).
+      "hillshade-shadow-color": overImagery ? "rgba(0, 0, 0, 0.55)" : dark ? "#000000" : "#3E4E5E",
+      "hillshade-highlight-color": overImagery ? "rgba(255, 255, 255, 0.18)" : dark ? "#6B8CC4" : "#FFFFFF",
+      "hillshade-accent-color": overImagery ? "rgba(0, 0, 0, 0.2)" : dark ? "#02060C" : "#56687C",
+    },
+  };
+}
+
+/** Under the roads and buildings, over land and water fills. */
+function reliefIndex(layers: AnyLayer[]): number {
+  const i = layers.findIndex((l) => l.type === "fill-extrusion" || l.id === "building" || (l.type === "line" && /tunnel|road|highway|bridge|transportation|railway/.test(l.id)));
+  if (i >= 0) return i;
+  const sym = layers.findIndex((l) => l.type === "symbol");
+  return sym < 0 ? layers.length : sym;
+}
 
 /** Every layer works without a key now (satellite falls back to Esri World Imagery). */
 export function layerAvailable(_layer: MapLayer): boolean {
@@ -27,29 +68,48 @@ const ESRI_IMAGERY = "https://server.arcgisonline.com/ArcGIS/rest/services/World
  * from the vector style on top (hybrid). Esri's terms require attribution and,
  * for production, an ArcGIS/MapTiler key — this is the test source.
  */
-async function satelliteHybrid(): Promise<string> {
-  const cached = styleCache.get("satellite");
+async function satelliteHybrid(flat = false): Promise<string> {
+  const key = `satellite:${flat ? "2d" : "3d"}`;
+  const cached = styleCache.get(key);
   if (cached) return cached;
   const base = await baseStyle();
-  const layers = (base.layers as { id: string; type: string; layout?: Record<string, unknown>; paint?: Record<string, unknown> }[])
+  const baseLayers = base.layers as AnyLayer[];
+  const layers = baseLayers
     .filter((l) => (l.type === "line" && /road|highway|motorway|trunk|primary|secondary|tertiary|minor|street|bridge|tunnel/.test(l.id) && !/casing/.test(l.id)) || (l.type === "symbol" && l.layout && "text-field" in l.layout))
     .map((l) => l.type === "line"
       ? { ...l, paint: { ...(l.paint ?? {}), "line-color": "#FFE9B8", "line-opacity": 0.55 } }
       : { ...l, paint: { ...(l.paint ?? {}), "text-color": "#FFFFFF", "text-halo-color": "#0A1220", "text-halo-width": 1.4 } });
+  // 3D buildings over the photo from zoom 15: real heights, warm stone
+  // colour, lit by the sun — the photo's roofs show through a little.
+  const extrusion = flat ? [] : baseLayers.filter((l) => l.type === "fill-extrusion").map((l) => ({
+    ...l,
+    paint: {
+      ...(l.paint ?? {}),
+      "fill-extrusion-color": ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 0], 0, "#CFC8BD", 40, "#E6E1D8", 120, "#F4F1EC"],
+      "fill-extrusion-opacity": 0.82,
+      "fill-extrusion-vertical-gradient": true,
+    },
+  }));
   const style = {
     ...base,
+    light: sunLight(false),
     sources: {
       ...base.sources,
       "navia-imagery": { type: "raster", tiles: [ESRI_IMAGERY], tileSize: 256, maxzoom: 19, attribution: "Esri, Maxar, Earthstar Geographics" },
+      "navia-dem": DEM_SOURCE,
     },
     layers: [
       { id: "background", type: "background", paint: { "background-color": "#0A1220" } },
-      { id: "navia-imagery", type: "raster", source: "navia-imagery" },
-      ...layers,
+      // A touch of contrast and saturation: the raw mosaic looks washed out.
+      { id: "navia-imagery", type: "raster", source: "navia-imagery", paint: { "raster-contrast": 0.08, "raster-saturation": 0.08, "raster-fade-duration": 150 } },
+      hillshadeLayer(false, 0.45, true),
+      ...layers.filter((l) => l.type === "line"),
+      ...extrusion,
+      ...layers.filter((l) => l.type === "symbol"),
     ],
   };
   const json = JSON.stringify(style);
-  styleCache.set("satellite", json);
+  styleCache.set(key, json);
   return json;
 }
 
@@ -148,46 +208,14 @@ async function brandedStyle(dark: boolean, relief: boolean, flat: boolean): Prom
   if (pin) pinTiles(style, pin);
   // Navigation: flat buildings, so 3D blocks never hide the route.
   if (flat) style.layers = style.layers.filter((layer) => layer.type !== "fill-extrusion");
-  if (relief) {
-    style.sources["navia-dem"] = { type: "raster-dem", tiles: [TERRARIUM_TILES], tileSize: 256, maxzoom: 14, encoding: "terrarium" };
-    const firstSymbol = style.layers.findIndex((layer) => layer.type === "symbol");
-    const hillshade = {
-      id: "navia-hillshade", type: "hillshade", source: "navia-dem",
-      paint: {
-        "hillshade-exaggeration": dark ? 0.35 : 0.5,
-        "hillshade-shadow-color": dark ? "#000000" : "#4A5A67",
-        "hillshade-highlight-color": dark ? "#2A3A4F" : "#FFFFFF",
-        "hillshade-accent-color": dark ? "#0A111C" : "#5D6B7C",
-      },
-    };
-    style.layers.splice(firstSymbol < 0 ? style.layers.length : firstSymbol, 0, hillshade);
-  }
+  (style as { light?: unknown }).light = sunLight(dark);
+  // Relief: strong for the Terrain layer, subtle on the standard map (the
+  // Dnipro hills and ravines give the city depth without hiding streets).
+  style.sources["navia-dem"] = DEM_SOURCE;
+  style.layers.splice(reliefIndex(style.layers as AnyLayer[]), 0, hillshadeLayer(dark, relief ? 1 : dark ? 0.3 : 0.3));
   const json = JSON.stringify(style);
   styleCache.set(key, json);
   return json;
-}
-
-/** OpenTopoMap raster (CC-BY-SA), dimmed at night. Attribution: Sources screen. */
-function topoStyle(dark: boolean): string {
-  return JSON.stringify({
-    version: 8,
-    name: "navia-topo",
-    sources: {
-      topo: {
-        type: "raster",
-        tiles: ["a", "b", "c"].map((s) => `https://${s}.tile.opentopomap.org/{z}/{x}/{y}.png`),
-        tileSize: 256,
-        maxzoom: 17,
-        attribution: "© OpenTopoMap (CC-BY-SA), © OpenStreetMap contributors",
-      },
-    },
-    layers: [
-      { id: "background", type: "background", paint: { "background-color": dark ? "#0A1220" : "#E4E9EC" } },
-      { id: "topo", type: "raster", source: "topo", paint: dark
-        ? { "raster-brightness-max": 0.62, "raster-brightness-min": 0.04, "raster-saturation": -0.35, "raster-contrast": 0.1 }
-        : { "raster-saturation": -0.1 } },
-    ],
-  });
 }
 
 /** `flat`: no 3D buildings; `relief3d`: hillshade relief (3D navigation). */
@@ -198,18 +226,18 @@ export function useMapStyle(layer: MapLayer, dark: boolean, retryKey = 0, flat =
     if (layer === "satellite") {
       if (config.mapTilerKey) { setResolved({ status: "ready", style: mapTilerStyle("hybrid") }); return; }
       setResolved((prev) => (prev.status === "ready" ? prev : { status: "loading" }));
-      satelliteHybrid()
+      satelliteHybrid(flat)
         .then((style) => { if (!cancelled) setResolved({ status: "ready", style }); })
         // No vector base (offline): imagery alone is still a satellite map.
         .catch(() => { if (!cancelled) setResolved({ status: "ready", style: JSON.stringify({ version: 8, sources: { img: { type: "raster", tiles: [ESRI_IMAGERY], tileSize: 256, maxzoom: 19 } }, layers: [{ id: "img", type: "raster", source: "img" }] }) }); });
       return () => { cancelled = true; };
     }
-    if (layer === "terrain") {
-      setResolved({ status: "ready", style: config.mapTilerKey ? mapTilerStyle(dark ? "outdoor-v2-dark" : "outdoor-v2") : topoStyle(dark) });
+    if (layer === "terrain" && config.mapTilerKey) {
+      setResolved({ status: "ready", style: mapTilerStyle(dark ? "outdoor-v2-dark" : "outdoor-v2") });
       return;
     }
     setResolved((prev) => (prev.status === "ready" ? prev : { status: "loading" }));
-    brandedStyle(dark, relief3d, flat)
+    brandedStyle(dark, layer === "terrain" || relief3d, flat)
       .then((style) => { if (!cancelled) setResolved({ status: "ready", style }); })
       // Network trouble: fall back to the plain hosted style rather than no map.
       .catch(() => { if (!cancelled) setResolved({ status: "ready", style: dark ? config.mapStyleDarkUrl : config.mapStyleUrl }); });

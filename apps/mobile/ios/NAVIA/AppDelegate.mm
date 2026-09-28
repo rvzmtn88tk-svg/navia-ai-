@@ -63,6 +63,45 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(isOffline) {
 }
 @end
 
+// UI-thread frame meter: counts the frames the main thread actually
+// renders (CADisplayLink callbacks) between start and stop. A blocked main
+// thread skips callbacks, so gaps between timestamps are dropped frames.
+// Used to measure animations and map rendering on the simulator and phone.
+@interface NaviaFrameMeter : NSObject <RCTBridgeModule>
+@property (nonatomic, strong) CADisplayLink *link;
+@property (nonatomic) CFTimeInterval first, last, maxGap;
+@property (nonatomic) NSInteger frames;
+@end
+@implementation NaviaFrameMeter
+RCT_EXPORT_MODULE();
++ (BOOL)requiresMainQueueSetup { return NO; }
+- (dispatch_queue_t)methodQueue { return dispatch_get_main_queue(); }
+- (void)tick:(CADisplayLink *)link {
+  CFTimeInterval t = link.timestamp;
+  if (self.frames > 0) self.maxGap = MAX(self.maxGap, t - self.last); else self.first = t;
+  self.last = t;
+  self.frames += 1;
+}
+RCT_EXPORT_METHOD(start) {
+  [self.link invalidate];
+  self.frames = 0; self.maxGap = 0; self.first = 0; self.last = 0;
+  self.link = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
+  [self.link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+// Benchmark run on start: `-NaviaBench YES` launch argument (or defaults).
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(benchMode) {
+  return @([[NSUserDefaults standardUserDefaults] boolForKey:@"NaviaBench"]);
+}
+RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject) {
+  [self.link invalidate];
+  self.link = nil;
+  CFTimeInterval span = self.last - self.first;
+  NSInteger maxFps = UIScreen.mainScreen.maximumFramesPerSecond;
+  resolve(@{ @"frames": @(self.frames), @"ms": @(span * 1000), @"fps": @(span > 0 ? (self.frames - 1) / span : 0),
+             @"maxGapMs": @(self.maxGap * 1000), @"screenHz": @(maxFps) });
+}
+@end
+
 @implementation AppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions

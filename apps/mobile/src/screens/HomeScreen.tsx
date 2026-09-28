@@ -12,6 +12,8 @@ import { useLiveContext, type GnssHealth, type GpsStatus } from "../engine/useLi
 import { useAppSettings, type MapLayer } from "../settings/AppSettings";
 import { usePlacesStore, placeId, type PlaceRef } from "../store/placesStore";
 import { CATEGORY_META, CHIP_CATEGORIES, placesFor, type ChipCategory } from "../places/categories";
+import { CategoryWheel } from "../components/CategoryWheel";
+import { benchHooks, benchMode, runBench } from "../perf/bench";
 import type { NearbyPlace, NearbyPlaceCategory } from "../providers/NearbyPlacesProvider";
 import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
 import type { GeolocatedAirAlert } from "../providers/GeolocatedAirAlertProvider";
@@ -39,7 +41,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 type SelectedPlace = PlaceRef & { category?: NearbyPlaceCategory; hours?: string; source?: string; distanceM?: number; kindLabel?: string };
 
 const SEARCH_H = 52;
-const CHIPS_H = 36;
+const CHIPS_H = 48;
 const PEEK_H = 100;
 
 export function HomeScreen({ navigation, route }: Props): JSX.Element {
@@ -71,6 +73,15 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   const halfSheetHeight = Math.round(screenH * 0.48);
 
   useEffect(() => { void loadPlaces(); }, [loadPlaces]);
+
+  // Dev benchmark (launched with -NaviaBench YES): see perf/bench.ts.
+  useEffect(() => {
+    if (!benchMode()) return undefined;
+    benchHooks.setLayer = setMapLayer;
+    benchHooks.orbit = (ms, pitch, z) => { setCameraMode("free"); map.current?.orbit(ms, pitch, z); };
+    const id = setTimeout(() => void runBench(mapLayer), 9000);
+    return () => clearTimeout(id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A place picked in Search arrives as a route param.
   useEffect(() => {
@@ -231,12 +242,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           </Touchable>
           <IconButton icon="user" label={t("home.openSettings")} onPress={() => navigation.navigate("Settings")} size={SEARCH_H} />
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} style={styles.chipsScroll}>
-          {CHIP_CATEGORIES.map((cat) => (
-            <Chip key={cat} label={t(CATEGORY_META[cat].label)} icon={CATEGORY_META[cat].icon} tint={CATEGORY_META[cat].color}
-              selected={category === cat} onPress={() => selectCategory(cat)} />
-          ))}
-        </ScrollView>
+        <CategoryWheel categories={CHIP_CATEGORIES} selected={category} onSelect={selectCategory} />
         <StatusBeacons gpsStatus={live.gpsStatus} health={live.health} alert={alert} style={styles.beacons}
           onPressGps={() => setSnap("half")} onPressAlert={() => setSnap("half")} />
         {Math.abs(bearing) > 1 && (
@@ -549,8 +555,6 @@ const styles = StyleSheet.create({
   searchRow: { flexDirection: "row", gap: space.xs, paddingHorizontal: space.md },
   search: { flex: 1, height: SEARCH_H, borderRadius: radius.pill, flexDirection: "row", alignItems: "center", gap: space.sm, paddingHorizontal: space.sm },
   searchText: { flex: 1 },
-  chipsScroll: { marginTop: space.xs, flexGrow: 0 },
-  chips: { gap: space.xs, paddingHorizontal: space.md, paddingVertical: space.xxs },
   beacons: { paddingHorizontal: space.md, marginTop: space.sm },
   compassRow: { alignItems: "flex-end", paddingHorizontal: space.md, marginTop: space.sm },
   compass: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
