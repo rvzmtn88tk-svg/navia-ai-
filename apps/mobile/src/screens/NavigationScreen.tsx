@@ -15,7 +15,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { GNSSRawSample, IMUSample, NavigationState } from "@navia/core";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { DEMO_DESTINATION, VoiceGuidance, PositionSmoother, haversineMeters, type Route } from "@navia/core";
-import { navigationEngine, demoEngine, useNaviaStore, tripPlanner, demoTripPlanner, demoCopilot, activePlanner, activeCopilot, activeTripCache } from "../engine/naviaController";
+import { navigationEngine, demoEngine, useNaviaStore, tripPlanner, demoTripPlanner, demoCopilot, activePlanner, activeCopilot, activeTripCache, preferenceStore } from "../engine/naviaController";
 import { ConnectivityMonitor } from "../providers/ConnectivityMonitor";
 import { ExpoLocationPositionProvider } from "../providers/ExpoLocationPositionProvider";
 import { ExpoSensorsMotionProvider } from "../providers/ExpoSensorsMotionProvider";
@@ -98,6 +98,13 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
     if (!isDemoMode && (!planned || planned.location.lat !== destinationLat || planned.location.lon !== destinationLon)) {
       tripPlanner.setDestination({ label: destinationLabel, location: destination });
       activeCopilot().resetConversation();
+      // Road preferences the driver saved as lasting ("never toll roads") apply to every new trip.
+      const saved: Record<string, boolean> = {};
+      for (const [pref, key] of [["avoid_tolls", "avoidTolls"], ["avoid_highways", "avoidHighways"], ["avoid_unpaved", "avoidUnpaved"]] as const) {
+        const v = preferenceStore.get(pref);
+        if (typeof v === "boolean") saved[key] = v;
+      }
+      if (Object.keys(saved).length) tripPlanner.setPreferences(saved);
     }
 
     async function startReal() {

@@ -16,11 +16,11 @@
 // stop. The text field lets a passenger (or a tester) type the same
 // questions. Canned-phrase buttons are Demo-Mode-only, per the user's
 // instruction.
-import React, { useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Alert } from "react-native";
-import type { CopilotReply } from "@navia/core";
+import React, { useEffect, useRef, useState } from "react";
+import { View, Text, TextInput, Pressable, StyleSheet, Alert, Switch } from "react-native";
+import { VoiceConversation, type CopilotReply } from "@navia/core";
 import { ExpoSpeechVoiceProvider, type ListeningHandle } from "../providers/ExpoSpeechVoiceProvider";
-import { activeCopilot } from "../engine/naviaController";
+import { activeCopilot, activeProactive, isSmartCopilotConfigured, useNaviaStore } from "../engine/naviaController";
 
 const DEMO_INTENTS = [
   "Куди далі?",
@@ -36,22 +36,58 @@ const DEMO_INTENTS = [
 
 const voice = new ExpoSpeechVoiceProvider();
 let lastAnswer = "";
+const ROUTE_TOOLS = ["add_stop", "remove_stop", "set_destination", "set_route_preferences", "switch_route", "reorder_stops"];
 
 export function VoicePanel({ isDemoMode, onRouteChanged }: { isDemoMode: boolean; onRouteChanged: () => void }): JSX.Element {
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [reply, setReply] = useState<CopilotReply | null>(null);
   const [listening, setListening] = useState(false);
+  const [handsFree, setHandsFree] = useState(false);
   const listeningHandle = useRef<ListeningHandle | null>(null);
+  const { aiContextConsent, aiConsentAsked, setAiContextConsent } = useNaviaStore();
 
-  async function deliver(r: CopilotReply) {
+  /** Show a reply and apply its side effects; `speak` false when the voice loop speaks it itself. */
+  function show(r: CopilotReply) {
     setReply(r);
     lastAnswer = r.text;
-    if (r.trace.some((t) => !t.isError && ["add_stop", "remove_stop", "set_destination", "set_route_preferences", "switch_route"].includes(t.tool))) {
-      onRouteChanged();
-    }
-    await voice.speak(r.text).catch(() => {});
+    if (r.trace.some((t) => !t.isError && ROUTE_TOOLS.includes(t.tool))) onRouteChanged();
   }
+
+  async function deliver(r: CopilotReply) {
+    show(r);
+    if (conversation.current.getState() !== "off") await conversation.current.announce(r.text);
+    else await voice.speak(r.text).catch(() => {});
+  }
+
+  // Hands-free: "Навіа, …" — the same co-pilot, driven by the voice loop
+  // (speech-to-text → co-pilot → tools → text-to-speech), no taps needed.
+  const conversation = useRef(new VoiceConversation(
+    { ask: async (text) => { setDraft(text); const r = await activeCopilot().ask(text); show(r); return r; } },
+    { listen: (onResult, onError) => voice.startListening(onResult, onError) },
+    { speak: (text) => voice.speak(text), stop: () => voice.stopSpeaking() },
+    { onState: (st) => setListening(st === "listening" || st === "waiting_for_wake") },
+  ));
+
+  function toggleHandsFree(on: boolean) {
+    setHandsFree(on);
+    if (on) void conversation.current.startHandsFree();
+    else conversation.current.stop();
+  }
+  useEffect(() => () => conversation.current.stop(), []);
+
+  // Proactive messages (a reminder the driver asked for, a big traffic delay):
+  // checked every few seconds; the engine itself rate-limits and stays quiet near maneuvers.
+  useEffect(() => {
+    let running = false;
+    const h = setInterval(() => {
+      if (running || busy) return;
+      running = true;
+      void activeProactive().tick().then((m) => { if (m) void deliver(m.reply); }).catch(() => {}).finally(() => { running = false; });
+    }, 3_000);
+    return () => clearInterval(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
 
   async function ask(text: string) {
     const q = text.trim();
@@ -101,6 +137,23 @@ export function VoicePanel({ isDemoMode, onRouteChanged }: { isDemoMode: boolean
 
   return (
     <View style={styles.container} pointerEvents="box-none">
+      {isSmartCopilotConfigured() && !aiContextConsent && !aiConsentAsked && (
+        <View style={styles.pendingCard}>
+          <Text style={styles.pendingText}>Увімкнути розумного штурмана?</Text>
+          <Text style={styles.consentSub}>
+            Щоб розуміти вільні запити, штурман надсилає на сервер NAVIA ваше запитання і стислий стан поїздки
+            (маршрут, відстані, знайдені місця) — без координат. Без цього працюють лише базові локальні відповіді.
+          </Text>
+          <View style={styles.pendingRow}>
+            <Pressable style={[styles.pendingButton, styles.yes]} onPress={() => setAiContextConsent(true)}>
+              <Text style={styles.pendingButtonText}>Увімкнути</Text>
+            </Pressable>
+            <Pressable style={[styles.pendingButton, styles.no]} onPress={() => setAiContextConsent(false)}>
+              <Text style={styles.pendingButtonText}>Не зараз</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
       {reply && (
         <View style={styles.bubble}>
           <Text style={styles.bubbleText}>{reply.text}</Text>
@@ -120,7 +173,11 @@ export function VoicePanel({ isDemoMode, onRouteChanged }: { isDemoMode: boolean
           </View>
         </View>
       )}
-      {listening && <Text style={styles.busy}>Слухаю…</Text>}
+      {listening && <Text style={styles.busy}>{handsFree ? "Скажіть «Навіа…»" : "Слухаю…"}</Text>}
+      <View style={styles.handsFreeRow}>
+        <Text style={styles.handsFreeText}>Руки вільні («Навіа, …»)</Text>
+        <Switch value={handsFree} onValueChange={toggleHandsFree} />
+      </View>
       {busy && <Text style={styles.busy}>{busy}</Text>}
       <View style={styles.inputRow}>
         <TextInput
@@ -173,6 +230,9 @@ const styles = StyleSheet.create({
   micButton: { backgroundColor: "#2dd4bf", width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
   micButtonText: { fontSize: 24 },
   micListening: { backgroundColor: "#f87171" },
+  consentSub: { color: "#cbd5e1", fontSize: 12, marginBottom: 10 },
+  handsFreeRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  handsFreeText: { color: "#8892a6", fontSize: 12 },
   demoIntents: { alignItems: "flex-end", gap: 6, marginTop: 8 },
   intentButton: { backgroundColor: "#2a1f55", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
   intentButtonText: { color: "#c4b5fd", fontSize: 11 },
