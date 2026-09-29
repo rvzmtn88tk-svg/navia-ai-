@@ -22,6 +22,9 @@ function maneuverLine(step: RouteStep | null, distanceM: number | null, state: N
   const road = step.roadName ? ` onto ${step.roadName}` : "";
   const sigma = state.positioning?.maneuverUncertaintyM;
   // GNSS-independent positioning knows how uncertain the distance is: give it with its error bar while that is still useful.
+  if (state.positioning?.guidance === "none") {
+    return `${step.maneuver}${road} (distance withheld: position temporarily unavailable)`;
+  }
   if (state.confidenceBand === "LOW" && sigma != null && sigma <= 150 && distanceM != null) {
     return `${step.maneuver}${road} in about ${Math.round(distanceM / 10) * 10} m (±${Math.round(sigma / 10) * 10} m)`;
   }
@@ -39,8 +42,9 @@ function positioningLine(state: NavigationState): string | null {
   const how = p.source === "DEAD_RECKONING"
     ? `no usable GPS: road map + ${p.imuAvailable ? "gyroscope/accelerometer + " : ""}speed model`
     : p.source === "FUSED" ? "GPS blended with motion sensors" : "GPS";
-  return `positioning: source=${p.source} (${how}) gnss_verdict=${p.gnssVerdict}` +
+  return `positioning: location_state=${p.locationState} source=${p.source} (${how}) gnss_verdict=${p.gnssVerdict}` +
     `${p.gnssSuspectedSpoofing ? " suspected_spoofing=yes" : ""} uncertainty=±${Math.round(p.uncertaintyM)} m` +
+    ` confidence=${p.locationConfidence} maneuver_guidance=${p.guidance}` +
     ` motion_sensors=${p.imuAvailable ? "yes" : "no"} last_trusted_fix=${ago}`;
 }
 
@@ -52,7 +56,7 @@ export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSessi
   lines.push(`time: ${clock(now)}`);
   lines.push(
     `nav: mode=${state.mode} gnss=${state.gnss} position_confidence=${state.confidenceBand}` +
-    ` network=${state.networkAvailable ? "online" : "offline"}${state.offRoute ? " off_route=yes" : ""}`,
+    ` internet=${state.networkAvailable ? "online" : "offline (routing/place search may be unavailable; GPS is separate)"}${state.offRoute ? " off_route=yes" : ""}`,
   );
   const positioning = positioningLine(state);
   if (positioning) lines.push(positioning);

@@ -106,6 +106,8 @@ export type ResilientConfig = {
    * genuine turn off the route would look like a mismatch.
    */
   turnAnchoredCheck: boolean;
+  /** Reported uncertainty never below this fraction of the distance since the last anchor (fix or map-explained turn). */
+  unanchoredUncertaintyPerMetre: number;
   seed: number;
 };
 
@@ -120,6 +122,7 @@ const DEFAULT_CONFIG: ResilientConfig = {
   probationAfterOutage: true,
   drUncertaintyPerMetre: 0.03,
   turnAnchoredCheck: true,
+  unanchoredUncertaintyPerMetre: 0.12,
   seed: 1,
 };
 
@@ -211,6 +214,8 @@ export class ResilientNavigator {
   private gnssUnverified = false;
   /** Distance driven since the last accepted fix (dead-reckoning distance). */
   private drDistance = 0;
+  /** Distance driven since the last accepted fix or map-explained turn (along-road drift is unchecked since then). */
+  private distSinceAnchor = 0;
 
   private offRouteStreak = 0;
   private gnssOffRouteStreak = 0;
@@ -318,7 +323,9 @@ export class ResilientNavigator {
   // ---------- main step ----------
 
   step(input: NavigatorInput): NavigatorEstimate {
-    const dt = this.lastT == null ? 1 : Math.max(0.05, Math.min(5, input.t - this.lastT));
+    const gap = this.lastT == null ? 0 : input.t - this.lastT;
+    if (this.initialized && gap > 10) this.bridgeGap(Math.min(gap, 1800));
+    const dt = this.lastT == null || gap > 10 ? 1 : Math.max(0.05, Math.min(5, gap));
     this.lastT = input.t;
     this.updateMotion(input.motion, dt);
 
@@ -367,6 +374,8 @@ export class ResilientNavigator {
     const pending = this.gyroTurns[this.gyroTurns.length - 1];
     if (pending && pending.full == null && t >= pending.peakT + H / 2) {
       pending.full = this.psi - this.psiHist[(this.histPos + 1) % H]!;
+      // A turn the map explains re-anchors the along-road position.
+      if (this.unexplainedStreak === 0) this.distSinceAnchor = 0;
       this.checkTurnAgainstGnss(t, { dPsi: pending.full, peakT: pending.peakT });
     }
     const d = this.psi - this.psiHist[(this.histPos + 1) % H]!;
@@ -477,6 +486,7 @@ export class ResilientNavigator {
     let vMean = 0;
     for (let i = 0; i < this.n; i++) vMean += this.w[i]! * this.v[i]!;
     this.drDistance += vMean * dt;
+    this.distSinceAnchor += vMean * dt;
     for (let i = 0; i < this.n; i++) {
       let v = this.v[i]!;
       // Each hypothesis has its own cruise speed (learned from GNSS while it
@@ -497,23 +507,53 @@ export class ResilientNavigator {
         if (toTurn < 35 && Math.abs(this.net.turn(cur.edge, this.spans[ri + 1]!.edge)) > 35) v = Math.max(5, v - 3 * dt);
       }
       this.v[i] = v;
-      let e = this.edge[i]!;
-      let o = this.off[i]! + v * dt + this.rng.normal() * 0.3;
-      if (o < 0) o = 0;
-      let guard = 0;
-      while (o > net.edges[e]!.length && guard++ < 20) {
-        o -= net.edges[e]!.length;
-        const next = this.chooseNext(i, e);
-        if (next < 0) { o = net.edges[e]!.length; this.v[i] = 0; break; }
-        this.acc[i] = this.acc[i]! + net.turn(e, next);
-        e = next;
-      }
-      this.edge[i] = e;
-      this.off[i] = o;
-      const r = this.ridx[i]!;
-      if (r >= 0 && this.spans[r]!.edge !== e) this.ridx[i] = this.spanIndexFor(e, o);
-      else if (r < 0 && this.spanOfEdge.has(e)) this.ridx[i] = this.spanIndexFor(e, o);
+      this.advance(i, v * dt + this.rng.normal() * 0.3);
     }
+  }
+
+  /** Move hypothesis i `dist` metres along the road network, choosing exits at junctions. */
+  private advance(i: number, dist: number): void {
+    const net = this.net;
+    let e = this.edge[i]!;
+    let o = Math.max(0, this.off[i]! + dist);
+    let guard = 0;
+    while (o > net.edges[e]!.length && guard++ < 200) {
+      o -= net.edges[e]!.length;
+      const next = this.chooseNext(i, e);
+      if (next < 0) { o = net.edges[e]!.length; this.v[i] = 0; break; }
+      this.acc[i] = this.acc[i]! + net.turn(e, next);
+      e = next;
+    }
+    this.edge[i] = e;
+    this.off[i] = Math.min(o, net.edges[e]!.length);
+    const r = this.ridx[i]!;
+    if (r >= 0 && this.spans[r]!.edge !== e) this.ridx[i] = this.spanIndexFor(e, this.off[i]!);
+    else if (r < 0 && this.spanOfEdge.has(e)) this.ridx[i] = this.spanIndexFor(e, this.off[i]!);
+  }
+
+  /**
+   * No input for `gap` seconds (app suspended in the background, sensors
+   * paused). Whether the car was parked or driving is unknown: each
+   * hypothesis advances by a random share of its cruise speed × gap, the
+   * dead-reckoning floor grows accordingly, and the gyro history restarts.
+   * The first GNSS fix afterwards then has a gate wide enough to be accepted.
+   */
+  private bridgeGap(gap: number): void {
+    let cruiseMean = 0;
+    for (let i = 0; i < this.n; i++) cruiseMean += this.w[i]! * this.cruise[i]!;
+    for (let i = 0; i < this.n; i++) {
+      this.advance(i, this.rng.next() * this.cruise[i]! * gap);
+      this.v[i] = this.rng.uniform(0, this.cruise[i]!);
+    }
+    this.drDistance += 0.5 * cruiseMean * gap;
+    this.stationary = false; this.stillCount = 0; this.moveCount = 0; this.movingFor = 0;
+    const H = this.H;
+    for (let i = 0; i < this.n; i++) {
+      this.acc[i] = this.psi;
+      for (let h = 0; h < H; h++) this.hist[i * H + h] = this.psi;
+    }
+    this.psiHist.fill(this.psi);
+    this.gyroTurns = [];
   }
 
   private chooseNext(i: number, e: number): number {
@@ -587,6 +627,17 @@ export class ResilientNavigator {
     this.psiHist.fill(this.psi);
   }
 
+  /**
+   * Honesty floor for the reported uncertainty: a small share of all the
+   * distance driven without GNSS, plus a larger share of the distance since
+   * the last anchor (fix or map-explained turn) — on a long road without
+   * turns nothing checks the speed model, and drivers change speed.
+   */
+  private drFloor(): number {
+    if (this.drDistance <= 0) return 0;
+    return Math.min(500, Math.max(this.cfg.drUncertaintyPerMetre * this.drDistance, this.cfg.unanchoredUncertaintyPerMetre * this.distSinceAnchor));
+  }
+
   getDiagnostics(): { relocalizations: number; gyroBiasDps: number } {
     return { relocalizations: this.relocalizations, gyroBiasDps: this.gyroBias };
   }
@@ -642,6 +693,8 @@ export class ResilientNavigator {
     const k = this.cfg.probationAfterOutage && this.gnssUnverified && this.accepted.length < 5 ? 2.5 : 4;
     // The particle spread can collapse onto a wrong hypothesis during a long
     // outage; the dead-reckoning floor keeps the gate honest about that.
+    // The gate uses the distance-based floor only: widening it with the
+    // (larger) unanchored floor would let slow spoofs in.
     const sigmaEst = Math.max(c.sigma, Math.min(500, this.cfg.drUncertaintyPerMetre * this.drDistance));
     const gate = k * Math.sqrt(sigmaEst * sigmaEst + sigmaG * sigmaG) + 25;
     let consistent = dist <= gate;
@@ -660,12 +713,29 @@ export class ResilientNavigator {
     if (consistent && this.hasMotion) consistent = this.courseConsistent([...this.accepted.filter((f) => t - f.t <= 2 * this.H).slice(-this.H), fix]);
     if (t < this.distrustUntil) consistent = false;
     if (consistent) {
+      // A fix we believe but no hypothesis is anywhere near (after a long
+      // outage, a garage, a relocalisation): weighting can't move the cloud
+      // there — re-seed it around the fix.
+      let nearest = Infinity;
+      for (let i = 0; i < this.n; i++) {
+        const q = this.net.pointOn(this.edge[i]!, this.off[i]!);
+        nearest = Math.min(nearest, Math.hypot(q.x - p.x, q.y - p.y));
+      }
+      // Only when returning from an outage or when our own estimate is lost —
+      // in continuous tracking a far fix is more likely a drifting spoof.
+      if (nearest > Math.max(3 * sigmaG, 40) && (outage >= 10 || c.sigma >= 100)) this.initAround(p.x, p.y, sigmaG, g.speedMps, g.courseDeg);
       const s2 = 2 * sigmaG * sigmaG;
+      const course = g.courseDeg != null && (g.speedMps ?? 0) > 3 ? g.courseDeg : null;
       for (let i = 0; i < this.n; i++) {
         const q = this.net.pointOn(this.edge[i]!, this.off[i]!);
         const d2 = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
         let l = Math.exp(-d2 / s2) + 1e-4;
         if (g.speedMps != null) l *= Math.exp(-((this.v[i]! - g.speedMps) ** 2) / (2 * 1.5 * 1.5)) + 0.05;
+        // Direction of travel: the same point on the opposite carriageway is not the same hypothesis.
+        if (course != null) {
+          const dc = wrapDeg(this.net.edges[this.edge[i]!]!.bearing - course);
+          l *= Math.exp(-(dc * dc) / (2 * 35 * 35)) + 0.02;
+        }
         this.w[i] = this.w[i]! * l;
       }
       // GNSS speed is precise: pull every hypothesis's speed toward it, so the
@@ -677,7 +747,6 @@ export class ResilientNavigator {
           if (g.speedMps > 4 && g.speedMps > 0.8 * this.cruise[i]!) this.cruise[i] = this.cruise[i]! + 0.15 * (g.speedMps - this.cruise[i]!);
         }
       }
-      const course = g.courseDeg != null && (g.speedMps ?? 0) > 3 ? g.courseDeg : null;
       this.gnssOffRouteStreak = this.fixDistanceFromRoute(p.x, p.y, course) > Math.max(30, 2.5 * sigmaG) ? this.gnssOffRouteStreak + 1 : 0;
       this.accepted.push(fix);
       if (this.accepted.length > 30) this.accepted.shift();
@@ -689,6 +758,7 @@ export class ResilientNavigator {
         this.unverifiedUntil = -Infinity;
       }
       this.drDistance = 0;
+      this.distSinceAnchor = 0;
       this.candidates = [];
       this.rejected = 0;
       this.inconsistentSince = null;
@@ -718,6 +788,7 @@ export class ResilientNavigator {
       if (!this.hasMotion || unverifiedOk) { this.unverifiedUntil = t + 120; this.gnssUnverified = true; }
       else this.gnssUnverified = false; // re-acquired on a gyro-matched turn
       this.drDistance = 0;
+      this.distSinceAnchor = 0;
       this.accepted = this.candidates.slice(-this.cfg.reacquireAfter);
       this.candidates = [];
       this.rejected = 0;
@@ -901,7 +972,11 @@ export class ResilientNavigator {
     }
     // Dead-reckoning honesty floor: ~3% of the distance driven without an
     // accepted fix, whatever the particle spread says.
-    const sigma = Math.max(Math.sqrt(s2), Math.min(500, this.cfg.drUncertaintyPerMetre * this.drDistance));
+    let sigma = Math.max(Math.sqrt(s2), this.drFloor());
+    // The gyro is measuring turns no road hypothesis explains (a car park
+    // ramp, a road missing from the map): whatever the spread says, we don't
+    // know where the car is to better than a block.
+    if (this.unexplainedStreak > 0 && !(this.lastAcceptedT >= t - 2)) sigma = Math.max(sigma, 60);
 
     const fixAge = t - this.lastFixT;
     let gnss: GnssVerdict;
@@ -956,7 +1031,7 @@ export class ResilientNavigator {
     if (!this.arrivedLatched && remaining != null && onW >= 0.6) {
       // Close enough given our uncertainty — or parked (IMU still) within 2σ of it.
       if (remaining <= Math.max(25, sigma) && sigma <= 60) this.arrivedLatched = true;
-      else if (this.hasMotion && this.stationary && this.stillCount >= 5 && remaining <= Math.max(40, 2 * sigma) && sigma <= 100) this.arrivedLatched = true;
+      else if (this.hasMotion && this.stationary && this.stillCount >= 5 && remaining <= Math.max(40, 2 * sigma) && sigma <= 150) this.arrivedLatched = true;
     }
 
     const source: NavigatorEstimate["source"] = gnss === "OK" ? "GNSS" : trackingGnss ? "FUSED" : "DEAD_RECKONING";

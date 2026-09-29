@@ -33,3 +33,7 @@ export * from "./traffic";
 export * from "./trip-planner";
 export * from "./copilot";
 export * from "./resilient";
+export * from "./voice-guidance";
+export * from "./position-smoother";
+export * from "./storage";
+export * from "./active-trip-cache";

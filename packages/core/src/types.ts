@@ -154,6 +154,14 @@ export type ResilientPositioning = {
   imuAvailable: boolean;
   /** Seconds since the last GNSS fix the navigator accepted, null if none yet. */
   secondsSinceTrustedFix: number | null;
+  /** PRECISE / REDUCED_ACCURACY / STALE / UNSTABLE / LOST / SPOOFED / RECOVERED (see LocationStateTracker). */
+  locationState: "PRECISE" | "REDUCED_ACCURACY" | "STALE" | "UNSTABLE" | "LOST" | "SPOOFED" | "RECOVERED";
+  /** How maneuvers may be announced from this position: exact distances, approximate ones, or none (don't guess). */
+  guidance: "exact" | "approximate" | "none";
+  /** 0..1 location confidence, falling with uncertainty. */
+  locationConfidence: number;
+  /** Last reliable (accepted-GNSS) position; for the app/map only, never sent to the AI. */
+  lastReliablePosition: LatLon | null;
 };
 
 // Section 32 (LOGGING): every navigation event gets one of these.

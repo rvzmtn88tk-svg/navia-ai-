@@ -56,6 +56,15 @@ export class TripPlanner {
     this.plan = { ...this.plan, destination, stops: opts.keepStops ? this.plan.stops : [] };
   }
 
+  /** Restore a saved plan (e.g. the active trip cached on the phone before an app restart). */
+  restore(plan: TripPlan): void {
+    this.plan = { destination: plan.destination, stops: plan.stops.map((s) => ({ ...s })), preferences: { ...plan.preferences } };
+    for (const s of plan.stops) {
+      const n = Number(/^s(\d+)$/.exec(s.id)?.[1] ?? 0);
+      if (n > this.stopSeq) this.stopSeq = n;
+    }
+  }
+
   clear(): void {
     this.plan = { destination: null, stops: [], preferences: {} };
   }

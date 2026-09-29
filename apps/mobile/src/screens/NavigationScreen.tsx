@@ -8,13 +8,15 @@
 // "screens must not duplicate navigation logic" instruction, which applies
 // identically to Demo Mode (naviaController's DemoEngine) and real mode
 // (NavigationEngine).
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { useKeepAwake } from "expo-keep-awake";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { GNSSRawSample, IMUSample, NavigationState } from "@navia/core";
 import type { RootStackParamList } from "../navigation/RootNavigator";
-import { DEMO_DESTINATION } from "@navia/core";
-import { navigationEngine, demoEngine, useNaviaStore, tripPlanner, demoTripPlanner, demoCopilot, activePlanner, activeCopilot } from "../engine/naviaController";
+import { DEMO_DESTINATION, VoiceGuidance, PositionSmoother, haversineMeters, type Route } from "@navia/core";
+import { navigationEngine, demoEngine, useNaviaStore, tripPlanner, demoTripPlanner, demoCopilot, activePlanner, activeCopilot, activeTripCache } from "../engine/naviaController";
+import { ConnectivityMonitor } from "../providers/ConnectivityMonitor";
 import { ExpoLocationPositionProvider } from "../providers/ExpoLocationPositionProvider";
 import { ExpoSensorsMotionProvider } from "../providers/ExpoSensorsMotionProvider";
 import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
@@ -43,42 +45,51 @@ function gnssStatusText(state: NavigationState): string {
   const p = state.positioning;
   if (p) {
     const err = `±${Math.max(10, Math.round(p.uncertaintyM / 10) * 10)} м`;
-    if (p.gnssSuspectedSpoofing) return `GPS підмінено — ігнорую, веду за датчиками (${err})`;
-    if (p.source === "DEAD_RECKONING") return `Без GPS: карта + ${p.imuAvailable ? "гіроскоп" : "швидкість"} (${err})`;
-    if (p.gnssVerdict === "DEGRADED") return `GPS нестабільний (${err})`;
-    return "GPS: норма";
+    switch (p.locationState) {
+      case "SPOOFED": return `GPS підмінено — ігнорую, веду за датчиками (${err})`;
+      case "LOST": return p.guidance === "none" ? "Позиція тимчасово невідома — чекаю на GPS" : `Без GPS: карта + ${p.imuAvailable ? "гіроскоп" : "швидкість"} (${err})`;
+      case "STALE": return "GPS на мить зник — продовжую";
+      case "UNSTABLE": return `GPS нестабільний (${err})`;
+      case "REDUCED_ACCURACY": return `GPS неточний (${err})`;
+      case "RECOVERED": return "GPS відновлено, звіряю позицію";
+      default: return "GPS: норма";
+    }
   }
   if (state.gnss === "NORMAL") return "GNSS: норма";
   if (state.gnss === "DEGRADED") return "GNSS нестабільний";
   return "GNSS втрачено — оцінюю положення";
 }
 
-/** One spoken line when the positioning situation changes (not on every tick). */
-function positioningAnnouncement(prev: string | null, state: NavigationState): { key: string; text: string | null } {
-  const p = state.positioning;
-  const key = !p ? "none" : p.gnssSuspectedSpoofing ? "spoof" : p.source === "DEAD_RECKONING" ? "dr" : "gps";
-  if (key === prev) return { key, text: null };
-  if (key === "spoof") return { key, text: "Увага: сигнал GPS схожий на підробку. Ігнорую його і веду за картою та датчиками руху. Звіряйте повороти з табличками." };
-  if (key === "dr") return { key, text: "GPS зник. Продовжую вести за картою та датчиками руху, точність поступово знижується." };
-  if (key === "gps" && (prev === "dr" || prev === "spoof")) return { key, text: "GPS відновлено." };
-  return { key, text: null };
-}
+const REROUTE_RETRY_MS = 20_000;
 
 export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
   const { destinationLat, destinationLon, destinationLabel } = navRoute.params;
   const { state, route, isDemoMode, refresh } = useNaviaStore();
+  // Like any turn-by-turn navigator: the screen stays on during navigation, so
+  // iOS doesn't suspend the app (and its GPS/IMU stream) when the phone locks.
+  useKeepAwake();
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const voice = useRef(new ExpoSpeechVoiceProvider()).current;
-  const lastAnnouncedStepId = useRef<string | null>(null);
-  const lastPositioningKey = useRef<string | null>(null);
+  const guidance = useRef(new VoiceGuidance()).current;
+  const smoother = useRef(new PositionSmoother()).current;
   const rerouting = useRef(false);
+  const lastRerouteFailAt = useRef(0);
+  const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let positionSub: { remove: () => void } | null = null;
     let motionSub: { remove: () => void } | null = null;
     let tickHandle: ReturnType<typeof setInterval> | null = null;
+    let savedRoute: Route | null = null;
+    const connectivity = new ConnectivityMonitor((online) => {
+      navigationEngine.setNetworkAvailable(online);
+      if (online) setOfflineNotice(null);
+      refresh();
+    });
+    guidance.reset();
+    smoother.reset();
 
     const destination = { lat: destinationLat, lon: destinationLon };
     // The trip plan owns destination + stops + road preferences, so every
@@ -117,15 +128,29 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
             navigationEngine.applyRoute(await tripPlanner.route({ lat: sample.lat, lon: sample.lon }));
             refresh();
           } catch (err) {
-            if (!cancelled) setRouteError((err as Error).message);
+            // No internet? The trip saved on the phone still has a full route to this destination.
+            const cached = await activeTripCache.load();
+            const same = cached?.plan.destination && haversineMeters(cached.plan.destination.location, destination) < 50;
+            if (cached && same) {
+              tripPlanner.restore(cached.plan);
+              navigationEngine.applyRoute(cached.route);
+              if (!cancelled) setOfflineNotice("Немає зв'язку — веду за збереженим маршрутом.");
+              refresh();
+            } else if (!cancelled) {
+              setRouteError((err as Error).message);
+            }
           }
         }
       });
+      connectivity.start();
 
       tickHandle = setInterval(() => {
         navigationEngine.tick(Date.now());
         markStopsVisited();
         refresh();
+        // Keep the active trip saved on the phone whenever the route changes (any source: reroute, co-pilot).
+        const r = navigationEngine.getRoute();
+        if (r && r !== savedRoute) { savedRoute = r; void activeTripCache.save(tripPlanner.getPlan(), r).catch(() => {}); }
         // Off-route without GPS: reroute from the junction ahead of the car on the road it is on.
         const from = navigationEngine.getRerouteOrigin();
         if (from) void maybeReroute(from);
@@ -162,12 +187,18 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
     async function maybeReroute(current: { lat: number; lon: number }) {
       if (rerouting.current) return;
       if (!navigationEngine.getState().offRoute) return;
+      if (Date.now() - lastRerouteFailAt.current < REROUTE_RETRY_MS) return;
       rerouting.current = true;
       try {
         navigationEngine.applyRoute(await tripPlanner.route(current));
+        if (!cancelled) setOfflineNotice(null);
         refresh();
-      } catch (err) {
-        if (!cancelled) setRouteError((err as Error).message);
+      } catch {
+        // Never tear down navigation because a reroute failed (typically no
+        // internet): keep the current route and say so; retry in a while.
+        lastRerouteFailAt.current = Date.now();
+        if (!cancelled) setOfflineNotice("Перебудувати маршрут зараз не вдалося (немає зв'язку). Продовжую за поточним маршрутом.");
+        void connectivity.probe();
       } finally {
         rerouting.current = false;
       }
@@ -180,35 +211,27 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
       cancelled = true;
       positionSub?.remove();
       motionSub?.remove();
+      connectivity.stop();
       if (tickHandle) clearInterval(tickHandle);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDemoMode, destinationLat, destinationLon]);
 
-  // Speak the next maneuver once, the first time it becomes the current one.
-  // The distance is to the maneuver (when the engine tracks it), not the step's length.
+  // Voice guidance (packages/core VoiceGuidance): turn announcements with
+  // exact / approximate / withheld distances according to position quality,
+  // and one notice per GPS-lost / spoofed / restored episode.
   useEffect(() => {
-    const step = state.nextStep;
-    if (step && step.id !== lastAnnouncedStepId.current) {
-      lastAnnouncedStepId.current = step.id;
-      const road = step.roadName ? `, на ${step.roadName}` : "";
-      const toTurn = state.nextManeuverDistanceM;
-      const uncertain = state.confidenceBand === "LOW" || state.confidenceBand === "UNKNOWN";
-      const text = toTurn == null
-        ? `Далі ${maneuverPhrase(step.maneuver)}${road}.`
-        : uncertain
-          ? `Приблизно через ${Math.round(toTurn / 10) * 10} метрів ${maneuverPhrase(step.maneuver)}${road}. Звірте з табличкою.`
-          : `Через ${Math.round(toTurn / 10) * 10} метрів, ${maneuverPhrase(step.maneuver)}${road}.`;
-      void voice.speak(text).catch(() => {});
-    }
-  }, [state.nextStep, state.nextManeuverDistanceM, state.confidenceBand, voice]);
+    const cues = guidance.update(state);
+    if (cues.length > 0) void voice.speak(cues.map((c) => c.text).join(" ")).catch(() => {});
+  }, [state, guidance, voice]);
 
-  // Say it once when GPS is lost, looks spoofed, or comes back.
-  useEffect(() => {
-    const { key, text } = positioningAnnouncement(lastPositioningKey.current, state);
-    lastPositioningKey.current = key;
-    if (text) void voice.speak(text).catch(() => {});
-  }, [state, voice]);
+  // The marker glides over a GPS-recovery correction instead of jumping.
+  const shownPosition = useMemo(() => {
+    const p = state.position?.position;
+    if (!p) return null;
+    const shown = smoother.update(p, state.updatedAt, state.speedMps ?? 0);
+    return { ...p, lat: shown.lat, lon: shown.lon };
+  }, [state.position, state.updatedAt, state.speedMps, smoother]);
 
   if (permissionDenied) {
     return (
@@ -238,13 +261,15 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
       <MapLibreRouteView
         styleUrl={config.mapStyleUrl}
         routeGeometry={route?.geometry ?? []}
-        currentPosition={state.position?.position ?? null}
+        currentPosition={shownPosition}
         headingDeg={state.headingDeg}
       />
 
       {state.nextStep && (
         <View style={styles.hudTop}>
-          {state.nextManeuverDistanceM != null ? (
+          {state.positioning?.guidance === "none" ? (
+            <Text style={styles.hudTopDistance}>Відстань зараз невідома — орієнтуйтеся на знаки</Text>
+          ) : state.nextManeuverDistanceM != null ? (
             <Text style={styles.hudTopDistance}>
               {state.confidenceBand === "LOW" || state.confidenceBand === "UNKNOWN" ? "≈ " : ""}Через {Math.round(state.nextManeuverDistanceM / 10) * 10} м
               {state.positioning && state.positioning.maneuverUncertaintyM != null && state.positioning.maneuverUncertaintyM > 25
@@ -268,6 +293,10 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
           <Text style={styles.hudBottomStatus}>Позиція: {state.confidenceBand}</Text>
         </View>
         {state.offRoute && <Text style={styles.hudOffRoute}>Ви відхилилися від маршруту. Перераховую…</Text>}
+        {!isDemoMode && !state.networkAvailable && (
+          <Text style={styles.hudBottomWarnLine}>Немає інтернету: навігація триває за збереженим маршрутом; пошук місць і розумний штурман недоступні.</Text>
+        )}
+        {offlineNotice && <Text style={styles.hudBottomWarnLine}>{offlineNotice}</Text>}
         {!state.nextStep && <Text style={styles.hudBottomStatus}>Маршрут до: {destinationLabel}</Text>}
       </View>
 
@@ -294,5 +323,6 @@ const styles = StyleSheet.create({
   hudBottomBig: { color: "#fff", fontSize: 18, fontWeight: "700" },
   hudBottomStatus: { color: "#2dd4bf", fontSize: 13 },
   hudBottomWarn: { color: "#fbbf24" },
+  hudBottomWarnLine: { color: "#fbbf24", fontSize: 12, marginTop: 6 },
   hudOffRoute: { color: "#f87171", fontSize: 13, marginTop: 8, fontWeight: "600" },
 });

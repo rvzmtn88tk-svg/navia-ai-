@@ -5,3 +5,4 @@ export * from "./road-network";
 export * from "./resilient-navigator";
 export * from "./motion-preprocessor";
 export * from "./reroute";
+export * from "./location-state";

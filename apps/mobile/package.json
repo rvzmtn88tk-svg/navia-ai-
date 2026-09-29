@@ -13,6 +13,7 @@
   "dependencies": {
     "@navia/core": "*",
     "expo": "~52.0.0",
+    "expo-keep-awake": "~14.0.3",
     "expo-location": "~18.0.0",
     "expo-sensors": "~14.0.0",
     "expo-speech": "~13.0.0",

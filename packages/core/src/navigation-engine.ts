@@ -35,6 +35,7 @@ import { ResilientNavigator, type ResilientConfig, type NavigatorEstimate, type 
 import { MotionPreprocessor, type MotionPreprocessorOptions } from "./resilient/motion-preprocessor";
 import { rerouteOriginAhead, prependCurrentRoad } from "./resilient/reroute";
 import { haversineMeters } from "./geodesy";
+import { LocationStateTracker, type LocationStatus } from "./resilient/location-state";
 
 const DEFAULT_GNSS_CONFIG: GNSSConfig = {
   maxPlausibleSpeedMps: 45, maxJumpM: 150, maxFreshAgeMs: 6000, accuracyGoodM: 10, accuracyBadM: 80,
@@ -387,6 +388,9 @@ export class NavigationEngine {
   }
 
   private resilientTrusted: NavigationState["trustedPosition"] = null;
+  private locationTracker = new LocationStateTracker();
+  private locationStatus: LocationStatus | null = null;
+  private lastReliablePosition: LatLon | null = null;
 
   /**
    * Advance the resilient navigator (at most once per ~second — its gyro
@@ -423,8 +427,11 @@ export class NavigationEngine {
       if (est.gnss !== (this.lastEstimate?.gnss ?? "OK")) this.telemetry.log(est.gnss === "OK" ? "GNSS_FIX" : "GNSS_DEGRADED", { resilientVerdict: est.gnss, uncertaintyM: Math.round(est.uncertaintyM) }, nowMs);
       this.lastEstimate = est;
       this.lastResilientStepMs = nowMs;
+      this.locationStatus = this.locationTracker.update(est);
+      if (est.gnss === "OK" || est.gnss === "DEGRADED") this.lastReliablePosition = est.position;
     }
     if (!est) return null;
+    const loc = this.locationStatus ?? this.locationTracker.update(est);
 
     // Route-only network: a departure from the route shows up as GNSS fixes
     // the filter rejects (it can't follow them off the chain) but that are a
@@ -471,6 +478,10 @@ export class NavigationEngine {
         onRouteProbability: est.onRouteProbability,
         imuAvailable: this.lastImuAtMs != null && nowMs - this.lastImuAtMs < 3000,
         secondsSinceTrustedFix: est.secondsSinceAcceptedFix,
+        locationState: useRaw ? "REDUCED_ACCURACY" : loc.state,
+        guidance: useRaw ? "approximate" : loc.guidance,
+        locationConfidence: loc.confidence,
+        lastReliablePosition: this.lastReliablePosition,
       },
     };
     return { state, arrived: est.arrived };

@@ -21,12 +21,13 @@
 import { create } from "zustand";
 import {
   NavigationEngine, DemoEngine, TripPlanner, NaviaCopilot, EngineCopilotRuntime, BackendLLMClient,
-  LocalPlaceSearchProvider, OverpassPlaceSearchProvider,
+  LocalPlaceSearchProvider, OverpassPlaceSearchProvider, ActiveTripCache,
   DEMO_KYIV_TO_BORYSPIL_GRAPH, DEMO_ORIGIN, DEMO_DESTINATION, DEMO_POIS, DEMO_ROUTE_POIS,
   type NavigationState, type Route, type LatLon, type SavedPlace,
 } from "@navia/core";
 import { OnlineValhallaProvider } from "../providers/OnlineValhallaProvider";
 import { OnlineGeocoderProvider } from "../providers/OnlineGeocoderProvider";
+import { DeviceKeyValueStore } from "../providers/DeviceKeyValueStore";
 import { config } from "../config";
 
 const idleState: NavigationState = {
@@ -45,6 +46,10 @@ export const routingProvider = new OnlineValhallaProvider();
 // accelerometer in g and gyro in rad/s (MotionPreprocessor defaults), and the
 // gravity sign / vibration thresholds are learned from GPS while it is good.
 export const navigationEngine = new NavigationEngine({ routingProvider, resilient: true });
+
+/** Device key-value storage (expo-sqlite) and the active trip saved in it, so losing internet or restarting the app doesn't end navigation. */
+export const deviceStore = new DeviceKeyValueStore();
+export const activeTripCache = new ActiveTripCache(deviceStore);
 export const demoEngine = new DemoEngine({
   graph: DEMO_KYIV_TO_BORYSPIL_GRAPH, origin: DEMO_ORIGIN, destination: DEMO_DESTINATION, pois: DEMO_POIS,
 });
