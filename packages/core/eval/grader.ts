@@ -15,32 +15,97 @@ export function extractNumbers(text: string): number[] {
   return out;
 }
 
-function collectNumbers(value: unknown, into: number[]): void {
-  if (typeof value === "number") into.push(value);
-  else if (typeof value === "string") into.push(...extractNumbers(value));
-  else if (Array.isArray(value)) value.forEach((v) => collectNumbers(v, into));
-  else if (value && typeof value === "object") Object.values(value).forEach((v) => collectNumbers(v, into));
+export type Unit = "km" | "m" | "min" | "clock" | "speed" | "none";
+export type Fact = { unit: Unit; value: number };
+
+const NUM = String.raw`(\d+(?:[.,]\d+)?)`;
+const L = "а-яіїєґё";
+// Order matters: clock and speed before km/m, km before m.
+const UNIT_PATTERNS: [Unit, RegExp][] = [
+  ["clock", /(\d{1,2}):(\d{2})/g],
+  ["speed", new RegExp(`${NUM}\\s*(?:km\\/h|км\\/год|км\\/ч)`, "gi")],
+  ["km", new RegExp(`${NUM}\\s*(?:km\\b|км(?![${L}/])|кілометр[${L}]*|километр[${L}]*)`, "gi")],
+  ["m", new RegExp(`${NUM}\\s*(?:m\\b|м(?![${L}/])|метр[${L}]*)`, "gi")],
+  ["min", new RegExp(`${NUM}\\s*(?:min\\b|хв(?![${L}])|хвилин[${L}]*|минут[${L}]*|мин(?![${L}]))`, "gi")],
+];
+
+/** Numbers in free text, each tagged with the unit it was spoken with ("none" if bare). */
+export function extractFacts(text: string): Fact[] {
+  const facts: Fact[] = [];
+  const used: [number, number][] = [];
+  const overlaps = (a: number, b: number) => used.some(([x, y]) => a < y && b > x);
+  for (const [unit, re] of UNIT_PATTERNS) {
+    for (const m of text.matchAll(re)) {
+      const at = m.index ?? 0;
+      if (overlaps(at, at + m[0].length)) continue;
+      used.push([at, at + m[0].length]);
+      facts.push({ unit, value: unit === "clock" ? Number(m[1]) * 60 + Number(m[2]) : Number(m[1]!.replace(",", ".")) });
+    }
+  }
+  for (const m of text.matchAll(/\d+(?:[.,]\d+)?/g)) {
+    const at = m.index ?? 0;
+    if (!overlaps(at, at + m[0].length)) facts.push({ unit: "none", value: Number(m[0].replace(",", ".")) });
+  }
+  return facts;
+}
+
+function unitForKey(key: string): Unit {
+  if (/(^|_)km$|_km_/.test(key) || key === "km") return "km";
+  if (/min$|minutes/.test(key)) return "min";
+  if (/(^|_)m$/.test(key)) return "m";
+  if (key === "arrival" || key === "updated") return "clock";
+  return "none";
+}
+
+/** Typed facts from tool results (by JSON key) and from text (trip_state, driver's words, earlier answers). */
+export function collectFacts(value: unknown, into: Fact[] = [], key = ""): Fact[] {
+  if (typeof value === "number") into.push({ unit: unitForKey(key), value });
+  else if (typeof value === "string") {
+    if (unitForKey(key) === "clock" && /^\d{1,2}:\d{2}$/.test(value)) {
+      const [h, mm] = value.split(":").map(Number);
+      into.push({ unit: "clock", value: h! * 60 + mm! });
+    } else into.push(...extractFacts(value));
+  } else if (Array.isArray(value)) value.forEach((v) => collectFacts(v, into, key));
+  else if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) collectFacts(v, into, k);
+  return into;
+}
+
+const close = (claim: number, fact: number) =>
+  Math.abs(claim - fact) <= (Math.abs(fact) < 10 ? 0.5 : Math.max(1, Math.abs(fact) * 0.06));
+
+function supported(claim: Fact, facts: Fact[]): boolean {
+  switch (claim.unit) {
+    case "km": return facts.some((f) => (f.unit === "km" && close(claim.value, f.value)) || (f.unit === "m" && close(claim.value, f.value / 1000)));
+    case "m": return facts.some((f) => (f.unit === "m" && close(claim.value, f.value)) || (f.unit === "km" && close(claim.value, f.value * 1000)));
+    case "min": return facts.some((f) => f.unit === "min" && close(claim.value, f.value));
+    case "clock": return facts.some((f) => f.unit === "clock" && Math.abs(claim.value - f.value) <= 1);
+    case "speed": return facts.some((f) => f.unit === "speed" && close(claim.value, f.value));
+    case "none": return (Number.isInteger(claim.value) && claim.value <= 3) || facts.some((f) => close(claim.value, f.value) || (f.unit === "m" && close(claim.value, f.value / 1000)));
+  }
 }
 
 /**
- * Numbers in `answer` that match nothing in the grounding corpus. Tolerates
- * spoken rounding (±0.5 absolute or ±10 % relative) and unit changes
- * (m <-> km, s <-> min). Single-digit integers up to 3 are ignored (counts
- * like "two options", ordinal words rendered as digits).
+ * Spoken numbers that no fact of the same kind supports. A distance must
+ * match a distance, a duration a duration, a clock time an arrival/current
+ * time — so "5 km" is not excused by the driver having said "5 minutes".
+ * Tolerates spoken rounding (±0.5 below 10, else ±6 %) and m <-> km.
  */
-export function ungroundedNumbers(answer: string, corpus: unknown[]): number[] {
-  const known: number[] = [];
-  for (const c of corpus) collectNumbers(c, known);
-  const candidates = new Set<number>();
-  for (const k of known) {
-    candidates.add(k);
-    candidates.add(k / 1000);
-    candidates.add(k * 1000);
-    candidates.add(k / 60);
-    candidates.add(k * 60);
+export function ungroundedNumbers(answer: string, corpus: unknown[]): string[] {
+  const facts: Fact[] = [];
+  for (const c of corpus) collectFacts(c, facts);
+  return extractFacts(answer)
+    .filter((claim) => !supported(claim, facts))
+    .map((c) => (c.unit === "clock" ? `${Math.floor(c.value / 60)}:${String(c.value % 60).padStart(2, "0")}` : `${c.value}${c.unit === "none" ? "" : ` ${c.unit}`}`));
+}
+
+/** The <trip_state> blocks the model was shown in these requests. */
+export function tripStatesOf(requests: { messages: { role: string; content: unknown }[] }[]): string[] {
+  const out: string[] = [];
+  for (const r of requests) for (const m of r.messages) {
+    if (m.role !== "user" || !Array.isArray(m.content)) continue;
+    for (const b of m.content as { type: string; text?: string }[]) if (b.type === "text" && b.text?.startsWith("<trip_state>")) out.push(b.text);
   }
-  const close = (a: number, b: number) => Math.abs(a - b) <= 0.5 || Math.abs(a - b) <= Math.abs(b) * 0.1;
-  return extractNumbers(answer).filter((n) => !(Number.isInteger(n) && n <= 3) && ![...candidates].some((k) => close(n, k)));
+  return out;
 }
 
 export function gradeTurn(spec: TurnSpec, reply: CopilotReply, ctx: { waypoints: number; groundingCorpus: unknown[] }): Check[] {

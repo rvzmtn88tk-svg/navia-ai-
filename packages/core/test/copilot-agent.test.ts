@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NaviaCopilot, toSpeakable } from "../src/copilot/copilot";
-import { chooseTier } from "../src/copilot/model-router";
+import { chooseTier, DEFAULT_ROUTER_POLICY } from "../src/copilot/model-router";
 import { DemoEngine } from "../src/demo-engine";
 import { TripPlanner } from "../src/trip-planner";
 import { EngineCopilotRuntime } from "../src/copilot/runtime";
@@ -68,14 +68,14 @@ test("multi-step: McDonald's within +10 min -> propose -> driver says yes -> sto
   assert.deepEqual(r1.pendingAction?.tool, "add_stop");
   assert.equal(world.host.route!.waypointCount ?? 0, 0, "nothing changes before the driver confirms");
   assert.deepEqual(r1.trace.map((t) => t.tool), ["search_along_route", "add_stop"]);
-  assert.deepEqual(llm.tiers, ["fast", "fast", "smart"], "third call of a multi-step turn escalates");
+  assert.deepEqual(llm.tiers, ["fast", "fast", "fast"], "search -> propose -> answer stays on the fast tier");
 
   const r2 = await copilot.ask("Так, додавай");
   assert.equal(r2.pendingAction, null);
   assert.equal(world.host.route!.waypointCount, 1);
   assert.match(r2.text, /Прибуття о 14:5\d/);
-  // Follow-up right after a smart turn stays on the smart tier.
-  assert.deepEqual(llm.tiers.slice(3), ["smart", "smart"]);
+  // A "yes" confirmation is a single repeated tool call: fast tier.
+  assert.deepEqual(llm.tiers.slice(3), ["fast", "fast"]);
 });
 
 test("independent tool calls run in parallel and ALL results return in one user message", async () => {
@@ -93,7 +93,7 @@ test("independent tool calls run in parallel and ALL results return in one user 
   ]);
   const reply = await copilot.ask("Чому саме цей маршрут?");
   assert.equal(reply.trace.length, 2);
-  assert.deepEqual(llm.tiers, ["fast", "smart"], "two distinct tools -> smart tier for the explanation");
+  assert.deepEqual(llm.tiers, ["fast", "fast"]);
 });
 
 test("backend outage on the first call -> local deterministic answer, clearly labelled", async () => {
@@ -194,7 +194,7 @@ test("UI confirm button executes the pending action without an LLM round-trip; d
   await copilot.ask("Заправка по дорозі");
   assert.equal(copilot.getPendingAction()?.tool, "add_stop");
   const confirmed = await copilot.confirmPendingAction();
-  assert.match(confirmed.text, /Додала зупинку WOG/);
+  assert.match(confirmed.text, /Додала зупинку ОККО/); // first in driving order
   assert.equal(world.host.route!.waypointCount, 1);
   assert.equal(llm.requests.length, 3);
   assert.equal(copilot.declinePendingAction().text, "Немає дії, яку потрібно скасувати.");
@@ -217,14 +217,15 @@ test("driver declines by voice -> model cancels the pending action", async () =>
 test("chooseTier: cascade rules", () => {
   const base = { callIndex: 0, distinctToolsUsed: 0, toolErrors: 0, userTextLength: 20, msSinceLastSmartTurn: null, previousTier: null } as const;
   assert.equal(chooseTier(base), "fast");
-  assert.equal(chooseTier({ ...base, callIndex: 2 }), "smart");
-  assert.equal(chooseTier({ ...base, distinctToolsUsed: 2 }), "smart");
+  assert.equal(chooseTier({ ...base, callIndex: 2, distinctToolsUsed: 2 }), "fast", "search -> propose -> answer stays fast");
+  assert.equal(chooseTier({ ...base, callIndex: 3 }), "smart");
+  assert.equal(chooseTier({ ...base, distinctToolsUsed: 3 }), "smart");
   assert.equal(chooseTier({ ...base, toolErrors: 1 }), "smart");
   assert.equal(chooseTier({ ...base, userTextLength: 200 }), "smart");
-  assert.equal(chooseTier({ ...base, msSinceLastSmartTurn: 30_000 }), "smart");
-  assert.equal(chooseTier({ ...base, msSinceLastSmartTurn: 300_000 }), "fast");
-  assert.equal(chooseTier({ ...base, previousTier: "smart" }), "smart");
-  assert.equal(chooseTier({ ...base, callIndex: 5 }, { mode: "always_fast", escalateAtCall: 2, escalateAtDistinctTools: 2, longMessageChars: 160, stickySmartMs: 0 }), "fast");
+  assert.equal(chooseTier({ ...base, msSinceLastSmartTurn: 30_000 }), "fast", "no sticky smart by default");
+  assert.equal(chooseTier({ ...base, msSinceLastSmartTurn: 30_000 }, { ...DEFAULT_ROUTER_POLICY, stickySmartMs: 90_000 }), "smart");
+  assert.equal(chooseTier({ ...base, previousTier: "smart" }), "smart", "never downgrade within a turn");
+  assert.equal(chooseTier({ ...base, callIndex: 5 }, { ...DEFAULT_ROUTER_POLICY, mode: "always_fast" }), "fast");
 });
 
 test("toSpeakable strips markdown the TTS would read aloud", () => {

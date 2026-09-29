@@ -256,14 +256,25 @@ export class DemoRoutingProvider implements RoutingProvider {
     if (toIsStop && dest.offsetM > MAX_ACCESS_M) {
       throw new Error(`DemoRoutingProvider: target is ${Math.round(dest.offsetM)} m from the demo road network (outside demo coverage)`);
     }
+    let route: Route;
     if (origin.nodeId === dest.nodeId) {
-      throw new Error(`DemoRoutingProvider: origin and destination snap to the same point (${origin.nodeId})`);
+      // Both ends attach to the same road point (e.g. a stop right beside the
+      // car): no road driving, only the access spur(s) below.
+      const at = graph.nodes.find((n) => n.id === origin.nodeId)!.position;
+      if (!toIsStop || dest.offsetM <= SNAP_TO_NODE_M) {
+        if (!fromIsStop || origin.offsetM <= SNAP_TO_NODE_M) {
+          return { id: `demo-route-${origin.nodeId}`, geometry: [at, to], distanceM: 0, durationS: 0, source: "demo",
+            steps: [{ id: "step-0", roadName: "", maneuver: "arrive", distanceM: 0, durationS: 0, location: to }] };
+        }
+      }
+      route = { id: `demo-route-${origin.nodeId}`, geometry: [at], distanceM: 0, durationS: 0, source: "demo", steps: [] };
+    } else {
+      const path = shortestPath(graph, origin.nodeId, dest.nodeId);
+      if (!path || path.length === 0) {
+        throw new Error(`DemoRoutingProvider: no route found between ${origin.nodeId} and ${dest.nodeId}`);
+      }
+      route = edgesToRoute(graph, path, `demo-route-${origin.nodeId}-${dest.nodeId}`);
     }
-    const path = shortestPath(graph, origin.nodeId, dest.nodeId);
-    if (!path || path.length === 0) {
-      throw new Error(`DemoRoutingProvider: no route found between ${origin.nodeId} and ${dest.nodeId}`);
-    }
-    const route = edgesToRoute(graph, path, `demo-route-${origin.nodeId}-${dest.nodeId}`);
     // Out-and-back access spurs for stops that sit off the road network.
     const spur = (p: LatLon, offsetM: number): Route | null =>
       offsetM > SNAP_TO_NODE_M ? accessSpur(p, offsetM) : null;

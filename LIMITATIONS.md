@@ -201,11 +201,18 @@ request it builds — 129 automated tests, typecheck clean for
 `packages/core` and `apps/ai-backend`.
 
 Not verified here, and why:
-- **No live model run.** This environment has no Claude API key, so the 23
-  eval scenarios have only been run in `--dry-run` mode. The agent-loop
-  tests use a scripted LLM (they test NAVIA's plumbing, not the model's
-  judgement). Run `ANTHROPIC_API_KEY=... npm run eval:ai` to measure real
-  pass rate, latency and cost, then tune the prompt/tool descriptions.
+- **No production-model run.** This environment has no Claude API key. The
+  26 eval scenarios were run model-in-the-loop, with Claude in the Claude
+  Code session playing the co-pilot model (all pass; see
+  `docs/AI_EVAL_REPORT.md`) — that is evidence the tools and prompt are
+  sufficient for a capable model, not a measurement of the production
+  Haiku 4.5 / Opus 5.5 setup, and the decider knew the checks. Costs in the
+  report are character-based estimates. Run
+  `ANTHROPIC_API_KEY=... npm run eval:ai` to measure real pass rate, latency
+  and cost.
+- **Usefulness benchmark uses synthetic places** on the single-road demo
+  network; the numbers show the value of route awareness, not real-world
+  POI coverage.
 - **Overpass (OSM place search) not called live** — unreachable from this
   sandbox; the query/response handling is tested with a mocked fetch.
 - **Valhalla multi-stop/costing options** — written against the documented

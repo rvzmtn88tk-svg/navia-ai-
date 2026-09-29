@@ -1,0 +1,23 @@
+{
+  "scenario": "landmark-wog",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "check_landmark",
+            "input": {
+              "name_variants": [
+                "WOG"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "Так, за картою це WOG на вашому маршруті, приблизно за 300 метрів. Повертати там не треба: наступний поворот праворуч ще через 5,9 кілометра."
+      }
+    ]
+  ]
+}

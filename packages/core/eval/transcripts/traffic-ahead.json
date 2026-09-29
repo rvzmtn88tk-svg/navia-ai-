@@ -1,0 +1,27 @@
+{
+  "scenario": "traffic-ahead",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "get_traffic_ahead",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "tools": [
+          {
+            "name": "compare_routes",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "text": "Даних про затори в реальному часі в мене немає, тому не можу сказати, чи вони є. Іншого розумного маршруту маршрутизатор теж не бачить — залишаємось на Бориспільському шосе."
+      }
+    ]
+  ]
+}

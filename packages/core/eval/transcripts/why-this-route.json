@@ -1,0 +1,23 @@
+{
+  "scenario": "why-this-route",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "get_route_overview",
+            "input": {}
+          },
+          {
+            "name": "compare_routes",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "text": "Маршрутизатор обрав його як найшвидший: майже весь шлях, 29 кілометрів, по Бориспільському шосе, прибуття о 14:48. Іншого варіанту він не знайшов. Даних про затори в мене немає."
+      }
+    ]
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "scenario": "places-api-down",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Пошук місць зараз недоступний — сервер карти не відповідає. Спробую ще раз за хвилину, якщо скажете."
+      }
+    ]
+  ]
+}

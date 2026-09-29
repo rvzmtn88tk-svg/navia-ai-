@@ -140,12 +140,14 @@ function openNowField(poi: POI, now: Date): boolean | "unknown" {
   return v == null ? "unknown" : v;
 }
 
-function mainRoads(steps: RouteStep[], limit = 4): { road: string; km: number }[] {
+/** Roads by driven length; `skipFirstM` removes the already-driven part of the first step. */
+function mainRoads(steps: RouteStep[], limit = 4, skipFirstM = 0): { road: string; km: number }[] {
   const byRoad = new Map<string, number>();
-  for (const s of steps) {
-    if (!s.roadName || s.distanceM <= 0) continue;
-    byRoad.set(s.roadName, (byRoad.get(s.roadName) ?? 0) + s.distanceM);
-  }
+  steps.forEach((s, i) => {
+    const len = i === 0 ? Math.max(0, s.distanceM - skipFirstM) : s.distanceM;
+    if (!s.roadName || len <= 0) return;
+    byRoad.set(s.roadName, (byRoad.get(s.roadName) ?? 0) + len);
+  });
   return [...byRoad.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
@@ -219,7 +221,9 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
   if (minMin != null) fromM = Math.max(fromM, rc.timeline.distanceAtSeconds(rc.secondsNow + minMin * 60));
   if (maxMin != null) toM = Math.min(toM, rc.timeline.distanceAtSeconds(rc.secondsNow + maxMin * 60));
   if (maxKm != null) toM = Math.min(toM, rc.alongNowM + maxKm * 1000);
-  if (rangeM != null) toM = Math.min(toM, rc.alongNowM + rangeM);
+  // Look somewhat beyond the stated range: "the nearest station is 7 km away,
+  // just past your 5 km" is exactly what a driver on reserve needs to hear.
+  if (rangeM != null) toM = Math.min(toM, rc.alongNowM + Math.max(rangeM * 1.5, rangeM + 10_000));
   if (toM - fromM < 50) {
     return {
       content: {
@@ -264,7 +268,10 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
     });
   }
   const foundTotal = cands.length;
-  cands.sort((a, b) => a.detourS - b.detourS || a.aheadM - b.aheadM);
+  // Known-closed places rank after open/unknown ones: a driver asking for a
+  // place to stop almost never wants one that is closed right now.
+  const closedRank = (c: Cand) => (c.open === false ? 1 : 0);
+  cands.sort((a, b) => closedRank(a) - closedRank(b) || a.detourS - b.detourS || a.aheadM - b.aheadM);
   if (maxDetourS != null) cands = cands.filter((c) => c.detourS <= maxDetourS * 1.5 + 60);
 
   // Refine the most promising candidates with real routed detours.
@@ -294,11 +301,21 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
     if (rangeM != null) {
       const ra = reachable(a) ? 0 : 1, rb = reachable(b) ? 0 : 1;
       if (ra !== rb) return ra - rb;
+      if (ra === 1) return a.aheadM - b.aheadM; // out of range: the nearest one is the only one that matters
     }
-    return a.detourS - b.detourS || a.aheadM - b.aheadM;
+    return closedRank(a) - closedRank(b) || a.detourS - b.detourS || a.aheadM - b.aheadM;
   });
 
-  const top = cands.slice(0, limit);
+  // Choose the best `limit` by the ranking above, but present them in driving
+  // order: that is how the driver hears them, so "the second one" means the
+  // same place to the driver, the model and last_results.
+  const top = cands.slice(0, limit).sort((a, b) => {
+    if (rangeM != null) {
+      const ra = reachable(a) ? 0 : 1, rb = reachable(b) ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+    }
+    return a.aheadM - b.aheadM;
+  });
   const results = top.map((c) => {
     const place = registerPoi(ctx, c.poi);
     const r = reachable(c);
@@ -446,7 +463,7 @@ function routeOverview(ctx: ToolContext): ToolOutcome {
       stops,
       preferences_applied: rc.route.appliedPreferences ?? [],
       preferences_unsupported: rc.route.unsupportedPreferences ?? [],
-      main_roads_ahead: mainRoads(current),
+      main_roads_ahead: mainRoads(current, 4, offsetInFirstM),
       next_maneuvers: next,
       basis: "Route and times come from the routing engine's cost model (no live traffic unless get_traffic_ahead says otherwise).",
       ...(uncertain ? { position_uncertain: true } : {}),
@@ -465,7 +482,8 @@ async function compareRoutes(ctx: ToolContext): Promise<ToolOutcome> {
   } catch (e) {
     return err("routing_failed", `The routing engine could not compute alternatives: ${(e as Error).message}`);
   }
-  const currentRoads = mainRoads(stepsAhead(rc).current, 3);
+  const ahead = stepsAhead(rc);
+  const currentRoads = mainRoads(ahead.current, 3, ahead.offsetInFirstM);
   const rows = alts
     // An "alternative" that doesn't start where the car is would be misleading.
     .filter((route) => route.geometry.length > 0 && haversineMeters(route.geometry[0]!, rc.position) < 200)
@@ -568,12 +586,21 @@ async function checkLandmark(input: Record<string, unknown>, ctx: ToolContext): 
   const result = new LandmarkEngine().identifyLandmarkQuery(pois, query, rc.route, rc.position, state.speedMps);
   const uncertain = positionUncertain(rc.band);
   if (result.kind === "confirmed") {
+    // Where the next maneuver is relative to the landmark, so "after it, turn
+    // right" is never said when the turn is kilometres further on.
+    const { current, offsetInFirstM } = stepsAhead(rc);
+    const toManeuverM = current.length > 1 ? (current[0]!.distanceM - offsetInFirstM) : null;
+    const nextStep = current[1] ?? null;
     return {
       content: {
         result: uncertain ? "likely_but_position_uncertain" : "confirmed",
         name: result.landmark.name,
         ahead_m: Math.round(result.distanceM / 10) * 10,
-        maneuver_after: result.afterManeuver,
+        ...(nextStep && toManeuverM != null ? {
+          next_maneuver: nextStep.maneuver,
+          next_maneuver_road: nextStep.roadName || "unnamed road",
+          next_maneuver_after_landmark_m: uncertain ? "withheld: position uncertain" : Math.max(0, Math.round((toManeuverM - result.distanceM) / 10) * 10),
+        } : {}),
         evidence: "map data only (no camera confirmation)",
       },
       isError: false,
@@ -668,7 +695,15 @@ async function setDestination(input: Record<string, unknown>, ctx: ToolContext, 
   const pos = currentPosition(ctx);
   if (!pos) return err("no_position", "The current position is unknown.");
   if (!confirmed) {
-    return propose(ctx, "set_destination", input, `Новий пункт призначення: ${e.label}`, { name: e.label, distance_km: km(haversineMeters(pos, e.location)) });
+    let preview: Record<string, unknown> = { distance_km_straight: km(haversineMeters(pos, e.location)) };
+    try {
+      const keep = boolArg(input, "keep_stops") ?? false;
+      const r = await withTimeout(ctx.runtime.planner.route(pos, { destination: { label: e.label, location: e.location }, stops: keep ? ctx.runtime.planner.getPlan().stops : [] }), 8_000);
+      preview = { route_km: km(r.distanceM), route_min: minutes(r.durationS), arrival: arrivalClock(ctx.runtime.now(), r.durationS) };
+    } catch (x) {
+      preview.route = `could not be computed: ${(x as Error).message}`;
+    }
+    return propose(ctx, "set_destination", input, `Новий пункт призначення: ${e.label}`, { name: e.label, ...preview });
   }
   const before = ctx.runtime.planner.getPlan();
   ctx.runtime.planner.setDestination({ label: e.label, location: e.location }, { keepStops: boolArg(input, "keep_stops") ?? false });
@@ -787,7 +822,18 @@ export async function executeCopilotTool(
       }
     }
     switch (name) {
-      case "search_along_route": return await searchAlongRoute(input, ctx);
+      case "search_along_route": {
+        const out = await searchAlongRoute(input, ctx);
+        // A named place (a brand) with no match: offer the same category right
+        // away, saving the driver a follow-up question and the model a round-trip.
+        if (!out.isError && out.content.found_total === 0 && Array.isArray(input.name_variants) && Array.isArray(input.categories) && input.categories.length > 0) {
+          const { name_variants: _omit, ...rest } = input;
+          const alt = await searchAlongRoute({ ...rest, limit: 2 }, ctx);
+          const altResults = !alt.isError ? (alt.content.results as unknown[]) : [];
+          if (altResults.length > 0) out.content.no_name_match_same_category = altResults;
+        }
+        return out;
+      }
       case "search_near": return await searchNear(input, ctx);
       case "get_route_overview": return routeOverview(ctx);
       case "compare_routes": return await compareRoutes(ctx);

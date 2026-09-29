@@ -21,6 +21,7 @@ import { chooseTier, DEFAULT_ROUTER_POLICY, type RouterPolicy } from "./model-ro
 import { CopilotSession, EntityRegistry, type CopilotRuntime } from "./runtime";
 import { executeCopilotTool, type ToolContext } from "./tool-executor";
 import { buildTripSnapshot } from "./trip-snapshot";
+import { parseLocalPlaceIntent, phraseLocalPlaceResult } from "./local-place-intent";
 
 export type CopilotOptions = {
   runtime: CopilotRuntime;
@@ -263,14 +264,26 @@ export class NaviaCopilot {
       recentEvents: [],
     };
     let answer: string;
-    try {
-      answer = await this.fallback.answer(ctx, text);
-    } catch {
-      answer = "Голосовий штурман тимчасово недоступний.";
+    const trace: ToolTraceEntry[] = [];
+    // Without the LLM, the commonest request ("find fuel/coffee/parking on
+    // the way") is still answered from the real tools; everything else goes
+    // to the deterministic status answers.
+    const intent = parseLocalPlaceIntent(text);
+    if (intent && this.options.runtime.places()) {
+      const t0 = Date.now();
+      const outcome = await executeCopilotTool(intent.tool, intent.input, this.toolContext());
+      trace.push({ tool: intent.tool, input: intent.input, isError: outcome.isError, result: outcome.content, ms: Date.now() - t0 });
+      answer = phraseLocalPlaceResult(intent, outcome.content, outcome.isError);
+    } else {
+      try {
+        answer = await this.fallback.answer(ctx, text);
+      } catch {
+        answer = "Голосовий штурман тимчасово недоступний.";
+      }
     }
     const full = notify ? `${LOCAL_NOTICE} ${answer}` : answer;
     this.remember(text, full);
-    return this.reply(full, "local", started, { degradedReason: reason });
+    return this.reply(full, "local", started, { degradedReason: reason, trace });
   }
 
   private remember(user: string, assistant: string): void {

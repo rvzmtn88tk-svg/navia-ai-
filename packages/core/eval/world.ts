@@ -25,8 +25,8 @@ export type WorldOptions = {
   band?: ConfidenceBand;
   gnss?: GNSSIntegrityState;
   network?: boolean;
-  /** Place database behaviour. */
-  places?: "demo" | "none" | "failing" | "empty";
+  /** Place database behaviour, or an explicit place list. */
+  places?: "demo" | "none" | "failing" | "empty" | POI[];
   savedPlaces?: SavedPlace[];
   /** Start with no active route (e.g. "take me home" from idle). */
   noRoute?: boolean;
@@ -115,7 +115,8 @@ export async function buildWorld(opts: WorldOptions = {}): Promise<World> {
 
   const placesMode = opts.places ?? "demo";
   const places: PlaceSearchProvider | null =
-    placesMode === "none" ? null
+    Array.isArray(placesMode) ? new LocalPlaceSearchProvider(placesMode, "demo")
+    : placesMode === "none" ? null
       : placesMode === "failing" ? new FailingPlaces()
         : new LocalPlaceSearchProvider(placesMode === "empty" ? [] : DEMO_ROUTE_POIS, "demo");
 

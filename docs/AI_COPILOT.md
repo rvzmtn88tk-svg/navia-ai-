@@ -96,25 +96,25 @@ overridable by env):
 
 | Tier | Default model | Used for |
 |---|---|---|
-| `fast` | `claude-haiku-4-5` ($1 / $5 per MTok) | the first call and single-tool turns: status questions, one search + answer |
-| `smart` | `claude-opus-5-5` ($4 / $20 per MTok), effort `medium`, server-side refusal fallback | the 3rd+ call of a turn, turns that used ≥2 different tools, tool-error recovery, long requests, and follow-ups within 90 s of a smart turn |
+| `fast` | `claude-haiku-4-5` ($1 / $5 per MTok) | almost everything: status questions, one search + answer, search → propose → answer, "так" confirmations |
+| `smart` | `claude-opus-5-5` ($4 / $20 per MTok), effort `medium`, server-side refusal fallback | turns that hit a tool error, long multi-constraint requests (>160 chars), ≥3 different tools, or a 4th+ LLM call |
 
 The cascade (`copilot/model-router.ts`) uses structural signals of the turn,
-not keywords, and never downgrades within a turn. `always_fast` /
-`always_smart` policies exist for measurement (`npm run eval:ai -- --policy …`).
+not keywords, and never downgrades within a turn. It was tuned with the
+model-in-the-loop replay (`docs/AI_EVAL_REPORT.md`): 33 of 36 evaluated turns
+stay on the fast tier. `always_fast` / `always_smart` policies exist for
+measurement (`npm run eval:ai -- --policy …`), and `stickySmartMs` can keep
+follow-ups on the smart tier if the live eval shows a quality gain.
 `NAVIA_AI_MODEL_SMART=claude-sonnet-5-5` is the cheaper smart-tier option to
 evaluate.
 
-Rough per-turn cost (static prompt ≈3.1k tokens = system prompt + 13 tool
-schemas; measure real numbers with the live eval):
-
-* status question, fast tier, 1 call: ≈3.3k in / 60 out ≈ **$0.004**
-  (Haiku 4.5 needs ≥4096 tokens to cache, so the static prompt is not cached there)
-* one search + answer, fast tier, 2 calls: ≈ **$0.008**
-* multi-step (search → propose → answer), fast+smart, 3 calls: ≈ **$0.02–0.035**
-  (the upper end when the Opus cache is cold: Opus 5.5 caches the static
-  prefix from 512 tokens, so later smart calls read it at $0.20/MTok instead
-  of $4/MTok)
+Estimated cost from the recorded scenario requests (≈3 chars/token; static
+prompt ≈ 4k tokens = system prompt + 13 tool schemas; not yet measured with
+the API): status question ≈ $0.005, one search + answer ≈ $0.010,
+search → propose → answer ≈ $0.015, average ≈ **$0.010 per driver question**.
+Haiku 4.5 caches only prompts ≥ 4096 tokens, so whether the static prefix is
+cached on the fast tier must be checked with `usage.cache_read_input_tokens`
+in the live eval.
 
 Latency budget per turn: 30 s hard deadline, ≤6 LLM calls, ≤12 tool calls;
 independent tools run in parallel and all results return in one message.
@@ -134,7 +134,7 @@ independent tools run in parallel and all results return in one message.
 
 | Failure | Behaviour |
 |---|---|
-| backend unreachable / 5xx / rate-limited before any tool ran | local deterministic answer, prefixed "Розумний режим штурмана зараз недоступний." |
+| backend unreachable / 5xx / rate-limited before any tool ran | local answer, prefixed "Розумний режим штурмана зараз недоступний.": place requests ("заправка по дорозі", "кава", "парковка біля місця призначення", "McDonald's, не більше 10 хв") still run the real tools via a small offline parser (`copilot/local-place-intent.ts`); everything else gets the deterministic status answers |
 | backend fails after tools ran | honest partial-failure message, nothing invented |
 | place search down (Overpass 5xx) | tool error → model says place search is unavailable |
 | no place database (offline, no index) | `place_search_unavailable` |
@@ -157,9 +157,15 @@ ANTHROPIC_API_KEY=... npm run eval:ai
 npm run eval:ai -- --dry-run                       # no API calls
 ```
 
+## Evaluation
+
+See `docs/AI_EVAL_REPORT.md` for results: 26/26 model-in-the-loop
+scenarios, 5/5 negative controls caught, and a usefulness benchmark against
+straight-line "nearby" search and the previous regex assistant.
+
 ## Evaluation set
 
-`packages/core/eval/scenarios.ts` — 23 real driver requests across normal,
+`packages/core/eval/scenarios.ts` — 26 real driver requests across normal,
 multi-step, ambiguous, API-error, no-results, route-change, long-dialog and
 safety categories (the eight requests from the product brief included
 verbatim in Ukrainian). `eval/grader.ts` grades deterministically: required /

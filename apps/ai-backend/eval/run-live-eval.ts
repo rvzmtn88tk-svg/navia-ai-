@@ -21,7 +21,7 @@ import {
 } from "@navia/core";
 import { SCENARIOS, type Scenario } from "../../../packages/core/eval/scenarios";
 import { buildWorld } from "../../../packages/core/eval/world";
-import { gradeTurn, type Check } from "../../../packages/core/eval/grader";
+import { gradeTurn, tripStatesOf, type Check } from "../../../packages/core/eval/grader";
 import { AnthropicLLMClient } from "../src/anthropic-llm-client";
 import { loadConfig } from "../src/config";
 
@@ -81,7 +81,7 @@ async function runScenario(s: Scenario, llmFactory: () => LLMClient, policy: Rou
     const before = recorder.calls.length;
     const reply = await copilot.ask(spec.user);
     const thisTurn = recorder.calls.slice(before);
-    const corpus: unknown[] = [spec.user, ...earlierAnswers, ...thisTurn.map((c) => JSON.stringify(c.request.messages)), ...reply.trace.map((t) => t.result)];
+    const corpus: unknown[] = [spec.user, ...earlierAnswers, ...tripStatesOf(thisTurn.map((c) => c.request)), ...reply.trace.map((t) => t.result)];
     const checks = gradeTurn(spec, reply, { waypoints: world.host.route?.waypointCount ?? 0, groundingCorpus: corpus });
     const cost = thisTurn.reduce<number | null>((acc, c) => {
       const x = costUsd(c.response.model, c.response.usage);

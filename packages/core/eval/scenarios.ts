@@ -127,7 +127,7 @@ export const SCENARIOS: Scenario[] = [
     turns: [{
       user: "Чи є попереду затори і чи можна їх об'їхати?",
       expectTools: ["get_traffic_ahead"],
-      mustMatch: [/(немає|не маю|недоступн|нема).{0,40}(дан|інформац|затор)/i],
+      mustMatch: [/(немає|не маю|недоступн|нема).{0,40}(дан|інформац|затор)|(дан|інформац).{0,60}(немає|не маю|недоступн|нема)/i],
       mustNotMatch: [/затор(ів)? немає|доріг(а|и) вільн/i],
       maxWords: 55,
     }],
@@ -144,6 +144,43 @@ export const SCENARIOS: Scenario[] = [
       mustMatch: [/WOG|ОККО|OKKO|SOCAR/i],
       maxWords: 50,
     }],
+  },
+  {
+    id: "fuel-range-tight",
+    category: "normal",
+    title: "Only 5 km of fuel left: nothing reachable with a reserve",
+    world: {},
+    turns: [{
+      user: "Лампочка пального горить, лишилось кілометрів 5. Де заправитись?",
+      expectTools: ["search_along_route"],
+      expectCall: { description: "vehicle_range_km = 5", test: (c) => called(c, "search_along_route").some((x) => num(x.input.vehicle_range_km) === 5) },
+      mustMatch: [/не вистач|не доїд|не доїх|ризик|не гарант|на межі|може(те)? не|більше за (ваш )?запас/i],
+      maxWords: 55,
+    }],
+  },
+  {
+    id: "fuel-mid-trip",
+    category: "normal",
+    title: "Mid-trip: stations already passed must not be offered",
+    world: { alongM: 15_000 },
+    turns: [{
+      user: "Де найближча заправка?",
+      expectAnyTool: ["search_along_route", "search_near"],
+      mustMatch: [/WOG/],
+      mustNotMatch: [/ОККО|OKKO/i],
+      maxWords: 40,
+    }],
+  },
+  {
+    id: "second-option",
+    category: "long_dialog",
+    title: "\"Let's take the second one\" refers to the previous results",
+    world: {},
+    turns: [
+      { user: "Які заправки попереду?", expectTools: ["search_along_route"], maxWords: 50 },
+      { user: "Давай другу, додай її.", expectTools: ["add_stop"], expectPending: "add_stop", maxWords: 35 },
+      { user: "Так.", expectWaypoints: 1 },
+    ],
   },
   {
     id: "status-remaining",

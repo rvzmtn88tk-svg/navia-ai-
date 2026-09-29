@@ -1,0 +1,46 @@
+{
+  "scenario": "change-destination",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "find_destination",
+            "input": {
+              "query": "аеропорт Бориспіль"
+            }
+          }
+        ]
+      },
+      {
+        "tools": [
+          {
+            "name": "set_destination",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Аеропорт Бориспіль: 28 кілометрів, 43 хвилини, прибуття о 14:43. Змінити пункт призначення?"
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "set_destination",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Готово, їдемо в аеропорт Бориспіль. Прибуття о 14:43."
+      }
+    ]
+  ]
+}

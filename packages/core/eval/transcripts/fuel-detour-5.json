@@ -1,0 +1,25 @@
+{
+  "scenario": "fuel-detour-5",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "max_detour_minutes": 5,
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Найближча — ОККО праворуч через 7 кілометрів, заїзд займе менше хвилини. Далі WOG праворуч через 16 кілометрів. Рейтингів заправок у мене немає."
+      }
+    ]
+  ]
+}

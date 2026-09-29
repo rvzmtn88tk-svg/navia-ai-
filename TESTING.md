@@ -32,7 +32,7 @@ files, one per engine module plus the E2E scenario:
 
 ### AI co-pilot tests (added with the co-pilot upgrade)
 
-`npm test` now runs **129** tests (root script also covers `apps/ai-backend/test`):
+`npm test` now runs **165** tests (root script also covers `apps/ai-backend/test`):
 
 | File | Covers |
 |---|---|
@@ -41,15 +41,20 @@ files, one per engine module plus the E2E scenario:
 | `test/trip-planner.test.ts` | multi-stop demo routing through off-road stops, mid-edge origin, unsupported preferences, stop ordering, `DemoEngine.applyRoute` |
 | `test/copilot-tools.test.ts` | every tool against the demo world: detour limits, time windows, range reserve, parking at destination, explicit errors, LOW-confidence withholding, confirmation gate, rollback on routing failure, no coordinates in `trip_state` |
 | `test/copilot-agent.test.ts` | the agent loop with a scripted LLM: multi-step McDonald's flow over two turns, parallel tool results, tier cascade, outages, refusal, tool budget, memory, UI confirm/decline, DemoEngine integration |
-| `test/eval-grader.test.ts` | number-grounding grader, scenario worlds |
+| `test/eval-grader.test.ts` | unit-aware number-grounding grader, scenario worlds |
+| `test/eval-transcripts.test.ts` | replays all 26 model-in-the-loop transcripts through the real co-pilot + grader; 5 negative controls (injected hallucinations must fail) |
+| `test/usefulness.test.ts` | offline place-intent fallback; benchmark claims (never behind the car / over the detour limit, beats straight-line "nearby", legacy AI answers nothing) |
 | `apps/ai-backend/test/backend.test.ts` | request validation (no proxy abuse), auth, error mapping, exact Claude API request per tier |
 
 The scripted-LLM tests verify NAVIA's own code paths. The real model's
 behaviour is measured by the live eval (needs a Claude API key):
 
 ```bash
-ANTHROPIC_API_KEY=... npm run eval:ai    # 23 scenarios, pass/fail + latency + cost report
+ANTHROPIC_API_KEY=... npm run eval:ai    # 26 scenarios, pass/fail + latency + cost report
 npm run eval:ai -- --dry-run             # no API calls
+npm run eval:replay                      # recorded model-in-the-loop transcripts + estimated cost
+npm run bench:ai                         # usefulness benchmark vs. baselines
+npx tsx packages/core/eval/model-in-the-loop.ts <scenario-id>   # step a scenario as the model
 ```
 
 ## apps/mobile

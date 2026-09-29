@@ -1,0 +1,25 @@
+{
+  "scenario": "no-place-db",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_near",
+            "input": {
+              "anchor": "current_position",
+              "categories": [
+                "pharmacy"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Не можу знайти аптеку: пошук місць зараз недоступний — немає мережі і офлайн-бази закладів."
+      }
+    ]
+  ]
+}

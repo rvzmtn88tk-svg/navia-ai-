@@ -1,12 +1,17 @@
 // Which model tier serves each LLM call inside a co-pilot turn.
 //
 // A cascade on structural signals of the turn, not on keywords in the
-// driver's text: most turns ("how long left?", "find fuel on the way") are a
-// single tool round plus a short answer and stay on the fast/cheap model.
-// The strong model takes over when the turn turns out to be genuinely
-// multi-step (a third LLM call, two or more different tools, a tool error to
-// recover from) or when the previous turn needed it moments ago (the driver
-// is mid-way through a complex exchange).
+// driver's text. Typical turns — status questions, one search + answer,
+// search -> propose -> answer, "yes" confirmations — stay on the fast/cheap
+// model: the tools have already done the hard, numeric part. The strong
+// model takes over when a turn is genuinely complex: a tool error to recover
+// from, three or more different tools, a fourth LLM call, or a long
+// multi-constraint request. (Tuned with the model-in-the-loop replay: an
+// earlier policy — escalate at the 3rd call / 2 tools, stay smart for 90 s
+// after a smart turn — sent 23 of 72 calls (32 %) to the smart tier, mostly
+// to phrase results or handle "yes"/"repeat"; this one sends 3, all tool-
+// error recoveries, and cuts estimated cost per turn by ~20 %.) Measure alternatives with
+// `npm run eval:ai -- --policy always_fast|always_smart`.
 
 import type { ModelTier } from "./protocol";
 
@@ -24,10 +29,10 @@ export type RouterPolicy = {
 
 export const DEFAULT_ROUTER_POLICY: RouterPolicy = {
   mode: "auto",
-  escalateAtCall: 2,
-  escalateAtDistinctTools: 2,
+  escalateAtCall: 3,
+  escalateAtDistinctTools: 3,
   longMessageChars: 160,
-  stickySmartMs: 90_000,
+  stickySmartMs: 0,
 };
 
 export type TurnSignals = {
@@ -46,7 +51,7 @@ export function chooseTier(signals: TurnSignals, policy: RouterPolicy = DEFAULT_
   if (policy.mode === "always_smart") return "smart";
   if (signals.previousTier === "smart") return "smart";
   if (signals.userTextLength > policy.longMessageChars) return "smart";
-  if (signals.msSinceLastSmartTurn != null && signals.msSinceLastSmartTurn <= policy.stickySmartMs) return "smart";
+  if (policy.stickySmartMs > 0 && signals.msSinceLastSmartTurn != null && signals.msSinceLastSmartTurn <= policy.stickySmartMs) return "smart";
   if (signals.toolErrors > 0) return "smart";
   if (signals.distinctToolsUsed >= policy.escalateAtDistinctTools) return "smart";
   if (signals.callIndex >= policy.escalateAtCall) return "smart";

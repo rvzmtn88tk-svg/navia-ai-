@@ -20,14 +20,14 @@ async function setup(opts: WorldOptions = {}) {
 
 const results = (c: Row) => c.results as Row[];
 
-test("search_along_route: fuel ahead, sorted by routed detour, with ahead km/min and side", async () => {
+test("search_along_route: fuel ahead, best by routed detour, listed in driving order, with ahead km/min and side", async () => {
   const { run } = await setup();
   const out = await run("search_along_route", { categories: ["fuel"], limit: 5 });
   assert.equal(out.isError, false);
   const rows = results(out.content);
-  assert.deepEqual(rows.map((r) => r.name), ["WOG", "ОККО", "SOCAR"]);
+  assert.deepEqual(rows.map((r) => r.name), ["ОККО", "WOG", "SOCAR"]);
   assert.ok(rows.every((r) => r.detour === "routed"));
-  const wog = rows[0]!, okko = rows[1]!, socar = rows[2]!;
+  const okko = rows[0]!, wog = rows[1]!, socar = rows[2]!;
   assert.equal(wog.ahead_km, 16);
   assert.equal(okko.ahead_km, 7);
   assert.equal(okko.ahead_min, 11); // 7 km at the demo provider's 11 m/s
@@ -64,7 +64,7 @@ test("search_along_route: 'a restaurant in about 30 minutes' uses the route time
 test("search_along_route: remaining range marks reachability with a reserve", async () => {
   const { run } = await setup();
   const ok = results((await run("search_along_route", { categories: ["fuel"], vehicle_range_km: 10 })).content);
-  assert.deepEqual(ok.map((r) => [r.name, r.reachable]), [["ОККО", true]]);
+  assert.deepEqual(ok.map((r) => [r.name, r.reachable]), [["ОККО", true], ["WOG", false]], "stations just past the range are shown as unreachable");
   const tight = await run("search_along_route", { categories: ["fuel"], vehicle_range_km: 7 });
   const rows = results(tight.content);
   assert.ok(rows.every((r) => r.reachable === false), "OKKO at 7.2 km is beyond 85% of a 7 km range");

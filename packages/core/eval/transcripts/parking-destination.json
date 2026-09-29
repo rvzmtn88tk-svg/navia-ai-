@@ -1,0 +1,25 @@
+{
+  "scenario": "parking-destination",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_near",
+            "input": {
+              "anchor": "destination",
+              "categories": [
+                "parking"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Найближча — Паркінг Бориспіль-центр, 250 метрів від місця призначення, це 3 хвилини пішки. Ще є Паркінг ТРЦ за 600 метрів. Вести до першої?"
+      }
+    ]
+  ]
+}

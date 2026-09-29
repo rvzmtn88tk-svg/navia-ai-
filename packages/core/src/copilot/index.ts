@@ -7,3 +7,4 @@ export * from "./trip-snapshot";
 export * from "./model-router";
 export * from "./backend-client";
 export * from "./copilot";
+export * from "./local-place-intent";
