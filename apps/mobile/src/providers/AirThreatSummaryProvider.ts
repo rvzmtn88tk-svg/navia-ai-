@@ -68,9 +68,9 @@ function confidenceRank(value: string | undefined): number {
 }
 
 /**
- * Returns a region-only summary. The public feed also includes approximate
- * tracks, coordinates and headings; NAVIA deliberately does not expose or
- * predict those values as if it were a reliable detector.
+ * Returns a region-only summary for the alert card. The approximate tracks
+ * themselves are shown only on the separate "Цілі" map (AirTargetsProvider),
+ * with the source, the update time and the disclaimer — never predicted.
  */
 export class AirThreatSummaryProvider {
   async fetchForRegion(region: string, district = ""): Promise<AirThreatSummary> {

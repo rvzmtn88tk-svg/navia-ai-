@@ -13,6 +13,7 @@ import { elevation, motion } from "../theme/tokens";
 import { UserPuck, type PuckQuality } from "./UserPuck";
 import { pickPoi, type BasemapPoi } from "./basemapPoi";
 import { perfEnd, perfPending, perfStart } from "../perf/perf";
+import type { AirTarget, Tracks } from "../providers/AirTargetsProvider";
 
 export type CameraMode = "free" | "follow" | "navigate";
 
@@ -21,7 +22,7 @@ export type UserPosition = LatLon & { headingDeg: number | null; accuracyM: numb
 export type NaviaMapHandle = {
   recenter: () => void;
   zoomBy: (delta: number) => void;
-  flyTo: (point: LatLon, zoom?: number, bottomPadding?: number) => void;
+  flyTo: (point: LatLon, zoom?: number, bottomPadding?: number, topPadding?: number) => void;
   fitPoints: (points: LatLon[], bottomPadding?: number) => void;
   resetNorth: () => void;
   /** Benchmark: turn the camera around the centre, tilted (perf/bench.ts). */
@@ -61,6 +62,11 @@ type Props = {
   headingMode?: "device" | "course";
   /** Called after every rendered frame (dev FPS meter). */
   onFrame?: () => void;
+  /** Air targets from open monitoring (approximate): marker, presumed course, uncertainty circle, reported path. */
+  targets?: AirTarget[];
+  targetTracks?: Tracks;
+  selectedTargetId?: string | null;
+  onTargetPress?: (target: AirTarget) => void;
 };
 
 const KYIV: LatLon = { lat: 50.4501, lon: 30.5234 };
@@ -84,7 +90,11 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
   const {
     mapStyle, user, quality, cameraMode, onUserGesture, onBearingChange, routeGeometry = [], traveledGeometry = [],
     destination, places = [], selectedPlaceId, onPlacePress, onBasemapPoiPress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame, headingMode = "device", haze,
+    targets = NO_TARGETS, targetTracks, selectedTargetId, onTargetPress,
   } = props;
+  // Course arrows are screen-fixed views: they turn against the map's rotation.
+  const [mapBearing, setMapBearing] = useState(0);
+  const showsTargets = targets.length > 0;
   const view3dRef = useRef(view3d);
   view3dRef.current = view3d;
   const c = useColors();
@@ -147,9 +157,9 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
       zoom.current = Math.max(3, Math.min(19.5, zoom.current + delta));
       camera.current?.zoomTo(zoom.current, motion.fast);
     },
-    flyTo: (point, z = 16, bottomPadding) => {
+    flyTo: (point, z = 16, bottomPadding, topPadding) => {
       zoom.current = z;
-      const pad = bottomPadding == null ? cameraPadding : { ...cameraPadding, paddingBottom: bottomPadding };
+      const pad = { ...cameraPadding, ...(bottomPadding == null ? {} : { paddingBottom: bottomPadding }), ...(topPadding == null ? {} : { paddingTop: topPadding }) };
       camera.current?.setCamera({ centerCoordinate: [point.lon, point.lat], zoomLevel: z, pitch: 0, padding: pad, animationDuration: 800, animationMode: "flyTo" });
     },
     fitPoints: (points, bottomPadding) => {
@@ -194,6 +204,14 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
   const frame = useCallback(() => { if (perfPending("map: 2D↔3D → frame")) perfEnd("map: 2D↔3D → frame"); onFrame?.(); }, [onFrame]);
 
   const routeShape = useMemo(() => lineFeature(routeGeometry), [routeGeometry]);
+  const targetAreas = useMemo(() => ({
+    type: "FeatureCollection" as const,
+    features: targets.filter((t) => t.uncertaintyKm != null && t.uncertaintyKm > 0).map((t) => ({ ...circleFeature(t, t.uncertaintyKm! * 1000), properties: { stale: t.stale ? 1 : 0 } })),
+  }), [targets]);
+  const targetPaths = useMemo(() => ({
+    type: "FeatureCollection" as const,
+    features: targets.map((t) => targetTracks?.[t.id] ?? []).filter((p) => p.length > 1).map((p) => lineFeature(p)),
+  }), [targets, targetTracks]);
   const traveledShape = useMemo(() => lineFeature(traveledGeometry), [traveledGeometry]);
 
   return (
@@ -245,6 +263,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           liveZoom.current = feature.properties.zoomLevel;
           const h = feature.properties.heading ?? 0;
           if (Math.abs(h - bearing.current) > 0.5) { bearing.current = h; onBearingChange?.(h); }
+          if (showsTargets && Math.abs(h - mapBearing) > 0.5) setMapBearing(h);
         }}
         onDidFinishLoadingMap={() => { perfEnd("map: open → first map"); perfEnd("map: style switch"); onMapReady?.(); }}
         onPress={(f) => { void onMapPress(f); }}
@@ -292,6 +311,23 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           </MapLibreGL.MarkerView>
         ))}
 
+        {showsTargets && (
+          <MapLibreGL.ShapeSource id="navia-target-areas" shape={targetAreas}>
+            <MapLibreGL.FillLayer id="navia-target-area-fill" style={{ fillColor: c.critical, fillOpacity: ["case", ["==", ["get", "stale"], 1], 0.04, 0.09] }} />
+            <MapLibreGL.LineLayer id="navia-target-area-line" style={{ lineColor: c.critical, lineWidth: 1, lineOpacity: 0.45, lineDasharray: [2, 2] }} />
+          </MapLibreGL.ShapeSource>
+        )}
+        {showsTargets && targetPaths.features.length > 0 && (
+          <MapLibreGL.ShapeSource id="navia-target-paths" shape={targetPaths}>
+            <MapLibreGL.LineLayer id="navia-target-path-line" style={{ lineColor: c.critical, lineWidth: 2, lineOpacity: 0.7, lineDasharray: [1.5, 1.5], lineCap: "round" }} />
+          </MapLibreGL.ShapeSource>
+        )}
+        {targets.slice(0, 120).map((t) => (
+          <MapLibreGL.MarkerView key={t.id} id={`target-${t.id}`} coordinate={[t.lon, t.lat]} anchor={{ x: 0.5, y: 0.5 }} allowOverlap>
+            <TargetMarker target={t} selected={t.id === selectedTargetId} mapBearing={mapBearing} onPress={onTargetPress} />
+          </MapLibreGL.MarkerView>
+        ))}
+
         {destination && (
           <MapLibreGL.MarkerView id="navia-destination" coordinate={[destination.lon, destination.lat]} anchor={{ x: 0.5, y: 1 }} allowOverlap>
             <View style={styles.destination} accessibilityLabel="destination">
@@ -315,6 +351,28 @@ function PlaceMarker({ place, selected, onPress }: { place: NearbyPlace; selecte
     <Touchable haptic accessibilityRole="button" accessibilityLabel={place.name} onPress={() => onPress?.(place)}
       style={[styles.placeMarker, { width: size, height: size, borderRadius: size / 2, backgroundColor: meta.color, borderColor: c.surface }, elevation(2, c)]}>
       <Icon name={meta.icon} size={selected ? 22 : 16} color={c.onMarker} />
+    </Touchable>
+  );
+}
+
+const NO_TARGETS: AirTarget[] = [];
+
+/** A target: the place-marker shape in the alert colour, a notch pointing along the presumed course. */
+function TargetMarker({ target, selected, mapBearing, onPress }: { target: AirTarget; selected: boolean; mapBearing: number; onPress?: (t: AirTarget) => void }): JSX.Element {
+  const c = useColors();
+  const size = selected ? 34 : 22;
+  const color = target.stale ? c.textMuted : target.kind === "uav" || target.kind === "recon" ? c.critical : c.brandOrange;
+  const box = size + 16;
+  return (
+    <Touchable haptic accessibilityRole="button" accessibilityLabel={target.note || target.kind} onPress={() => onPress?.(target)} style={{ width: box, height: box, alignItems: "center", justifyContent: "center" }}>
+      {target.headingDeg != null && (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: "center", transform: [{ rotate: `${target.headingDeg - mapBearing}deg` }] }]}>
+          <View style={[styles.courseNotch, { borderBottomColor: color }]} />
+        </View>
+      )}
+      <View style={[styles.placeMarker, { width: size, height: size, borderRadius: size / 2, backgroundColor: color, borderColor: c.surface, opacity: target.stale ? 0.75 : 1 }, elevation(2, c)]}>
+        <Icon name="alert" size={selected ? 20 : 14} color={c.onMarker} />
+      </View>
     </Touchable>
   );
 }
@@ -352,5 +410,6 @@ function lineFeature(points: LatLon[]) {
 
 const styles = StyleSheet.create({
   placeMarker: { alignItems: "center", justifyContent: "center", borderWidth: 2 },
+  courseNotch: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 9, borderLeftColor: "transparent", borderRightColor: "transparent" },
   destination: { alignItems: "center", justifyContent: "flex-end" },
 });

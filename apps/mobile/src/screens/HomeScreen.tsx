@@ -24,6 +24,9 @@ import { Crossfade } from "../components/Crossfade";
 import { BrandMark } from "../components/BrandMark";
 import { AlertStatus, alertBeaconTone, alertHeadline, type AlertTone } from "../components/AlertStatus";
 import { SafetyPanel } from "../components/SafetyPanel";
+import { TargetsOverlay, targetsLine, type TargetsView } from "../components/TargetsOverlay";
+import { MAP_POLL_MS, ROW_POLL_MS, useAirTargetsPolling, useAirTargetsStore } from "../store/airTargetsStore";
+import type { AirTarget } from "../providers/AirTargetsProvider";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { proactiveInsights, suggestions } from "../ai/copilotBrain";
@@ -43,12 +46,17 @@ type SelectedPlace = PlaceRef & { category?: NearbyPlaceCategory; hours?: string
 const SEARCH_H = 52;
 const CHIPS_H = 48;
 const PEEK_H = 100;
+/** Ukraine: its centre and width in degrees of longitude, to fill the screen width on the targets map. */
+const UKRAINE_CENTER = { lat: 48.4, lon: 31.2 };
+const UKRAINE_LON_SPAN = 18.1;
+/** Height of the targets overlay card (source, time, disclaimer) that the map must stay below. */
+const TARGETS_OVERLAY_H = 300;
 
 export function HomeScreen({ navigation, route }: Props): JSX.Element {
   const c = useColors();
   const { t, lang } = useT();
   const insets = useSafeAreaInsets();
-  const { height: screenH } = useWindowDimensions();
+  const { height: screenH, width: screenW } = useWindowDimensions();
   const { isDark, mapLayer, setMapLayer } = useAppSettings();
   const live = useLiveContext();
   const fix = useNaviaStore((s) => s.currentFix);
@@ -66,6 +74,14 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   const [routeMode, setRouteMode] = useState<RouteMode>("car");
   const [layersOpen, setLayersOpen] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
+  const [targetsOpen, setTargetsOpen] = useState(false);
+  const [target, setTarget] = useState<AirTarget | null>(null);
+  const targetsStatus = useAirTargetsStore((s) => s.status);
+  const targetsSnapshot = useAirTargetsStore((s) => s.snapshot);
+  const targetTracks = useAirTargetsStore((s) => s.tracks);
+  const targetsError = useAirTargetsStore((s) => s.error);
+  useAirTargetsPolling(true, targetsOpen ? MAP_POLL_MS : ROW_POLL_MS);
+  const targetsView = useMemo<TargetsView>(() => ({ status: targetsStatus, targets: targetsSnapshot?.targets ?? [], serverTime: targetsSnapshot?.serverTime ?? null, error: targetsError }), [targetsStatus, targetsSnapshot, targetsError]);
   const [question, setQuestion] = useState("");
   const [styleRetry, setStyleRetry] = useState(0);
   const sheetVisible = useRef(new Animated.Value(PEEK_H + insets.bottom)).current;
@@ -187,6 +203,25 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     if (next) { void live.loadCategory("shelter"); void live.loadCategory("resilience"); }
   }
 
+  function openTargets(next: boolean) {
+    setTargetsOpen(next);
+    setTarget(null);
+    if (next) {
+      setSelected(null);
+      setCategory(null);
+      setSnap("peek");
+      setCameraMode("free");
+      void useAirTargetsStore.getState().refresh();
+      // The sheet settles first, then the camera flies out to the whole country,
+      // as wide as the screen (512-px tiles: world width = 512·2^zoom points).
+      const zoom = Math.log2(((screenW - 24) * 360) / (UKRAINE_LON_SPAN * 512));
+      setTimeout(() => map.current?.flyTo(UKRAINE_CENTER, zoom, PEEK_H + insets.bottom, insets.top + TARGETS_OVERLAY_H), 120);
+    } else {
+      setCameraMode("follow");
+      map.current?.recenter();
+    }
+  }
+
   function askCopilot(text?: string, voice?: boolean) {
     const initialQuestion = (text ?? question).trim();
     setQuestion("");
@@ -216,7 +251,11 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           cameraMode={cameraMode}
           onUserGesture={() => setCameraMode("free")}
           onBearingChange={setBearing}
-          places={categoryPlaces}
+          places={targetsOpen ? NO_PLACES : categoryPlaces}
+          targets={targetsOpen ? targetsView.targets : undefined}
+          targetTracks={targetTracks}
+          selectedTargetId={target?.id ?? null}
+          onTargetPress={setTarget}
           searchCircle={categoryEntry?.radiusM != null && fix ? { center: { lat: fix.lat, lon: fix.lon }, radiusM: categoryEntry.radiusM } : null}
           speedMps={fix?.speedMps ?? null}
           selectedPlaceId={selected?.id}
@@ -302,6 +341,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
               <GpsCard gpsStatus={live.gpsStatus} health={live.health} accuracyM={fix?.accuracyM ?? null} fixAt={fix?.timestamp ?? null} t={t} lang={lang}
                 onAllow={() => void live.requestPermission()} onRefresh={() => void live.refresh()} />
               <AlertStatus alert={alert} threat={threat} loading={live.alertState === "loading"} />
+              <ListRow icon="alert" iconTint={c.critical} title={t("targets.row")} subtitle={targetsLine(targetsView, t, lang).text} onPress={() => openTargets(true)} />
               <CopilotCard question={question} onChange={setQuestion} onSend={() => askCopilot()} onVoice={() => askCopilot("", true)} onPrompt={(q) => askCopilot(q)} t={t} />
               {custom.slice(0, 5).map((p) => <ListRow key={p.id} icon="star" title={p.label} subtitle={p.subtitle} onPress={() => { setSelected(p); setSnap("half"); focusOn(p, 16); }} />)}
               {recents.length > 0 && <SectionLabel style={styles.sectionGap}>{t("recent.title")}</SectionLabel>}
@@ -328,10 +368,13 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
         position={fix ? { lat: fix.lat, lon: fix.lon } : null}
         onRoute={(p) => { setSafetyOpen(false); startRoute({ id: p.id, label: p.name, lat: p.location.lat, lon: p.location.lon }, "walk"); }} />
       <CategoryWheelOverlay categories={CHIP_CATEGORIES} selected={category} onSelect={selectCategory} />
+      <TargetsOverlay open={targetsOpen} view={targetsView} selected={target} onSelect={setTarget} onClose={() => openTargets(false)} />
       <LayersModal open={layersOpen} value={mapLayer} onClose={() => setLayersOpen(false)} onPick={(layer) => { setMapLayer(layer); setLayersOpen(false); }} t={t} c={c} />
     </View>
   );
 }
+
+const NO_PLACES: NearbyPlace[] = [];
 
 // ——— Sheet headers ———
 
