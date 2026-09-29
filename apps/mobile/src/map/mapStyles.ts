@@ -39,10 +39,16 @@ function sunLight(dark: boolean): Record<string, unknown> {
   return { anchor: "map", color: dark ? "#9FB6D9" : "#FFF6E8", intensity: dark ? 0.3 : 0.5, position: [1.4, 225, 40] };
 }
 
-/** Relief shading from elevation data: `strength` 0..1. */
+/**
+ * Relief shading from elevation data: `strength` 0..1. From city zoom only:
+ * every new elevation tile is shaded on the render thread (~100 ms each on an
+ * iPhone 17 Pro); over the country-wide view, and while zooming back from it,
+ * that cost 10–40 fps. Below RELIEF_MINZOOM no elevation tiles load at all.
+ */
+const RELIEF_MINZOOM = 11;
 function hillshadeLayer(dark: boolean, strength: number, overImagery = false): AnyLayer {
   return {
-    id: "navia-hillshade", type: "hillshade", source: "navia-dem",
+    id: "navia-hillshade", type: "hillshade", source: "navia-dem", minzoom: RELIEF_MINZOOM,
     paint: {
       "hillshade-exaggeration": strength,
       "hillshade-illumination-direction": 315,
@@ -219,10 +225,13 @@ async function brandedStyle(dark: boolean, relief: boolean, flat: boolean): Prom
   if (depth === "none") style.layers = style.layers.filter((layer) => layer.type !== "fill-extrusion");
   else {
     (style as { light?: unknown }).light = sunLight(dark);
-    // Relief: strong for the Terrain layer, subtle on the standard map (the
-    // Dnipro hills and ravines give the city depth without hiding streets).
-    style.sources["navia-dem"] = DEM_SOURCE;
-    style.layers.splice(reliefIndex(style.layers as AnyLayer[]), 0, hillshadeLayer(dark, relief ? 1 : dark ? 0.3 : 0.3));
+    // Relief: for the Terrain layer and 3D navigation only. The standard map's
+    // faint relief (strength 0.3) was barely visible and cost the whole app's
+    // smoothness (measured: 60 fps without it, 10–41 with it after zooming).
+    if (relief) {
+      style.sources["navia-dem"] = DEM_SOURCE;
+      style.layers.splice(reliefIndex(style.layers as AnyLayer[]), 0, hillshadeLayer(dark, 1));
+    }
   }
   const json = JSON.stringify(style);
   styleCache.set(key, json);

@@ -95,12 +95,19 @@ async function benchHome(): Promise<Record<string, HomeRun>> {
   // Every step starts once the map has settled (tiles loaded), so one step's loading does not leak into the next.
   await wait(4000);
   await measure("idle 6 s (live GPS)", 6000);
-  await measure("open targets map (fly-out + card)", 3000, () => benchHooks.openTargets?.());
-  await wait(5000);
-  await measure("targets map idle 6 s", 6000);
-  await measure("targets map: turning 3 s", 3200, () => benchHooks.orbit?.(3000, 0, 5));
-  benchHooks.closeTargets?.();
-  await wait(8000);
+  const { setBenchDepth } = require("../map/mapStyles") as typeof import("../map/mapStyles");
+  // The same targets-map run with and without relief shading / 3D buildings / light.
+  for (const d of ["full", "none"] as const) {
+    if (d === "none") { setBenchDepth("none"); benchHooks.restyle?.(); await wait(7000); }
+    await measure(`[${d}] open targets map (fly-out + card)`, 3000, () => benchHooks.openTargets?.());
+    await wait(5000);
+    await measure(`[${d}] targets map idle 6 s`, 6000);
+    await measure(`[${d}] targets map: turning 3 s`, 3200, () => benchHooks.orbit?.(3000, 0, 5));
+    benchHooks.closeTargets?.();
+    await wait(8000);
+    await measure(`[${d}] back at street level after the targets map, 5 s`, 5000);
+  }
+  setBenchDepth("full"); benchHooks.restyle?.(); await wait(7000);
   return out;
 }
 
