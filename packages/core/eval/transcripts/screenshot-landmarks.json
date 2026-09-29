@@ -1,0 +1,21 @@
+{
+  "scenario": "screenshot-landmarks",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "get_landmarks_ahead",
+            "input": {
+              "maneuvers": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Перший поворот — праворуч на Бориспільське шосе через 2,4 кілометра. Орієнтир: супермаркет Фора праворуч, поворот за 160 метрів після нього."
+      }
+    ]
+  ]
+}

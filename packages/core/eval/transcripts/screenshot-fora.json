@@ -1,0 +1,24 @@
+{
+  "scenario": "screenshot-fora",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "check_landmark",
+            "input": {
+              "name_variants": [
+                "Фора",
+                "Fora"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "Так, це Фора на вашому маршруті, за 280 метрів праворуч. Одразу після неї, за 160 метрів, поверніть праворуч на Бориспільське шосе."
+      }
+    ]
+  ]
+}

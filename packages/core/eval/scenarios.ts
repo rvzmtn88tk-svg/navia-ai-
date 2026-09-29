@@ -183,6 +183,31 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    id: "screenshot-landmarks",
+    category: "normal",
+    title: "Device screenshot 29.09: 'Які є орієнтири на шляху?' was answered with how the route was built",
+    world: {},
+    turns: [{
+      user: "Які є орієнтири на шляху ?",
+      expectTools: ["get_landmarks_ahead"],
+      mustMatch: [/Фор/],
+      mustNotMatch: [/Valhalla|найшвидш|інших варіантів/i],
+      maxWords: 50,
+    }],
+  },
+  {
+    id: "screenshot-fora",
+    category: "normal",
+    title: "Device screenshot 29.09: 'Я бачу фору куди далі?' ignored the landmark",
+    world: { alongM: 4_000 },
+    turns: [{
+      user: "Я бачу фору куди далі ?",
+      expectTools: ["check_landmark"],
+      mustMatch: [/Фор/, /праворуч/i],
+      maxWords: 45,
+    }],
+  },
+  {
     id: "status-remaining",
     category: "normal",
     title: "Simple status question needs no tools",

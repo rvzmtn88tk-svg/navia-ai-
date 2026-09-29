@@ -609,6 +609,77 @@ async function checkLandmark(input: Record<string, unknown>, ctx: ToolContext): 
   return { content: { result: result.kind, ...(result.kind === "ambiguous" ? { candidates: result.candidateCount } : {}) }, isError: false };
 }
 
+/** Categories that make recognisable visual landmarks from a car. */
+const LANDMARK_CATEGORIES: LandmarkCategory[] = ["fuel", "supermarket", "shopping_centre", "pharmacy", "hospital", "fast_food", "restaurant", "cafe", "car_wash", "hotel"];
+
+async function landmarksAhead(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
+  const rc = buildRouteContext(ctx.runtime);
+  if (!rc) return err("no_active_route", "There is no active route with a known position.");
+  const places = ctx.runtime.places();
+  if (!places) return err("place_search_unavailable", "No place database is available (no network place search and no offline POI index loaded).");
+  const maxManeuvers = numArg(input, "maneuvers", 1, 5) ?? 3;
+  const toM = Math.min(rc.index.lengthM, rc.alongNowM + (numArg(input, "ahead_max_km", 0.2, 50) ?? 5) * 1000);
+  let raw: POI[];
+  try {
+    raw = await places.searchAlongPolyline(rc.index.slice(rc.alongNowM, toM), 80, { categories: LANDMARK_CATEGORIES }, 120);
+  } catch (e) {
+    return err("place_search_failed", `Place search failed: ${(e as Error).message}`);
+  }
+  const uncertain = positionUncertain(rc.band);
+  const located = raw
+    .map((poi) => ({ poi, proj: rc.index.project(poi.location, rc.alongNowM - 30) }))
+    .filter((x): x is { poi: POI; proj: NonNullable<typeof x.proj> } => x.proj != null && x.proj.offsetM <= 60 && x.proj.alongM >= rc.alongNowM - 10);
+
+  // Maneuver positions ahead (along-route distance of each step start).
+  const maneuvers: { step: RouteStep; alongM: number }[] = [];
+  let cum = 0;
+  for (const step of rc.route.steps) {
+    if (cum > rc.alongNowM + 5 && cum <= toM && step.maneuver !== "depart" && step.maneuver !== "straight") maneuvers.push({ step, alongM: cum });
+    cum += step.distanceM;
+    if (maneuvers.length >= maxManeuvers) break;
+  }
+  const used = new Set<string>();
+  const byManeuver = maneuvers.map(({ step, alongM }) => {
+    const near = located
+      // Up to 250 m before the turn ("after Fora, turn right in 150 m") or 120 m after it.
+      .filter((x) => x.proj.alongM - alongM >= -250 && x.proj.alongM - alongM <= 120)
+      .sort((a, b) => Math.abs(a.proj.alongM - alongM) - Math.abs(b.proj.alongM - alongM))
+      .slice(0, 3)
+      .map((x) => {
+        used.add(x.poi.id);
+        const delta = x.proj.alongM - alongM;
+        return {
+          name: x.poi.name,
+          category: x.poi.category,
+          side: x.proj.side,
+          relation: Math.abs(delta) <= 25 ? "at_the_turn" : delta < 0 ? "before_the_turn" : "after_the_turn",
+          from_turn_m: Math.round(Math.abs(delta) / 10) * 10,
+        };
+      });
+    return {
+      maneuver: step.maneuver,
+      road: step.roadName || "unnamed road",
+      in_m: uncertain ? "withheld: position uncertain" : Math.round((alongM - rc.alongNowM) / 10) * 10,
+      landmarks: near,
+    };
+  });
+  const onTheWay = located
+    .filter((x) => !used.has(x.poi.id))
+    .sort((a, b) => a.proj.alongM - b.proj.alongM)
+    .slice(0, 4)
+    .map((x) => ({ name: x.poi.name, category: x.poi.category, side: x.proj.side, ahead_km: km(x.proj.alongM - rc.alongNowM) }));
+  return {
+    content: {
+      source: places.source,
+      ...(uncertain ? { position_uncertain: true } : {}),
+      maneuvers: byManeuver,
+      on_the_way: onTheWay,
+      ...(byManeuver.every((m) => m.landmarks.length === 0) && onTheWay.length === 0 ? { note: "no named places near the route ahead in the map data" } : {}),
+    },
+    isError: false,
+  };
+}
+
 // ---------- actions ----------
 
 function actionKey(tool: string, input: Record<string, unknown>): string {
@@ -840,6 +911,7 @@ export async function executeCopilotTool(
       case "get_traffic_ahead": return await trafficAhead(input, ctx);
       case "find_destination": return await findDestination(input, ctx);
       case "check_landmark": return await checkLandmark(input, ctx);
+      case "get_landmarks_ahead": return await landmarksAhead(input, ctx);
       case "remove_stop": return await removeStop(input, ctx);
       case "set_route_preferences": return await setRoutePreferences(input, ctx);
       case "cancel_pending_action": {

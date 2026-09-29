@@ -8,7 +8,7 @@
 // backend into a general-purpose LLM proxy. `COPILOT_PROTOCOL_VERSION`
 // guards against an app and backend built from different tool sets.
 
-export const COPILOT_PROTOCOL_VERSION = "2026-09-29.1";
+export const COPILOT_PROTOCOL_VERSION = "2026-09-29.2";
 
 /** fast = cheap/low-latency model for routine turns; smart = stronger model for multi-step reasoning. */
 export type ModelTier = "fast" | "smart";

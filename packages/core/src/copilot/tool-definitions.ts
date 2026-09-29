@@ -125,6 +125,19 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "get_landmarks_ahead",
+    description:
+      "Recognisable places along the route ahead, grouped by the upcoming maneuvers: for each of the next maneuvers, which named places are just before, at or just after it (side of road, metres from the turn), plus notable places on the way. Use for 'what landmarks are on the way', 'how will I recognise the turn', or when GPS is unreliable and the driver needs visual cues.",
+    input_schema: {
+      type: "object",
+      properties: {
+        maneuvers: { type: "integer", minimum: 1, maximum: 5, description: "How many upcoming maneuvers to describe. Default 3." },
+        ahead_max_km: { type: "number", minimum: 0.2, maximum: 50, description: "Look this far ahead. Default 5." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "add_stop",
     description:
       "Add a place from an earlier result as an intermediate stop and reroute. Requires the driver's confirmation: the first call returns awaiting_user_confirmation with the time impact; call again after the driver says yes.",
@@ -190,7 +203,7 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
 
 export type CopilotToolName =
   | "search_along_route" | "search_near" | "get_route_overview" | "compare_routes" | "get_traffic_ahead"
-  | "find_destination" | "check_landmark" | "add_stop" | "remove_stop" | "set_destination"
+  | "find_destination" | "check_landmark" | "get_landmarks_ahead" | "add_stop" | "remove_stop" | "set_destination"
   | "set_route_preferences" | "switch_route" | "cancel_pending_action";
 
 /** Actions that only execute after the driver confirms in a later turn (or taps Confirm). */

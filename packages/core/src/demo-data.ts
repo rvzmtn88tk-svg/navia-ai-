@@ -63,6 +63,7 @@ const demoPoi = (id: string, name: string, category: POI["category"], alongM: nu
 });
 
 export const DEMO_ROUTE_POIS: POI[] = [
+  demoPoi("demo-sm-fora", "Фора", "supermarket", 4_280, 45, { brand: "Фора", openingHours: "Mo-Su 08:00-22:00" }),
   demoPoi("demo-cafe-aroma", "Aroma Kava", "cafe", 6_000, 80, { brand: "Aroma Kava", openingHours: "Mo-Su 07:00-22:00" }),
   demoPoi("demo-rest-puzata", "Пузата Хата", "restaurant", 5_200, 220, { openingHours: "Mo-Su 09:00-22:00", cuisine: "ukrainian" }),
   demoPoi("demo-fuel-okko-1", "ОККО", "fuel", 9_000, 120, { brand: "OKKO", openingHours: "24/7" }),
