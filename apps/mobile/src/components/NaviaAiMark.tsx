@@ -30,7 +30,7 @@ export function NaviaAiMark({ size = 44, active = false }: { size?: number; acti
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
   const orbitW = size;
   const orbitH = size * 0.42;
-  const sat = Math.max(8, size * 0.2);
+  const sat = Math.max(8, size * 0.18);
 
   return (
     <View accessible accessibilityLabel="NAVIA" style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
@@ -40,7 +40,9 @@ export function NaviaAiMark({ size = 44, active = false }: { size?: number; acti
           <Ellipse cx={orbitW / 2} cy={orbitH / 2} rx={orbitW / 2 - 1} ry={orbitH / 2 - 1} stroke={c.brandTeal} strokeOpacity={0.7} strokeWidth={1.2} fill="none" />
         </Svg>
       </View>
-      <BrandMark size={size * 0.74} />
+      {/* The compass dominates the symbol (≈ 76 % of its width); the orbit is a
+          thin ring around it, not an empty frame around a small dot. */}
+      <BrandMark size={size * 0.8} />
       {/* Satellite travelling on the (squashed, tilted) orbit */}
       <View style={[StyleSheet.absoluteFill, styles.center, { transform: [{ rotate: "-28deg" }, { scaleY: orbitH / orbitW }] }]} pointerEvents="none">
         <Animated.View style={{ width: orbitW, height: orbitW, transform: [{ rotate }] }}>

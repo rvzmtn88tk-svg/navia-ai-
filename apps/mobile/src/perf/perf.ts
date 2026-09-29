@@ -44,3 +44,10 @@ export async function fpsEnd(name: string): Promise<FrameReport | null> {
   if (__DEV__) console.log(`[fps] ${name}: ${r.fps.toFixed(1)} fps over ${r.ms.toFixed(0)} ms, ${r.frames} frames, longest frame ${r.maxGapMs.toFixed(1)} ms (screen ${r.screenHz} Hz)`);
   return r;
 }
+
+/** React render timings of a screen (React.Profiler onRender), for the benchmark. */
+export const renderLog: { id: string; ms: number }[] = [];
+export function recordRender(id: string, _phase: string, actualDuration: number): void {
+  renderLog.push({ id, ms: actualDuration });
+  if (renderLog.length > 2000) renderLog.shift();
+}

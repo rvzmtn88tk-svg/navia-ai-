@@ -1,7 +1,8 @@
 import React from "react";
 import { StatusBar } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { DefaultTheme, NavigationContainer } from "@react-navigation/native";
+import { DefaultTheme, NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
+import { benchHooks } from "./src/perf/bench";
 import { RootNavigator } from "./src/navigation/RootNavigator";
 import { AppSettingsProvider, useAppSettings } from "./src/settings/AppSettings";
 import { IntroOverlay } from "./src/components/IntroOverlay";
@@ -10,6 +11,10 @@ import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 // Loaded at start: when NAVIA was launched in "no internet" test mode, the
 // app's own requests must fail from the first one, like the map's.
 import "./src/offline/network";
+
+const navigationRef = createNavigationContainerRef();
+// Benchmark only: open the co-pilot screen (perf/bench.ts).
+benchHooks.openAssistant = () => { if (navigationRef.isReady()) (navigationRef.navigate as (name: string) => void)("Assistant"); };
 
 export default function App(): JSX.Element {
   return (
@@ -28,7 +33,7 @@ function AppContent(): JSX.Element {
   };
   return <>
     <StatusBar barStyle={isDark ? "light-content" : "dark-content"} backgroundColor={c.background} />
-    <NavigationContainer theme={navigationTheme}><AppErrorBoundary><RootNavigator /></AppErrorBoundary></NavigationContainer>
+    <NavigationContainer ref={navigationRef} theme={navigationTheme}><AppErrorBoundary><RootNavigator /></AppErrorBoundary></NavigationContainer>
     <IntroOverlay />
   </>;
 }

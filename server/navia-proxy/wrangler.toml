@@ -1,0 +1,17 @@
+# NAVIA language proxy. Deploy: see README.md (npx wrangler login → secrets → deploy).
+name = "navia-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Fast model: the driver hears the answer within ~1–2 s.
+NAVIA_UNDERSTAND_MODEL = "claude-haiku-4-5-20251001"
+
+# Per-device limit (abuse and cost guard): 20 questions per minute.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 20
+  period = 60

@@ -44,3 +44,26 @@ test("grounding check", async () => {
   assert.equal(checkGrounded("Інтернету немає.", s).ok, false);
   assert.ok(factsFor(s, null).lang === "uk");
 });
+
+test("general question: the model's own wording is used when it passes the snapshot check; a failing server falls back to the rules", async () => {
+  const s = (await sevenSituations()).find((x) => x.key === "driving")!.snapshot;
+  setRemoteForTests(async () => ({ intent: "general", confidence: 0.9, answer: "Їдьте рівно, без різких прискорень, і вимкніть кондиціонер — так пального вистачить на довше." }));
+  try {
+    const r = await askSmart(new Navigator(), "що робити якщо закінчується бензин", s);
+    assert.equal(r.engine, "llm");
+    assert.equal(r.intent, "general");
+    assert.match(r.text, /кондиціонер/);
+    setRemoteForTests(async () => { throw new Error("model key invalid"); });
+    const f = await askSmart(new Navigator(), "розкажи анекдот про водіїв", s);
+    assert.equal(f.engine, "rules");
+    assert.doesNotMatch(f.text, /без мовної моделі/, "no claim that the phone has no model at all");
+  } finally { setRemoteForTests(null); }
+});
+
+test("advice and explanation questions go to the model even when the rules are sure of a keyword; trip questions and emergencies stay on the phone", async () => {
+  const { wantsModel } = await import("../src/ai/navigator/navigator");
+  const { understand } = await import("../src/ai/navigator/intents");
+  const w = (q: string) => wantsModel(q, understand(q));
+  for (const q of ["що має бути в автомобільній аптечці", "як заспокоїти дитину в укритті", "що робити якщо закінчується бензин", "порадь музику в дорогу", "чи можна їхати машиною під час тривоги", "что делать если сел аккумулятор"]) assert.ok(w(q), q);
+  for (const q of ["Где я?", "Куда дальше?", "Объявлена тревога, где ближайшее укрытие?", "Я сбился с маршрута?", "повтори", "як далеко до укриття"]) assert.ok(!w(q), q);
+});

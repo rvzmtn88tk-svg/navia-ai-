@@ -13,6 +13,10 @@ export const benchHooks: {
   orbit?: (ms: number, pitch: number, zoom: number) => void;
   setLayer?: (layer: MapLayer) => void;
   restyle?: () => void;
+  openAssistant?: () => void;
+  /** Co-pilot screen: send a question / set the text being typed. */
+  assistantAsk?: (q: string) => void;
+  assistantType?: (text: string) => void;
 } = {};
 
 export function benchMode(): boolean {
@@ -50,9 +54,10 @@ export async function runBench(layerBefore: MapLayer): Promise<void> {
   setBenchDepth("full"); benchHooks.restyle?.();
   benchHooks.setLayer?.(layerBefore);
   const navigator = benchNavigator();
+  const assistant = await benchAssistant();
   const tts = await benchTts();
   const { width, height } = Dimensions.get("window");
-  const report = { at: new Date().toISOString(), platform: Platform.OS, version: Platform.Version, model: (Platform.constants as { systemName?: string; interfaceIdiom?: string }).interfaceIdiom, window: `${width}x${height}`, results: [...fpsLog], navigator, tts };
+  const report = { at: new Date().toISOString(), platform: Platform.OS, version: Platform.Version, model: (Platform.constants as { systemName?: string; interfaceIdiom?: string }).interfaceIdiom, window: `${width}x${height}`, results: [...fpsLog], navigator, tts, assistant };
   try {
     const kv = (require("expo-sqlite/kv-store") as { default: { setItemAsync(k: string, v: string): Promise<void> } }).default;
     await kv.setItemAsync("navia.bench.v1", JSON.stringify(report));
@@ -92,4 +97,31 @@ async function benchTts(): Promise<number[]> {
     await done;
   }
   return out;
+}
+
+/** The co-pilot screen under 10 state updates a second (GPS at 1 Hz in real
+ * life): frame rate and React render time of each update. */
+async function benchAssistant(): Promise<{ updates: number; renders: number; avgRenderMs: number; p95RenderMs: number; maxRenderMs: number; fps: number | null; maxFrameMs: number | null } | null> {
+  if (!benchHooks.openAssistant) return null;
+  const { renderLog } = require("./perf") as typeof import("./perf");
+  const { useNaviaStore } = require("../engine/naviaController") as typeof import("../engine/naviaController");
+  benchHooks.openAssistant();
+  await wait(3500);
+  // A real conversation first: 20 messages on screen.
+  for (const q of ["де я", "куди далі", "що з gps", "де укриття", "скільки лишилось", "нема інтернету що тепер", "мені страшно", "що з тривогою", "де аптека", "статус"]) { benchHooks.assistantAsk?.(q); await wait(250); }
+  await wait(1500);
+  renderLog.length = 0;
+  fpsStart();
+  let updates = 0;
+  const phrase = "де найближче укриття пішки";
+  // State updates 10 / s and typing 8 letters / s at the same time.
+  const id = setInterval(() => { const st = useNaviaStore.getState(); useNaviaStore.setState({ state: { ...st.state, updatedAt: Date.now() } }); updates++; }, 100);
+  const typing = setInterval(() => { const n = (updates % phrase.length) + 1; benchHooks.assistantType?.(phrase.slice(0, n)); }, 125);
+  await wait(5000);
+  clearInterval(id);
+  clearInterval(typing);
+  benchHooks.assistantType?.("");
+  const f = await fpsEnd("co-pilot screen: 20 messages, 10 state updates / s + typing 8 letters / s");
+  const ms = renderLog.filter((r) => r.id === "assistant").map((r) => r.ms).sort((a, b) => a - b);
+  return { updates, renders: ms.length, avgRenderMs: ms.reduce((a, b) => a + b, 0) / Math.max(1, ms.length), p95RenderMs: ms[Math.floor(0.95 * (ms.length - 1))] ?? 0, maxRenderMs: ms[ms.length - 1] ?? 0, fps: f?.fps ?? null, maxFrameMs: f?.maxGapMs ?? null };
 }

@@ -337,7 +337,7 @@ const INTENT_WORDS: Record<NavigatorIntent, string> = {
   onRoute: "чи правильно їдете", reroute: "відхилення від маршруту", routeNext: "наступний маневр", eta: "скільки лишилось",
   whereAmI: "де ви", shelter: "укриття", alert: "тривога", status: "загальна обстановка", place: "місця поруч",
   noData: "дані, яких NAVIA не має", smalltalk: "розмова", classic: "загальне питання", unknown: "нерозпізнане питання",
-  confidence: "точність позиції", routeWhy: "чому цей маршрут", shelterWhy: "чи найближче укриття", emotion: "страх, паніка", offline: "робота без інтернету", clarify: "уточнення",
+  general: "загальне питання (мовна модель)", confidence: "точність позиції", routeWhy: "чому цей маршрут", shelterWhy: "чи найближче укриття", emotion: "страх, паніка", offline: "робота без інтернету", clarify: "уточнення",
 };
 
 /** A snapshot field in words, with its value at the time of the answer. */
@@ -554,9 +554,13 @@ registerHandler("clarify", (s, ctx) => {
   return { lines: [q], actions: opts.map((o) => ask(L(s, asks[o]![0], asks[o]![1]))), tone: "calm", used: [], missing: ["intent"], honest: true };
 });
 
+// "general": answered by the language model (askSmart); this handler is used
+// only when its wording did not pass the snapshot check.
+registerHandler("general", (s, ctx) => handlerFor("unknown")(s, ctx));
+
 registerHandler("unknown", (s) => ({
   lines: [
-    L(s, "Відповісти на це не можу: штурман працює на телефоні без мовної моделі й відповідає лише про дорогу — маршрут, GPS, тривоги, укриття, місця поруч і роботу без інтернету.", "I can't answer that: the navigator runs on the phone without a language model and only answers about the road — route, GPS, alerts, shelters, places nearby and working offline."),
+    L(s, "Мовна модель зараз недоступна, тож на це питання відповісти не вийде. Про дорогу — маршрут, GPS, тривоги, укриття, місця поруч, роботу без інтернету — відповідь є завжди.", "The language model is not available right now, so this question can't be answered. About the road — route, GPS, alerts, shelters, places nearby, working offline — there is always an answer."),
     L(s, "Спробуйте, наприклад: «куди далі», «що з GPS», «де укриття».", "Try, for example: “what's next”, “what about GPS”, “where's a shelter”."),
   ],
   actions: [ask(L(s, "Що далі?", "What's next?")), ask(L(s, "Де укриття?", "Where's a shelter?")), ask(L(s, "Статус", "Status"))],

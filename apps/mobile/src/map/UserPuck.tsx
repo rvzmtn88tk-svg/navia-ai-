@@ -124,7 +124,7 @@ export const UserPuck = React.memo(function UserPuck({ position, quality, billbo
           circleRadius: 20, circleColor: c.surface, circleStrokeColor: tone, circleStrokeWidth: 2.5, circlePitchAlignment: billboard ? "viewport" : "map",
         }} />
         <MapLibreGL.SymbolLayer id="navia-user-logo" style={{
-          iconImage: "naviaMark", iconSize: 0.052, iconRotate: ["get", "heading"], iconRotationAlignment: "map",
+          iconImage: "naviaMark", iconSize: 0.0464, iconRotate: ["get", "heading"], iconRotationAlignment: "map",
           iconPitchAlignment: billboard ? "viewport" : "map", iconAllowOverlap: true, iconIgnorePlacement: true,
           iconOpacity: quality === "lost" ? 0.55 : 1,
         }} />

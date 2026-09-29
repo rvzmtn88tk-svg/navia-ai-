@@ -256,6 +256,10 @@ export const uk = {
   "copilot.error": "Не вдалося підготувати відповідь. Спробуйте ще раз.",
   "copilot.listening": "Слухаю…",
   "copilot.micHold": "Утримуйте, поки говорите, або торкніться й скажіть",
+  "copilot.speakNow": "Говоріть",
+  "copilot.levelLlm": "Мовна модель",
+  "copilot.levelBasic": "Базовий режим",
+  "copilot.micPreparing": "Вмикаю мікрофон…",
   "copilot.mic": "Сказати голосом",
   "copilot.send": "Надіслати",
 
@@ -648,6 +652,10 @@ export const en: Record<StringKey, string> = {
   "copilot.error": "Couldn't prepare an answer. Please try again.",
   "copilot.listening": "Listening…",
   "copilot.micHold": "Hold while speaking, or tap and speak",
+  "copilot.speakNow": "Speak now",
+  "copilot.levelLlm": "Language model",
+  "copilot.levelBasic": "Basic mode",
+  "copilot.micPreparing": "Turning the microphone on…",
   "copilot.mic": "Speak",
   "copilot.send": "Send",
 

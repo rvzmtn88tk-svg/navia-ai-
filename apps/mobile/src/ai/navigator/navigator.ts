@@ -100,7 +100,33 @@ export class Navigator {
 
 /** Above this local confidence the phone answers at once, without the server. */
 export const LOCAL_SURE = 0.85;
-const GENERIC = new Set<NavigatorIntent>(["unknown", "smalltalk", "classic", "noData"]);
+const GENERIC = new Set<NavigatorIntent>(["unknown", "smalltalk", "classic", "noData", "general"]);
+
+/**
+ * Questions asking for advice, an explanation or something to be written
+ * ("що робити, якщо…", "як…", "чи можна…", "що таке…", "порадь", "розкажи",
+ * "напиши", "переклади"…). A keyword in them ("укриття", "аптечка",
+ * "бензин") makes the rules sure of a topic, but the person is not asking
+ * for the nearest shelter or pharmacy — the language model answers these.
+ * Direct questions about the trip ("як далеко", "як доїхати") stay local.
+ */
+const ADVICE = new RegExp([
+  "(що|шо|что|чо) (робити|делать|треба|нужно) (якщо|коли|як|если|когда)",
+  "(^|\\s)(як|как)\\s(?!далеко|довго (ще )?їхати|долго (ещё |еще )?ехать|доїхати|доехать|проїхати|проехать|туди|туда|ти\\??$|ты\\??$|справи|дела|там)",
+  "(чи|або) можна", "можно ли", "(що|шо|что) (таке|такое|означає|значит)", "(чим|чем) (відрізняється|отличается)", "навіщо|зачем|нащо",
+  "порадь|посоветуй|підкажи як|подскажи как|розкажи|расскажи|напиши|поясни|объясни|переклади|переведи",
+  "анекдот|жарт|шутк|вірш|стих|пісн|песн|музик|рецепт",
+  "(що|шо|что) (має|повинно|должно) бути|(що|что) (взяти|брать|взять)",
+  "\\bhow (do|to|can|should)\\b|\\bwhat (is|should i do if)\\b|\\btell me\\b|\\bwrite\\b|\\bexplain\\b",
+].join("|"), "i");
+
+/** When a language model is available: must this question go to it? (Otherwise the phone answers at once.) */
+export function wantsModel(question: string, local: { intent: NavigatorIntent; confidence: number }): boolean {
+  if (local.intent === "unknown" || local.intent === "clarify" || local.confidence < LOCAL_SURE) return true;
+  // Life and the last answer: always at once, on the phone.
+  if (local.intent === "emergency" || local.intent === "repeat" || local.intent === "explain") return false;
+  return ADVICE.test(question.toLowerCase());
+}
 
 /**
  * Layer 2 with the language engine: a confident on-device understanding
@@ -112,7 +138,7 @@ const GENERIC = new Set<NavigatorIntent>(["unknown", "smalltalk", "classic", "no
  */
 export async function askSmart(nav: Navigator, question: string, snapshot: Snapshot): Promise<NavigatorReply> {
   const local = understand(question);
-  if (local.confidence >= LOCAL_SURE && local.intent !== "unknown" && local.intent !== "clarify") return { ...nav.ask(question, snapshot), engine: "rules" };
+  if (!wantsModel(question, local)) return { ...nav.ask(question, snapshot), engine: "rules" };
   const { understandRemote } = require("./languageEngine") as typeof import("./languageEngine");
   const remote = await understandRemote(question, snapshot, nav.previousAnswer());
   if (!remote || remote.intent === "unknown") return { ...nav.ask(question, snapshot), engine: "rules" };

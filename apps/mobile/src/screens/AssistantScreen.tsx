@@ -3,18 +3,21 @@
 // and action buttons (walk to the shelter, call 112, "I've turned", "I'm
 // here"). On-device answers work without network; the Claude co-pilot is used
 // for the wording when the NAVIA server is connected, with the same actions.
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { recordRender } from "../perf/perf";
+import { benchHooks } from "../perf/bench";
+import * as Haptics from "expo-haptics";
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
 import { useAppSettings } from "../settings/AppSettings";
-import { remoteCopilotAvailable } from "../ai/copilotClient";
 import type { NavigatorIntent } from "../ai/navigator/intents";
 import { detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type PlaceKind, type WorldPlace } from "../ai/copilotBrain";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
-import { askSmart, LOCAL_SURE, Navigator, type NavigatorReply } from "../ai/navigator/navigator";
+import { askSmart, Navigator, wantsModel, type NavigatorReply } from "../ai/navigator/navigator";
+import { languageLevel, remoteLanguageAvailable } from "../ai/navigator/languageEngine";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { useNearbyStore } from "../store/nearbyStore";
@@ -40,6 +43,9 @@ function forSpeech(text: string): string {
 }
 
 export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Element {
+  // Render → commit time of every update (works in release builds; bench + perf log).
+  const renderStart = nowMs();
+  useLayoutEffect(() => { recordRender("assistant", "commit", nowMs() - renderStart); });
   const c = useColors();
   const { t, lang } = useT();
   const insets = useSafeAreaInsets();
@@ -52,9 +58,12 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const navigatorRef = useRef(new Navigator());
-  const [question, setQuestion] = useState("");
+  // The text field lives in <Composer> (typing does not re-render the screen).
+  const composer = useRef<ComposerHandle>(null);
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
+  /** The microphone really records (audiostart): only then "Говоріть". */
+  const [micReady, setMicReady] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [messages, setMessages] = useState<Message[]>(() => {
     const g = greeting(world);
@@ -63,7 +72,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
   const seq = useRef(1);
   const list = useRef<FlatList<Message>>(null);
   const handled = useRef(false);
-  const remote = remoteCopilotAvailable();
+  const remote = remoteLanguageAvailable();
 
   // Keep shelters ready for the most important question.
   useEffect(() => {
@@ -97,12 +106,13 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     const userId = ++seq.current;
     const replyId = ++seq.current;
     timing.current = { id: replyId, t0, computeMs, question: text };
-    setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) }]);
-    setQuestion("");
-    // Not sure on the phone (or not understood): the server's language model,
-    // when configured and signed in, decides what is asked; the answer still
-    // comes from the snapshot (askSmart). Otherwise the on-device rules.
-    const needRemote = remote && (reply.intent === "unknown" || reply.intent === "clarify" || reply.confidence < LOCAL_SURE);
+    // Not sure on the phone (or not understood): the language model (NAVIA
+    // proxy, or the signed-in server) decides what is asked; answers about the
+    // situation still come from the snapshot (askSmart). Otherwise the rules.
+    const needRemote = remote && wantsModel(text, reply);
+    // While the model is asked, the bubble says so (not the rules' refusal).
+    const first = needRemote ? { text: t("copilot.thinking"), actions: [] } : { text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) };
+    setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", ...first }]);
     const speakReply = (r: NavigatorReply) => {
       if (!spoken) return;
       const stt = listener.lastTiming.sttMs;
@@ -117,6 +127,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
       setBusy(true);
       const t1 = nowMs();
       void askSmart(navigatorRef.current, text, snapshotRef.current)
+        .catch((): NavigatorReply => ({ ...reply, engine: "rules" }))
         .then((r) => {
           const fin = { ...r, computeMs: nowMs() - t1 };
           setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: fin.text, actions: fin.actions, ...(fin.places ? { places: fin.places } : {}) } : m)));
@@ -131,7 +142,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
       void useNearbyStore.getState().load(kind);
     }
     setTimeout(() => list.current?.scrollToEnd({ animated: true }), 60);
-  }, [messages, remote, say]);
+  }, [messages, remote, say, t]);
 
   // When a place search that a reply was waiting for finishes, update that reply.
   useEffect(() => {
@@ -160,17 +171,25 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
 
   const listenRef = useRef<(() => Promise<void>) | null>(null);
   const listen = useCallback(async (hold = false) => {
+    const wasSpeaking = speaking;
     stopSpeaking();
     clearSpeechQueue();
+    setMicReady(false);
     setListening(true);
+    // Let the audio session switch from speaking to recording first.
+    if (wasSpeaking) await new Promise<void>((r) => setTimeout(r, 250));
     try {
-      await listener.startListening((heard) => send(heard, true), { language: lang === "uk" ? "uk-UA" : "en-US", hold });
+      await listener.startListening((heard) => send(heard, true), {
+        language: lang === "uk" ? "uk-UA" : "en-US", hold,
+        onReady: () => { setMicReady(true); void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); },
+      });
     } catch (err) {
-      setMessages((old) => [...old, { id: ++seq.current, role: "assistant", text: (err as Error).message || t("copilot.error") }]);
+      if ((err as Error).name !== "VoiceCancelled") setMessages((old) => [...old, { id: ++seq.current, role: "assistant", text: (err as Error).message || t("copilot.error") }]);
     } finally {
       setListening(false);
+      setMicReady(false);
     }
-  }, [lang, send, t]);
+  }, [lang, send, t, speaking]);
 
   listenRef.current = () => listen(false);
   // Hold-to-talk: pressing starts listening, releasing ends the phrase; a
@@ -185,7 +204,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
 
   const run = useCopilotActions(useCallback((q: string) => {
     // "Бачу …" is a prompt to type, not a finished question.
-    if (/\s$/.test(q)) setQuestion(q);
+    if (/\s$/.test(q)) composer.current?.setText(q);
     else void send(q);
   }, [send]));
 
@@ -201,60 +220,121 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     navigation.setParams({ initialQuestion: undefined, voice: undefined });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const chips = suggestions(world);
+  // Benchmark hook (perf/bench.ts): ask as a person would.
+  useEffect(() => {
+    benchHooks.assistantAsk = (q) => send(q);
+    return () => { benchHooks.assistantAsk = undefined; };
+  });
+
+  // Only what the chips depend on — not every GPS update.
+  const chipKey = `${world.alert?.active}|${world.gps.state}|${world.gps.mode}|${!!world.route}|${world.route?.offRoute}|${lang}`;
+  const chips = useMemo(() => suggestions(worldRef.current), [chipKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const runRef = useRef(run);
+  runRef.current = run;
+  const onAction = useCallback((a: CopilotAction) => runRef.current(a), []);
+  const renderItem = useCallback(({ item }: { item: Message }) => <MessageRow item={item} lang={lang} onAction={onAction} />, [lang, onAction]);
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const onSend = useCallback((q: string) => { void sendRef.current(q); }, []);
+  const level = languageLevel();
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={[styles.screen, { backgroundColor: c.background }]} keyboardVerticalOffset={insets.top + 44}>
-      <View style={styles.badgeRow}>
-        <NaviaAiMark size={56} active={busy || listening || speaking} />
-        <View style={styles.flex}>
-          <Text variant="headline">{t("copilot.title")}</Text>
-          <Text variant="caption" color="muted">{listening ? t("copilot.listening") : speaking ? t("copilot.speaking") : busy ? t("copilot.thinking") : t("copilot.ready")}{__DEV__ && lastLatencyMs != null ? ` · ⏱ ${lastLatencyMs} мс` : ""}</Text>
-        </View>
-        <StatusPill tone={remote ? "success" : "neutral"} icon="sparkle" label={remote ? "Claude" : t("copilot.onDevice")} />
-      </View>
+      <Header active={busy || listening || speaking} status={listening ? (micReady ? t("copilot.speakNow") : t("copilot.micPreparing")) : speaking ? t("copilot.speaking") : busy ? t("copilot.thinking") : t("copilot.ready")}
+        llm={level.mode === "llm"} />
       <FlatList
         ref={list}
         style={styles.flex}
         contentContainerStyle={styles.messages}
         data={messages}
-        keyExtractor={(m) => String(m.id)}
+        keyExtractor={keyOf}
         onContentSizeChange={() => list.current?.scrollToEnd({ animated: false })}
-        renderItem={({ item }) => item.role === "user" ? (
-          <View style={[styles.bubble, styles.user, { backgroundColor: c.accent }]}>
-            <Text variant="callout" color="onAccent">{item.text}</Text>
-          </View>
-        ) : (
-          <View style={styles.botBlock}>
-            <View style={[styles.bubble, styles.bot, { backgroundColor: c.surface, borderColor: c.border }]}>
-              <Text variant="callout">{item.text}</Text>
-            </View>
-            {item.places?.map((p) => <PlaceCard key={p.id} place={p} lang={lang} onRoute={(mode) => run({ kind: "route", label: "", mode, place: { name: p.name, lat: p.location.lat, lon: p.location.lon } })} t={t} />)}
-            {item.actions && item.actions.length > 0 && (
-              <View style={styles.actions}>
-                {item.actions.map((a, i) => <ActionButton key={`${a.kind}-${i}`} action={a} onPress={() => run(a)} />)}
-              </View>
-            )}
-          </View>
-        )}
+        renderItem={renderItem}
+        removeClippedSubviews
+        windowSize={7}
         ListFooterComponent={busy ? <ActivityIndicator color={c.accent} style={styles.busy} /> : null}
       />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.prompts} style={styles.promptsScroll} keyboardShouldPersistTaps="handled">
-        {chips.map((a) => a.kind === "ask" && <Chip key={a.question} label={a.label} onPress={() => void send(a.question)} />)}
-        <Chip label={t("copilot.iSee")} icon="eye" onPress={() => setQuestion(t("copilot.iSeePrefix"))} />
-      </ScrollView>
-      <View style={[styles.composer, { backgroundColor: c.surface, borderColor: c.border, marginBottom: insets.bottom + space.xs }]}>
-        <TextField value={question} onChangeText={setQuestion} placeholder={listening ? t("copilot.listening") : t("copilot.placeholder")} returnKeyType="send" onSubmitEditing={() => void send(question)} accessibilityLabel={t("copilot.placeholder")} />
-        {question.trim()
-          ? <IconButton icon="send" tone="accent" size={40} label={t("copilot.send")} onPress={() => void send(question)} />
-          : <Touchable accessibilityRole="button" accessibilityLabel={t("copilot.mic")} accessibilityHint={t("copilot.micHold")} onPressIn={onMicIn} onPressOut={onMicOut} hitSlop={space.xxs}
-              style={[styles.mic, { backgroundColor: listening ? c.critical : c.accent }]}>
-              <Icon name="mic" size={22} color={c.onAccent} />
-            </Touchable>}
-      </View>
+      <Chips chips={chips} onSend={onSend} onISee={() => composer.current?.setText(t("copilot.iSeePrefix"))} />
+      <Composer ref={composer} listening={listening} micReady={micReady} onSend={onSend} onMicIn={onMicIn} onMicOut={onMicOut} bottom={insets.bottom} />
     </KeyboardAvoidingView>
   );
 }
+
+const keyOf = (m: Message) => String(m.id);
+
+const Header = React.memo(function Header({ active, status, llm }: { active: boolean; status: string; llm: boolean }): JSX.Element {
+  const { t } = useT();
+  return (
+    <View style={styles.badgeRow}>
+      <NaviaAiMark size={64} active={active} />
+      <View style={styles.flex}>
+        <Text variant="headline">{t("copilot.title")}</Text>
+        <Text variant="caption" color="muted">{status}</Text>
+      </View>
+      <View style={styles.pillSlot}><StatusPill tone={llm ? "success" : "neutral"} icon="sparkle" label={llm ? t("copilot.levelLlm") : t("copilot.levelBasic")} /></View>
+    </View>
+  );
+});
+
+const MessageRow = React.memo(function MessageRow({ item, lang, onAction }: { item: Message; lang: "uk" | "en"; onAction: (a: CopilotAction) => void }): JSX.Element {
+  const c = useColors();
+  const { t } = useT();
+  if (item.role === "user") {
+    return (
+      <View style={[styles.bubble, styles.user, { backgroundColor: c.accent }]}>
+        <Text variant="callout" color="onAccent">{item.text}</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.botBlock}>
+      <View style={[styles.bubble, styles.bot, { backgroundColor: c.surface, borderColor: c.border }]}>
+        <Text variant="callout">{item.text}</Text>
+      </View>
+      {item.places?.map((p) => <PlaceCard key={p.id} place={p} lang={lang} onRoute={(mode) => onAction({ kind: "route", label: "", mode, place: { name: p.name, lat: p.location.lat, lon: p.location.lon } })} t={t} />)}
+      {item.actions && item.actions.length > 0 && (
+        <View style={styles.actions}>
+          {item.actions.map((a, i) => <ActionButton key={`${a.kind}-${i}`} action={a} onPress={() => onAction(a)} />)}
+        </View>
+      )}
+    </View>
+  );
+});
+
+const Chips = React.memo(function Chips({ chips, onSend, onISee }: { chips: CopilotAction[]; onSend: (q: string) => void; onISee: () => void }): JSX.Element {
+  const { t } = useT();
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.prompts} style={styles.promptsScroll} keyboardShouldPersistTaps="handled">
+      {chips.map((a) => a.kind === "ask" && <Chip key={a.question} label={a.label} onPress={() => onSend(a.question)} />)}
+      <Chip label={t("copilot.iSee")} icon="eye" onPress={onISee} />
+    </ScrollView>
+  );
+});
+
+type ComposerHandle = { setText: (text: string) => void };
+/** The text field keeps its own state: typing re-renders only this bar. */
+const Composer = React.memo(React.forwardRef<ComposerHandle, { listening: boolean; micReady: boolean; onSend: (q: string) => void; onMicIn: () => void; onMicOut: () => void; bottom: number }>(function Composer({ listening, micReady, onSend, onMicIn, onMicOut, bottom }, ref) {
+  const c = useColors();
+  const { t } = useT();
+  const [text, setText] = useState("");
+  React.useImperativeHandle(ref, () => ({ setText }), []);
+  useEffect(() => {
+    benchHooks.assistantType = setText;
+    return () => { benchHooks.assistantType = undefined; };
+  }, []);
+  const submit = () => { const q = text.trim(); if (!q) return; setText(""); onSend(q); };
+  return (
+    <View style={[styles.composer, { backgroundColor: c.surface, borderColor: c.border, marginBottom: bottom + space.xs }]}>
+      <TextField value={text} onChangeText={setText} placeholder={listening ? (micReady ? t("copilot.speakNow") : t("copilot.micPreparing")) : t("copilot.placeholder")} returnKeyType="send" onSubmitEditing={submit} accessibilityLabel={t("copilot.placeholder")} />
+      {text.trim()
+        ? <IconButton icon="send" tone="accent" size={40} label={t("copilot.send")} onPress={submit} />
+        : <Touchable accessibilityRole="button" accessibilityLabel={t("copilot.mic")} accessibilityHint={t("copilot.micHold")} onPressIn={onMicIn} onPressOut={onMicOut} hitSlop={space.xxs}
+            style={[styles.mic, { backgroundColor: listening ? c.critical : c.accent }]}>
+            <Icon name="mic" size={22} color={c.onAccent} />
+          </Touchable>}
+    </View>
+  );
+}));
 
 function PlaceCard({ place, lang, onRoute, t }: { place: WorldPlace; lang: "uk" | "en"; onRoute: (mode: "walk" | "car") => void; t: ReturnType<typeof useT>["t"] }): JSX.Element {
   const c = useColors();
@@ -301,6 +381,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: space.md },
   flex: { flex: 1, minWidth: 0 },
   badgeRow: { paddingTop: space.sm, flexDirection: "row", alignItems: "center", gap: space.sm },
+  pillSlot: { alignSelf: "center" },
   messages: { paddingVertical: space.md, gap: space.sm },
   bubble: { maxWidth: "88%", paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.lg },
   user: { alignSelf: "flex-end", borderBottomRightRadius: radius.sm / 2 },

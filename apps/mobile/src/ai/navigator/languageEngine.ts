@@ -7,6 +7,7 @@
 //               server does not answer in time.
 // The active level and why is shown in Diagnostics.
 import { backendStatus, callBackend } from "../copilotClient";
+import { config } from "../../config";
 import type { NavigatorIntent } from "./intents";
 import type { Snapshot } from "./snapshot";
 
@@ -18,9 +19,51 @@ let lastError: string | null = null;
 let lastOkAt: number | null = null;
 let lastLatencyMs: number | null = null;
 
-export function languageLevel(): LanguageLevel {
+/** Anonymous per-install id for the proxy's rate limit (random, not tied to the user). */
+let deviceId: string | null = null;
+function device(): string {
+  if (deviceId) return deviceId;
+  deviceId = `nv-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  try {
+    const kv = (require("expo-sqlite/kv-store") as { default: { getItemSync?(k: string): string | null; setItemSync?(k: string, v: string): void } }).default;
+    const saved = kv.getItemSync?.("navia.device.v1");
+    if (saved) deviceId = saved; else kv.setItemSync?.("navia.device.v1", deviceId);
+  } catch { /* no storage: a session id */ }
+  return deviceId;
+}
+
+async function callProxy(question: string, facts: Record<string, unknown>): Promise<{ intent?: string; confidence?: number; answer?: string; usedFacts?: string[] }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${config.aiProxyUrl!.replace(/\/$/, "")}/v1/understand`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-navia-app": config.aiAppToken ?? "", "x-navia-device": device() },
+      body: JSON.stringify({ question, facts }),
+      signal: controller.signal,
+    });
+    const body = await res.json() as { error?: string };
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return body as { intent?: string; confidence?: number; answer?: string; usedFacts?: string[] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** A language model can be asked at all (proxy configured, or the signed-in Firebase backend). */
+export function remoteLanguageAvailable(): boolean {
+  if (config.aiProxyUrl) return true;
   const b = backendStatus();
-  if (!b.configured) return { mode: "fallback", reason: "сервер мовної моделі не налаштовано (EXPO_PUBLIC_NAVIA_AI_BACKEND_URL)" };
+  return b.configured && b.signedIn;
+}
+
+export function languageLevel(): LanguageLevel {
+  if (config.aiProxyUrl) {
+    if (lastError && lastOkAt == null) return { mode: "fallback", reason: `сервер мовної моделі не відповідає: ${lastError}` };
+    return { mode: "llm", reason: lastLatencyMs != null ? `проксі NAVIA, остання відповідь ${lastLatencyMs} мс` : "проксі NAVIA налаштовано" };
+  }
+  const b = backendStatus();
+  if (!b.configured) return { mode: "fallback", reason: "сервер мовної моделі не налаштовано (EXPO_PUBLIC_NAVIA_AI_PROXY_URL)" };
   if (!b.signedIn) return { mode: "fallback", reason: "потрібен вхід в акаунт NAVIA" };
   if (lastError && (lastOkAt == null)) return { mode: "fallback", reason: `сервер не відповідає: ${lastError}` };
   return { mode: "llm", reason: lastLatencyMs != null ? `остання відповідь сервера ${lastLatencyMs} мс` : "сервер налаштовано" };
@@ -53,10 +96,11 @@ export async function understandRemote(question: string, s: Snapshot, previousAn
   if (testRemote) {
     try { const r = await testRemote(question, factsFor(s, previousAnswer)); return { intent: (r.intent ?? "unknown") as NavigatorIntent, confidence: r.confidence ?? 0, answer: r.answer ?? "", latencyMs: 0 }; } catch { return null; }
   }
-  if (languageLevel().mode === "fallback" && !(backendStatus().configured && backendStatus().signedIn)) return null;
+  if (!config.aiProxyUrl && !(backendStatus().configured && backendStatus().signedIn)) return null;
   const t0 = Date.now();
   try {
-    const r = await callBackend<{ intent?: string; confidence?: number; answer?: string }>({ question, mode: "understand", facts: factsFor(s, previousAnswer) }, TIMEOUT_MS);
+    const facts = factsFor(s, previousAnswer);
+    const r = config.aiProxyUrl ? await callProxy(question, facts) : await callBackend<{ intent?: string; confidence?: number; answer?: string }>({ question, mode: "understand", facts }, TIMEOUT_MS);
     lastLatencyMs = Date.now() - t0;
     lastOkAt = Date.now();
     lastError = null;

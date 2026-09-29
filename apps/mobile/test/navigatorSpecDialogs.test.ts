@@ -48,7 +48,7 @@ const CASES: Case[] = [
   { cat: "И", sit: "driving", q: "Без інтернету карта працює?", intents: ["offline"] },
   { cat: "И", sit: "driving", q: "Зник мобільний інтернет", intents: ["offline"] },
   // К. anything else: honest refusal with the reason
-  { cat: "К", sit: "driving", q: "Напиши вірш", intents: ["unknown", "noData"], check: (t) => assert.match(t, /не можу|не маю|немає/i) },
+  { cat: "К", sit: "driving", q: "Напиши вірш", intents: ["unknown", "noData"], check: (t) => assert.match(t, /не можу|не маю|немає|недоступн/i) },
   { cat: "К", sit: "driving", q: "Скільки буде два плюс два?", intents: ["unknown", "noData"] },
   { cat: "К", sit: "driving", q: "Tell me a joke", intents: ["noData", "unknown"] },
 ];

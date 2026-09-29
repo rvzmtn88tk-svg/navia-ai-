@@ -23,6 +23,7 @@ export type NavigatorIntent =
   | "emotion"         // "I'm scared", panic
   | "offline"         // no internet — what works now
   | "clarify"         // not sure what is asked: a short question back
+  | "general"         // any other question the language model answers from general knowledge
   | "onRoute"         // am I on the right road
   | "reroute"         // I left the route / what if I get lost off it
   | "routeNext"       // what next / how far to the turn

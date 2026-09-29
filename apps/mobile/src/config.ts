@@ -19,6 +19,10 @@ const publicValhallaDemoUrl = "https://valhalla1.openstreetmap.de";
 export const config = {
   valhallaUrl: readEnv("EXPO_PUBLIC_NAVIA_VALHALLA_URL") ?? publicValhallaDemoUrl,
   aiBackendUrl: readEnv("EXPO_PUBLIC_NAVIA_AI_BACKEND_URL"),
+  /** NAVIA language proxy (Cloudflare Worker, server/navia-proxy): no sign-in needed. */
+  aiProxyUrl: readEnv("EXPO_PUBLIC_NAVIA_AI_PROXY_URL"),
+  /** Identifies the app to the proxy (not a provider key; abuse is also rate-limited per device). */
+  aiAppToken: readEnv("EXPO_PUBLIC_NAVIA_AI_APP_TOKEN"),
   mapStyleUrl: readEnv("EXPO_PUBLIC_NAVIA_MAP_STYLE_URL") ?? lightMapStyleUrl,
   mapStyleDarkUrl: readEnv("EXPO_PUBLIC_NAVIA_MAP_STYLE_DARK_URL") ?? darkMapStyleUrl,
   autocompleteUrl: readEnv("EXPO_PUBLIC_NAVIA_AUTOCOMPLETE_URL") ?? "https://photon.komoot.io/api",

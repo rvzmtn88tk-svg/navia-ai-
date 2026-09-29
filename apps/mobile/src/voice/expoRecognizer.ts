@@ -5,6 +5,7 @@
 // NAVIA's vocabulary are given as contextual hints.
 import { ExpoSpeechRecognitionModule } from "expo-speech-recognition";
 import type { Recognizer } from "./handsFree";
+import { onDeviceFor } from "../providers/ExpoSpeechVoiceProvider";
 
 export async function handsFreePermission(): Promise<boolean> {
   try { return (await ExpoSpeechRecognitionModule.requestPermissionsAsync()).granted; } catch { return false; }
@@ -13,7 +14,7 @@ export async function handsFreePermission(): Promise<boolean> {
 export function expoRecognizer(lang: "uk" | "en"): Recognizer & { onDevice: boolean } {
   const locale = lang === "uk" ? "uk-UA" : "en-US";
   let onDevice = false;
-  try { onDevice = ExpoSpeechRecognitionModule.supportsOnDeviceRecognition(); } catch { onDevice = false; }
+  void onDeviceFor(locale).then((v) => { onDevice = v; });
   let subs: { remove(): void }[] = [];
   const clear = () => { for (const s of subs) s.remove(); subs = []; };
   return {
