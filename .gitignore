@@ -8,3 +8,6 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Monte Carlo per-scenario rows (large; regenerate with npm run sim:gnss:100k)
+packages/core/sim/reports/*.rows.jsonl

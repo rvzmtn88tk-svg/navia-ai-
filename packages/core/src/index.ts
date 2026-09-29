@@ -32,3 +32,4 @@ export * from "./place-search";
 export * from "./traffic";
 export * from "./trip-planner";
 export * from "./copilot";
+export * from "./resilient";

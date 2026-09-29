@@ -13,5 +13,5 @@
     // TypeScript silently skips any entry that doesn't exist.
     "typeRoots": ["./node_modules/@types", "../../node_modules/@types", "/opt/node-tools/node_modules/@types"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "eval/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "eval/**/*.ts", "sim/**/*.ts"]
 }

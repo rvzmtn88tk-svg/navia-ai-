@@ -20,10 +20,28 @@ function clock(d: Date): string {
 function maneuverLine(step: RouteStep | null, distanceM: number | null, state: NavigationState): string {
   if (!step) return "none";
   const road = step.roadName ? ` onto ${step.roadName}` : "";
+  const sigma = state.positioning?.maneuverUncertaintyM;
+  // GNSS-independent positioning knows how uncertain the distance is: give it with its error bar while that is still useful.
+  if (state.confidenceBand === "LOW" && sigma != null && sigma <= 150 && distanceM != null) {
+    return `${step.maneuver}${road} in about ${Math.round(distanceM / 10) * 10} m (±${Math.round(sigma / 10) * 10} m)`;
+  }
   if (state.confidenceBand === "LOW" || state.confidenceBand === "UNKNOWN") {
     return `${step.maneuver}${road} (distance withheld: position uncertain)`;
   }
   return distanceM != null ? `${step.maneuver}${road} in ${Math.round(distanceM / 10) * 10} m` : `${step.maneuver}${road}`;
+}
+
+function positioningLine(state: NavigationState): string | null {
+  const p = state.positioning;
+  if (!p) return null;
+  const since = p.secondsSinceTrustedFix;
+  const ago = since == null ? "none yet" : since < 90 ? `${Math.round(since)} s ago` : `${Math.round(since / 60)} min ago`;
+  const how = p.source === "DEAD_RECKONING"
+    ? `no usable GPS: road map + ${p.imuAvailable ? "gyroscope/accelerometer + " : ""}speed model`
+    : p.source === "FUSED" ? "GPS blended with motion sensors" : "GPS";
+  return `positioning: source=${p.source} (${how}) gnss_verdict=${p.gnssVerdict}` +
+    `${p.gnssSuspectedSpoofing ? " suspected_spoofing=yes" : ""} uncertainty=±${Math.round(p.uncertaintyM)} m` +
+    ` motion_sensors=${p.imuAvailable ? "yes" : "no"} last_trusted_fix=${ago}`;
 }
 
 export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSession): string {
@@ -36,6 +54,8 @@ export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSessi
     `nav: mode=${state.mode} gnss=${state.gnss} position_confidence=${state.confidenceBand}` +
     ` network=${state.networkAvailable ? "online" : "offline"}${state.offRoute ? " off_route=yes" : ""}`,
   );
+  const positioning = positioningLine(state);
+  if (positioning) lines.push(positioning);
   lines.push(`speed: ${state.speedMps != null ? `${Math.round(state.speedMps * 3.6)} km/h` : "unknown"}`);
 
   const rc = buildRouteContext(runtime);
@@ -54,6 +74,11 @@ export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSessi
         break;
       }
       cum = end;
+    }
+    // The resilient navigator tracks the distance to the next maneuver itself.
+    if (state.positioning && state.nextStep && state.nextManeuverDistanceM != null) {
+      nextStep = state.nextStep;
+      toNextM = state.nextManeuverDistanceM;
     }
     if (currentStep?.roadName) lines.push(`road: ${currentStep.roadName}`);
     lines.push(`next_maneuver: ${maneuverLine(nextStep, toNextM, state)}`);

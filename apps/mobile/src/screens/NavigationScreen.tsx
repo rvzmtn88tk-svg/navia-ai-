@@ -11,7 +11,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import type { GNSSRawSample, IMUSample } from "@navia/core";
+import type { GNSSRawSample, IMUSample, NavigationState } from "@navia/core";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { DEMO_DESTINATION } from "@navia/core";
 import { navigationEngine, demoEngine, useNaviaStore, tripPlanner, demoTripPlanner, demoCopilot, activePlanner, activeCopilot } from "../engine/naviaController";
@@ -39,10 +39,29 @@ function maneuverPhrase(m: string): string {
   }
 }
 
-function gnssStatusText(gnss: string): string {
-  if (gnss === "NORMAL") return "GNSS: норма";
-  if (gnss === "DEGRADED") return "GNSS нестабільний";
+function gnssStatusText(state: NavigationState): string {
+  const p = state.positioning;
+  if (p) {
+    const err = `±${Math.max(10, Math.round(p.uncertaintyM / 10) * 10)} м`;
+    if (p.gnssSuspectedSpoofing) return `GPS підмінено — ігнорую, веду за датчиками (${err})`;
+    if (p.source === "DEAD_RECKONING") return `Без GPS: карта + ${p.imuAvailable ? "гіроскоп" : "швидкість"} (${err})`;
+    if (p.gnssVerdict === "DEGRADED") return `GPS нестабільний (${err})`;
+    return "GPS: норма";
+  }
+  if (state.gnss === "NORMAL") return "GNSS: норма";
+  if (state.gnss === "DEGRADED") return "GNSS нестабільний";
   return "GNSS втрачено — оцінюю положення";
+}
+
+/** One spoken line when the positioning situation changes (not on every tick). */
+function positioningAnnouncement(prev: string | null, state: NavigationState): { key: string; text: string | null } {
+  const p = state.positioning;
+  const key = !p ? "none" : p.gnssSuspectedSpoofing ? "spoof" : p.source === "DEAD_RECKONING" ? "dr" : "gps";
+  if (key === prev) return { key, text: null };
+  if (key === "spoof") return { key, text: "Увага: сигнал GPS схожий на підробку. Ігнорую його і веду за картою та датчиками руху. Звіряйте повороти з табличками." };
+  if (key === "dr") return { key, text: "GPS зник. Продовжую вести за картою та датчиками руху, точність поступово знижується." };
+  if (key === "gps" && (prev === "dr" || prev === "spoof")) return { key, text: "GPS відновлено." };
+  return { key, text: null };
 }
 
 export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
@@ -52,6 +71,7 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
   const [routeError, setRouteError] = useState<string | null>(null);
   const voice = useRef(new ExpoSpeechVoiceProvider()).current;
   const lastAnnouncedStepId = useRef<string | null>(null);
+  const lastPositioningKey = useRef<string | null>(null);
   const rerouting = useRef(false);
 
   useEffect(() => {
@@ -106,8 +126,9 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
         navigationEngine.tick(Date.now());
         markStopsVisited();
         refresh();
-        const here = navigationEngine.getState().position?.position;
-        if (here) void maybeReroute({ lat: here.lat, lon: here.lon });
+        // Off-route without GPS: reroute from the junction ahead of the car on the road it is on.
+        const from = navigationEngine.getRerouteOrigin();
+        if (from) void maybeReroute(from);
       }, TICK_INTERVAL_MS);
     }
 
@@ -165,14 +186,29 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
   }, [isDemoMode, destinationLat, destinationLon]);
 
   // Speak the next maneuver once, the first time it becomes the current one.
+  // The distance is to the maneuver (when the engine tracks it), not the step's length.
   useEffect(() => {
     const step = state.nextStep;
     if (step && step.id !== lastAnnouncedStepId.current) {
       lastAnnouncedStepId.current = step.id;
-      const text = `Через ${Math.round(step.distanceM)} метрів, ${maneuverPhrase(step.maneuver)}${step.roadName ? `, на ${step.roadName}` : ""}.`;
+      const road = step.roadName ? `, на ${step.roadName}` : "";
+      const toTurn = state.nextManeuverDistanceM;
+      const uncertain = state.confidenceBand === "LOW" || state.confidenceBand === "UNKNOWN";
+      const text = toTurn == null
+        ? `Далі ${maneuverPhrase(step.maneuver)}${road}.`
+        : uncertain
+          ? `Приблизно через ${Math.round(toTurn / 10) * 10} метрів ${maneuverPhrase(step.maneuver)}${road}. Звірте з табличкою.`
+          : `Через ${Math.round(toTurn / 10) * 10} метрів, ${maneuverPhrase(step.maneuver)}${road}.`;
       void voice.speak(text).catch(() => {});
     }
-  }, [state.nextStep, voice]);
+  }, [state.nextStep, state.nextManeuverDistanceM, state.confidenceBand, voice]);
+
+  // Say it once when GPS is lost, looks spoofed, or comes back.
+  useEffect(() => {
+    const { key, text } = positioningAnnouncement(lastPositioningKey.current, state);
+    lastPositioningKey.current = key;
+    if (text) void voice.speak(text).catch(() => {});
+  }, [state, voice]);
 
   if (permissionDenied) {
     return (
@@ -208,7 +244,13 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
 
       {state.nextStep && (
         <View style={styles.hudTop}>
-          <Text style={styles.hudTopDistance}>Через {Math.round(state.nextStep.distanceM)} м</Text>
+          {state.nextManeuverDistanceM != null ? (
+            <Text style={styles.hudTopDistance}>
+              {state.confidenceBand === "LOW" || state.confidenceBand === "UNKNOWN" ? "≈ " : ""}Через {Math.round(state.nextManeuverDistanceM / 10) * 10} м
+              {state.positioning && state.positioning.maneuverUncertaintyM != null && state.positioning.maneuverUncertaintyM > 25
+                ? ` (±${Math.round(state.positioning.maneuverUncertaintyM / 10) * 10} м)` : ""}
+            </Text>
+          ) : null}
           <Text style={styles.hudTopManeuver}>{maneuverPhrase(state.nextStep.maneuver)}</Text>
           {state.nextStep.roadName ? <Text style={styles.hudTopRoad}>{state.nextStep.roadName}</Text> : null}
         </View>
@@ -222,7 +264,7 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
           </Text>
         </View>
         <View style={styles.hudBottomRow}>
-          <Text style={[styles.hudBottomStatus, state.gnss !== "NORMAL" && styles.hudBottomWarn]}>{gnssStatusText(state.gnss)}</Text>
+          <Text style={[styles.hudBottomStatus, state.gnss !== "NORMAL" && styles.hudBottomWarn]}>{gnssStatusText(state)}</Text>
           <Text style={styles.hudBottomStatus}>Позиція: {state.confidenceBand}</Text>
         </View>
         {state.offRoute && <Text style={styles.hudOffRoute}>Ви відхилилися від маршруту. Перераховую…</Text>}

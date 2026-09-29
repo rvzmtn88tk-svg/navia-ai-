@@ -38,7 +38,13 @@ const idleState: NavigationState = {
 };
 
 export const routingProvider = new OnlineValhallaProvider();
-export const navigationEngine = new NavigationEngine({ routingProvider });
+// resilient: keep guiding to the destination when GPS is jammed or spoofed
+// (road-constrained particle filter + gyro + accelerometer; see
+// docs/GNSS_DENIED_REPORT.md). Online routes come with no local road graph,
+// so the route itself is the road network; expo-sensors reports
+// accelerometer in g and gyro in rad/s (MotionPreprocessor defaults), and the
+// gravity sign / vibration thresholds are learned from GPS while it is good.
+export const navigationEngine = new NavigationEngine({ routingProvider, resilient: true });
 export const demoEngine = new DemoEngine({
   graph: DEMO_KYIV_TO_BORYSPIL_GRAPH, origin: DEMO_ORIGIN, destination: DEMO_DESTINATION, pois: DEMO_POIS,
 });

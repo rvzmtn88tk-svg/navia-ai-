@@ -266,6 +266,7 @@ export class DemoEngine {
       routeProgressM: progress.distanceCompletedM,
       routeRemainingM: progress.distanceRemainingM,
       nextStep: progress.nextStep,
+      nextManeuverDistanceM: progress.nextStepDistanceM,
       nearbyLandmarks: [],
       offRoute: offRouteConfirmed,
       networkAvailable: this.networkAvailable,

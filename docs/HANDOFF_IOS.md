@@ -73,7 +73,7 @@ ANTHROPIC_API_KEY=… npm run eval:ai       # live eval on the real models (cost
 ```
 
 The app talks to `POST {backend}/v1/copilot/complete` (protocol
-`2026-09-29.1`). If you already run a different server, either deploy
+`2026-09-29.2`). If you already run a different server, either deploy
 `apps/ai-backend` or make yours implement this contract (see
 `apps/ai-backend/src/handler.ts`).
 
@@ -110,6 +110,13 @@ open ios/NAVIA.xcworkspace                # Signing & Capabilities → select yo
 npx expo run:ios --device --configuration Release   # pick the connected iPhone; JS bundle embedded
 #   Debug alternative: npx expo run:ios --device  (phone and Mac on the same Wi-Fi, Metro running)
 ```
+
+GNSS-denied navigation needs no extra native module or permission: it uses
+`expo-location` (already there) and the accelerometer/gyroscope from
+`expo-sensors`, which iOS gives without a permission prompt. Mount the phone
+in a holder (any orientation); the first few minutes with good GPS calibrate
+it (gravity sign, vibration level). What to check on a real drive is in
+`docs/GNSS_DENIED_REPORT.md` → "Validating on the phone".
 
 On the phone: allow Location, then on the Home screen switch on
 **«Надсилати контекст поїздки ШІ»** (off by default). Tap 🎤 in navigation

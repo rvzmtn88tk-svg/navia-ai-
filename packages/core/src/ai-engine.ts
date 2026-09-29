@@ -167,12 +167,20 @@ export class DeterministicDemoAIProvider implements AIProvider {
     const step = AIEngine.getNextTurn(context);
     if (!step) return "Наразі немає активного маршруту з наступним поворотом.";
     const { band } = AIEngine.getPositionConfidence(context);
+    // Distance to the maneuver when the engine tracks it; the step's own
+    // length is not the distance from the car.
+    const toTurn = context.state.nextManeuverDistanceM;
+    const sigma = context.state.positioning?.maneuverUncertaintyM;
     // Policy: "if confidence is low, say so" — and don't hand out a precise
     // distance figure when the position it's measured from isn't trustworthy.
+    // With GNSS-independent positioning the error bar is known: give it.
+    if (band === "LOW" && toTurn != null && sigma != null && sigma <= 150) {
+      return `Без точного GPS: орієнтовно за ${Math.round(toTurn / 10) * 10} м (±${Math.round(sigma / 10) * 10} м) ${maneuverPhrase(step.maneuver)} на ${step.roadName}. Звірте поворот із табличкою або орієнтиром.`;
+    }
     if (band === "LOW" || band === "UNKNOWN") {
       return `Я не можу впевнено назвати точну відстань до наступного повороту, бо позиція зараз неточна. Орієнтовно: ${maneuverPhrase(step.maneuver)} на ${step.roadName}.`;
     }
-    return `Наступний маневр — ${maneuverPhrase(step.maneuver)} на ${step.roadName}, за ${Math.round(step.distanceM)} м.`;
+    return `Наступний маневр — ${maneuverPhrase(step.maneuver)} на ${step.roadName}, за ${Math.round(toTurn ?? step.distanceM)} м.`;
   }
 
   private describeProgress(context: NavigationContext): string {
@@ -187,6 +195,18 @@ export class DeterministicDemoAIProvider implements AIProvider {
   private describeGnss(context: NavigationContext): string {
     const gnss = AIEngine.getGNSSState(context);
     const { band } = AIEngine.getPositionConfidence(context);
+    const p = context.state.positioning;
+    if (p) {
+      // GNSS-independent positioning is running: say what it is actually doing.
+      const err = `Похибка позиції зараз близько ${Math.round(p.uncertaintyM / 10) * 10 || 10} м.`;
+      if (p.gnssSuspectedSpoofing) {
+        return `Сигнал GPS схожий на підробку — він суперечить руху автомобіля, тому я його ігнорую і веду за картою доріг${p.imuAvailable ? ", гіроскопом" : ""} і швидкістю. ${err} Звіряйте повороти з табличками та орієнтирами.`;
+      }
+      if (p.source === "DEAD_RECKONING") {
+        return `GPS зараз недоступний. Я продовжую вести до цілі за картою доріг${p.imuAvailable ? ", гіроскопом і акселерометром телефона" : " і моделлю швидкості (датчики руху недоступні, точність нижча)"}. ${err} Звіряйте повороти з табличками та орієнтирами.`;
+      }
+      if (gnss === "NORMAL") return "GPS у нормі. Якщо сигнал зникне або буде підмінений, я продовжу вести за картою доріг і датчиками руху телефона.";
+    }
     if (gnss === "NORMAL") return "GNSS-сигнал у нормі.";
     if (gnss === "DEGRADED") return `GNSS-сигнал ослаблений. ${CONFIDENCE_PHRASE[band]}.`;
     return `GNSS-сигнал втрачено. ${CONFIDENCE_PHRASE[band]}. Я не можу стверджувати, що GPS справний, поки немає даних.`;
