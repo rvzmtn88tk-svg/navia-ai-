@@ -57,6 +57,21 @@ npm run bench:ai                         # usefulness benchmark vs. baselines
 npx tsx packages/core/eval/model-in-the-loop.ts <scenario-id>   # step a scenario as the model
 ```
 
+### GNSS-denied navigation tests
+
+| File | Covers |
+|---|---|
+| `test/resilient-navigation.test.ts` | `RoadNetwork` (directed edges, turn sign, route→graph mapping); `MotionPreprocessor` (vertical yaw for flat and upright phones, learning the platform's gravity sign from GPS turns); `NavigationEngine({ resilient })` on generated drives with 10 Hz raw IMU: GNSS jammed to the end → still guided to ARRIVED within 100 m, distance to the maneuver (not step length), far spoof rejected and flagged, route-only network through a jam, no-IMU never HIGH, classic path unchanged when off; state machine can arrive while GNSS is lost; the offline co-pilot answer to "Що робити без GPS?"; a 16-scenario closed-loop smoke test; world generator reproducibility |
+
+Closed-loop Monte Carlo (not part of `npm test`; ~25 min for 100k):
+
+```bash
+npm run sim:gnss          # 2,000 scenarios → packages/core/sim/reports/mc-2k.json
+npm run sim:gnss:100k     # 100,000 scenarios → packages/core/sim/reports/mc-100k.json
+npm run sim:replay -- 160 # one scenario; SIM_TRACE=1 / SIM_TRACE_TURNS=1 for traces
+npx tsx packages/core/sim/render-report.ts packages/core/sim/reports/mc-100k.json   # Markdown tables
+```
+
 ## apps/mobile
 
 Not typechecked, not built, not run — see `LIMITATIONS.md` for exactly

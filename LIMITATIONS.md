@@ -233,3 +233,24 @@ Not verified here, and why:
   `app.json` is not in the repository; `expo prebuild` fails without it.
 - Saved home/work and AI consent are session-only (no persistent storage
   yet), like recent destinations.
+
+## GNSS-denied navigation (jamming / spoofing)
+
+Details and numbers: `docs/GNSS_DENIED_REPORT.md`. Verified here: the
+navigator, its integration into `NavigationEngine`, the app/co-pilot wiring
+(typecheck + iOS JS bundle export), unit/integration tests, and a
+closed-loop Monte Carlo of 100,000 simulated trips. Not verified here:
+- **No real drive.** Synthetic road networks, sensor and spoof models; the
+  code has not run on an iPhone in a car. Record real GNSS+IMU logs and
+  replay them (report §6).
+- **Online routes have no local road graph**, so in the app the network is
+  the route itself: along-route tracking and spoof rejection work, but a
+  turn off the route is recognised only from gyro-confirmed GPS, and the
+  turn-anchored spoof check is off. Wiring the offline OSM graph into
+  `networkForRoute` enables the full behaviour the simulator measured.
+- **Without gyro/accelerometer** confidence is capped at LOW and success is
+  much lower (see report).
+- **Slow along-road drift spoofing** is detected only at the next turn or
+  stop.
+- **IMU calibration** (gravity sign, stop/move vibration threshold) is
+  learned from good GPS during the first minutes; untested on real mounts.
