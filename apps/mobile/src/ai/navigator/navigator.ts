@@ -13,6 +13,8 @@ import { formatClock } from "../../i18n/format";
 
 export type NavigatorReply = {
   intent: NavigatorIntent;
+  /** Which level understood the question. */
+  engine?: "rules" | "llm";
   text: string;
   /** The same answer for the voice: no bullets, no line breaks. */
   speech: string;
@@ -47,8 +49,28 @@ export function generate(draft: Draft): { text: string; speech: string } {
   return { text, speech };
 }
 
+const CRISIS_INTENTS = new Set<NavigatorIntent>(["signalLost", "shelter", "shelterWhy", "alert", "emotion", "emergency"]);
+
+/** Keeps the first `max` sentences of the lines (a line may hold several). */
+export function capSentences(lines: string[], max: number): string[] {
+  const out: string[] = [];
+  let count = 0;
+  for (const line of lines) {
+    const parts = line.split(/(?<=[.!?])\s+(?=[А-ЯІЇЄҐA-Z«“])/).filter((x) => x.trim());
+    const keep: string[] = [];
+    for (const p of parts) { if (count >= max) break; keep.push(p); count++; }
+    if (keep.length) out.push(keep.join(" "));
+    if (count >= max) break;
+  }
+  return out;
+}
+
 export class Navigator {
   private lastReply: string | null = null;
+
+  previousAnswer(): string | null {
+    return this.lastReply;
+  }
   private last: LastAnswer | null = null;
 
   /** `forced`: the intent recognised by the server's language model (it
@@ -62,6 +84,10 @@ export class Navigator {
     const draft = handlerFor(intent)(snapshot, { question, lastReply: this.lastReply, last: this.last, options: u.options });
     // Only fields that really had a value (so "why" never cites empty data).
     draft.used = draft.used.filter((f) => f === "lastAnswer" || f === "lastReply" || f.startsWith("places") || f.startsWith("placeStates") || f.startsWith("placeGaps") || fieldWords(f, snapshot) !== null);
+    // Crisis answers (alert, shelter, lost signal, fear, critical tone): at
+    // most three sentences — the handlers put the essential first; this is
+    // the safety net (programme 2.5).
+    if (draft.tone === "critical" || CRISIS_INTENTS.has(intent)) draft.lines = capSentences(draft.lines, 3);
     const { text, speech } = generate(draft);
     if (intent !== "repeat" && intent !== "explain" && intent !== "clarify") {
       this.lastReply = text;
@@ -70,6 +96,35 @@ export class Navigator {
     const honest = draft.honest ?? (intent === "noData" || intent === "unknown" || (draft.missing?.length ?? 0) > 0);
     return { intent, text, speech, actions: draft.actions, tone: draft.tone, used: draft.used, missing: draft.missing ?? [], honest, confidence: u.confidence, computeMs: now() - t0, ...(draft.places ? { places: draft.places } : {}) };
   }
+}
+
+/** Above this local confidence the phone answers at once, without the server. */
+export const LOCAL_SURE = 0.85;
+const GENERIC = new Set<NavigatorIntent>(["unknown", "smalltalk", "classic", "noData"]);
+
+/**
+ * Layer 2 with the language engine: a confident on-device understanding
+ * answers at once; otherwise the server's language model (when available)
+ * decides what is asked, and the answer is still built from the snapshot by
+ * the handler for that intent. The model's own wording is used only for
+ * questions no handler covers, and only when every fact in it is in the
+ * snapshot (checkGrounded). No server → the on-device rules (fallback).
+ */
+export async function askSmart(nav: Navigator, question: string, snapshot: Snapshot): Promise<NavigatorReply> {
+  const local = understand(question);
+  if (local.confidence >= LOCAL_SURE && local.intent !== "unknown" && local.intent !== "clarify") return { ...nav.ask(question, snapshot), engine: "rules" };
+  const { understandRemote } = require("./languageEngine") as typeof import("./languageEngine");
+  const remote = await understandRemote(question, snapshot, nav.previousAnswer());
+  if (!remote || remote.intent === "unknown") return { ...nav.ask(question, snapshot), engine: "rules" };
+  const reply = nav.ask(question, snapshot, remote.intent);
+  if (GENERIC.has(remote.intent) && remote.answer) {
+    const { checkGrounded } = require("./grounding") as typeof import("./grounding");
+    if (checkGrounded(remote.answer, snapshot).ok) {
+      const { text, speech } = generate({ lines: [remote.answer], actions: [], tone: reply.tone, used: [] });
+      return { ...reply, text, speech, engine: "llm" };
+    }
+  }
+  return { ...reply, engine: "llm" };
 }
 
 // ——— LAYER 4: proactive ———

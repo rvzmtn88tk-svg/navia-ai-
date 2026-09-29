@@ -62,3 +62,30 @@ export async function classifyRemote(question: string, timeoutMs = 4000): Promis
     clearTimeout(timer);
   }
 }
+
+/** Why the server's language model can or cannot be used now. */
+export function backendStatus(): { configured: boolean; signedIn: boolean } {
+  return { configured: !!config.aiBackendUrl, signedIn: !!idTokenProvider };
+}
+
+/** One call to the co-pilot function (Firebase callable protocol). Throws on any failure. */
+export async function callBackend<T>(data: Record<string, unknown>, timeoutMs: number): Promise<T> {
+  const token = await idTokenProvider?.();
+  if (!config.aiBackendUrl) throw new Error("not configured");
+  if (!token) throw new Error("not signed in");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(config.aiBackendUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ data }),
+      signal: controller.signal,
+    });
+    const body = await response.json() as { result?: T; error?: { message?: string } };
+    if (!response.ok || !body.result) throw new Error(body.error?.message ?? `HTTP ${response.status}`);
+    return body.result;
+  } finally {
+    clearTimeout(timer);
+  }
+}

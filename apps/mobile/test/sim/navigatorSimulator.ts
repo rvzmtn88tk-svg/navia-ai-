@@ -14,6 +14,7 @@ import type { NavigationState } from "@navia/core";
 import { haversineMeters, initialBearing } from "@navia/core";
 import { Navigator } from "../../src/ai/navigator/navigator";
 import { buildSnapshot, type Snapshot } from "../../src/ai/navigator/snapshot";
+import { allowedFacts } from "../../src/ai/navigator/grounding";
 import type { WorldPlace } from "../../src/ai/copilotBrain";
 import { formatClock, formatDistance, formatDuration } from "../../src/i18n/format";
 import { NOW, sevenSituations, worldFrom, type Scenario } from "../support/navigatorScenarios";
@@ -71,21 +72,7 @@ function randomize(base: Scenario, r: () => number): Snapshot {
   return buildSnapshot({ state: st, world, online, now: NOW, isDemo: false, offlinePackageAvailable: pkgRoll < 0.45 ? true : pkgRoll < 0.9 ? false : null, rerouting: st.offRoute && r() < 0.5 });
 }
 
-/** Every distance / time / percent the answer may state, formatted as the navigator formats them. */
-function allowed(s: Snapshot): Set<string> {
-  const out = new Set<string>();
-  const add = (v: string) => out.add(v.replace(/\s/g, " "));
-  const dist = (m: number | null | undefined) => { if (m != null && Number.isFinite(m)) add(formatDistance(m, s.lang)); };
-  dist(s.route?.remainingM); dist(s.route?.next?.distanceM);
-  for (const list of Object.values(s.places)) for (const p of list ?? []) { dist(p.distanceM); add(`${Math.round(p.distanceM)} м`); }
-  const plain = (v: number | null | undefined, unit: string) => { if (v != null && Number.isFinite(v)) { add(`±${Math.max(1, Math.round(v))} ${unit}`); add(`${Math.max(1, Math.round(v))} ${unit}`); } };
-  plain(s.gnss.accuracyM, "м"); plain(s.position.uncertaintyM, "м"); plain(s.fields.drErrorGrowthMPerMin, "м");
-  if (s.gnss.sinceFixS != null) { add(`${Math.max(1, Math.round(s.gnss.sinceFixS))} с`); add(`${Math.max(1, Math.round(s.gnss.sinceFixS / 60))} хв`); }
-  if (s.route?.etaS != null) { add(formatDuration(s.route.etaS, s.lang)); for (const tok of formatDuration(s.route.etaS, s.lang).split(/(?<=хв|год|с)\s/)) add(tok); }
-  if (s.motion.speedKmh != null) add(`${s.motion.speedKmh} км/год`);
-  add(`${Math.round(s.fields.positionConfidence * 100)} %`);
-  return out;
-}
+const allowed = allowedFacts;
 
 /** Values an answer of this intent must state when the snapshot has them. */
 function mustSay(s: Snapshot, intent: string): string[] {
@@ -148,7 +135,15 @@ export type SimStats = { total: number; grounded: number; honest: number; fail: 
 export type SimResult = {
   runs: number; formula: string; perCategory: { letter: string; key: string; name: string; variants: number; stats: SimStats }[]; all: SimStats;
   worst: (SimRow & { why: string })[]; lengthOk: number; lengthChecked: number; clarifyShare: number;
+  /** Crisis answers (categories Б, Г, З, or critical tone) longer than 3 sentences — per category and all. */
+  crisisLong: { key: string; long: number; total: number; examples: string[] }[];
 };
+
+/** Sentences as the voice says them. */
+export function sentenceCount(speech: string): number {
+  return speech.split(/(?<=[.!?])\s+/).filter((x) => x.trim().length > 1).length;
+}
+const CRISIS = new Set(["signal_loss", "safety", "emotion"]);
 
 function stats(rows: SimRow[]): SimStats {
   const byOutcome = { grounded: 0, honest: 0, misunderstood: 0, contradiction: 0, invented: 0, generic: 0 } as Record<Outcome, number>;
@@ -171,6 +166,7 @@ export async function runSimulation(opts: { numericSets: number; seed?: number; 
   const failures: { row: SimRow; snap: Snapshot; q: SimQuestion }[] = [];
   let id = 0;
   let lengthOk = 0, lengthChecked = 0, clarify = 0;
+  const crisis = new Map<string, { long: number; total: number; examples: Map<string, number> }>();
   for (const sit of situations) {
     for (let k = 0; k < opts.numericSets; k++) {
       const snap = randomize(sit, r);
@@ -182,7 +178,14 @@ export async function runSimulation(opts: { numericSets: number; seed?: number; 
         const latencyMs = now() - t0;
         const opts2 = (rep as { options?: string[] }).options ?? [];
         const j = judge(snap, q, rep.intent, rep.text, rep.used, rep.missing, rep.honest, rep.intent === "clarify" ? clarifyOptions(rep.actions) : opts2);
-        const sentences = rep.speech.split(/(?<=[.!?])\s+/).filter(Boolean).length;
+        const sentences = sentenceCount(rep.speech);
+        if (CRISIS.has(q.category.key) || rep.tone === "critical") {
+          const key = CRISIS.has(q.category.key) ? q.category.key : "critical tone (other)";
+          const c = crisis.get(key) ?? { long: 0, total: 0, examples: new Map() };
+          c.total++;
+          if (sentences > 3) { c.long++; const ex = `${rep.intent} [${sit.key}]: ${rep.speech}`; c.examples.set(ex, (c.examples.get(ex) ?? 0) + 1); }
+          crisis.set(key, c);
+        }
         if (rep.tone !== "critical" && rep.intent !== "explain") { lengthChecked++; if (sentences <= 3) lengthOk++; }
         if (rep.intent === "clarify") clarify++;
         const row: SimRow = {
@@ -213,6 +216,7 @@ export async function runSimulation(opts: { numericSets: number; seed?: number; 
     runs: rows.length,
     formula: `${perSit} ситуацій × ${variants} формулювань (11 категорій × ${SIM_CATEGORIES.map((c) => questions.filter((q) => q.category.key === c.key).length).join("/")}) × ${opts.numericSets} випадкових наборів чисел = ${perSit * variants * opts.numericSets}`,
     perCategory, all: stats(rows), worst, lengthOk, lengthChecked, clarifyShare: clarify / Math.max(1, rows.length),
+    crisisLong: [...crisis.entries()].map(([key, c]) => ({ key, long: c.long, total: c.total, examples: [...c.examples.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([e, n]) => `${n}× ${e}`) })),
   };
 }
 

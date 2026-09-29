@@ -48,7 +48,7 @@ function ago(s: Snapshot, sec: number): string {
   return sec < 120 ? L(s, `${m(sec)} с тому`, `${m(sec)} s ago`) : L(s, `${m(sec / 60)} хв тому`, `${m(sec / 60)} min ago`);
 }
 const ask = (label: string): CopilotAction => ({ kind: "ask", label, question: label });
-const turned = (s: Snapshot): CopilotAction => ({ kind: "confirmTurn", label: L(s, "Я вже повернув", "I've turned") });
+const turned = (s: Snapshot): CopilotAction => ({ kind: "confirmTurn", label: L(s, "Поворот пройдено", "I've turned") });
 const dr = (s: Snapshot) => s.gnss.mode === "navigator";
 
 function nextLine(s: Snapshot, prefix: boolean): string | null {
@@ -126,12 +126,13 @@ registerHandler("signalLost", (s, ctx) => {
     const lines = [g.line];
     const used = [...g.used, "position.source", "position.uncertaintyM"];
     if (s.route && !s.route.offRoute) {
-      lines.push(howIGuide(s));
+      // Crisis: three sentences — what happened and how NAVIA guides, the next
+      // turn, what to do. Landmarks and "when will it return" on request.
+      const unc = s.position.uncertaintyM != null ? L(s, `, похибка зараз ±${m(s.position.uncertaintyM)} м`, `, error now ±${m(s.position.uncertaintyM)} m`) : "";
+      lines[0] = g.line.replace(/\.$/, "") + L(s, ` — веду за маршрутом за рахунком шляху${unc}.`, ` — guiding along the route by dead reckoning${unc}.`);
       const next = nextLine(s, true);
       if (next) { lines.push(next); used.push("route.next"); }
-      lines.push(L(s, "Що робити: тримайтеся маршруту, орієнтуйтеся на знаки й назви вулиць; після повороту натисніть «Я вже повернув».", "What to do: keep to the route, watch signs and street names; after the turn tap “I've turned”."));
-      if (s.route.landmarks > 0) { lines.push(L(s, `На маршруті я знаю ${s.route.landmarks} орієнтирів — назву їх перед поворотами.`, `I know ${s.route.landmarks} landmarks on the route and will name them before turns.`)); used.push("route.landmarks"); }
-      lines.push(L(s, "Коли сигнал повернеться, передбачити не можу — це залежить від глушіння. Щойно буде надійна точка, я скажу.", "I can't predict when the signal returns — it depends on the jamming. As soon as I get a trusted fix, I'll tell you."));
+      lines.push(L(s, "Тримайтеся маршруту й знаків; після повороту натисніть «Поворот пройдено».", "Keep to the route and signs; after the turn tap “I've turned”."));
       return { lines, actions: [turned(s), ask(L(s, "Що далі?", "What's next?")), ask(L(s, "Де я зараз?", "Where am I?"))], tone: "critical", used: [...used, "route"] };
     }
     const where = s.position.street ?? s.position.area;
@@ -180,7 +181,7 @@ registerHandler("routeNext", (s) => {
   const lines = [next.charAt(0).toUpperCase() + next.slice(1)];
   if (s.route.next?.confirm) lines.push(s.route.next.confirm);
   if (s.route.then) lines.push(L(s, `Потім — ${s.route.then}.`, `Then ${s.route.then}.`));
-  if (dr(s)) lines.push(L(s, "Без GPS відстань приблизна — після повороту натисніть «Я вже повернув».", "Without GPS the distance is approximate — tap “I've turned” after the turn."));
+  if (dr(s)) lines.push(L(s, "Без GPS відстань приблизна — після повороту натисніть «Поворот пройдено».", "Without GPS the distance is approximate — tap “I've turned” after the turn."));
   return { lines, actions: dr(s) ? [turned(s)] : [], tone: dr(s) ? "warning" : "calm", used: ["route.next", "route.then", "gnss.mode"] };
 });
 
@@ -247,7 +248,7 @@ registerHandler("shelter", (s) => {
   const lines: string[] = [];
   const used = ["places.shelter", "placeStates.shelter", "placeGaps.shelter", "alert.active"];
   const tone: Tone = s.alert?.active ? "critical" : "calm";
-  if (s.alert?.active) lines.push(L(s, "Тривога у вашому районі — йдіть в укриття зараз.", "Air alert in your area — go to a shelter now."));
+  if (s.alert?.active) lines.push(L(s, "Тривога — йдіть в укриття зараз.", "Air alert — go to a shelter now."));
   const list = (s.places.shelter ?? []).slice(0, 3);
   const state = s.placeStates.shelter;
   if (list.length === 0) {
@@ -256,11 +257,15 @@ registerHandler("shelter", (s) => {
     else lines.push(L(s, "У відкритих даних поруч укриттів немає. Уточніть у громаді чи в «Дії»; під час тривоги — капітальне приміщення без вікон.", "Open data lists no shelters nearby. Check with your community or Diia; during an alert, a solid room without windows."));
     return { lines, actions: [{ kind: "safety", label: L(s, "Безпека", "Safety") }], tone, used, missing: ["places.shelter"] };
   }
+  // Crisis: three sentences — (alert) go now / the nearest / the others + a note.
   lines.push(shelterLine(s, list[0]!));
-  for (const p of list.slice(1)) lines.push(L(s, `Ще: ${p.name} — ${dist(s, p.distanceM)}.`, `Also: ${p.name} — ${dist(s, p.distanceM)}.`));
   const gaps = s.placeGaps.shelter ?? [];
-  if (gaps.length && list[0]!.distanceM > 1500) lines.push(L(s, `${gaps.join(", ")} зараз не відповідає — поруч можуть бути ближчі.`, `${gaps.join(", ")} is not answering — there may be closer ones.`));
-  lines.push(L(s, "Доступність перевіряйте на місці.", "Check access on arrival."));
+  const note = gaps.length && list[0]!.distanceM > 1500
+    ? L(s, `${gaps.join(", ")} зараз не відповідає — можуть бути ближчі`, `${gaps.join(", ")} is not answering — there may be closer ones`)
+    : L(s, "доступність перевіряйте на місці", "check access on arrival");
+  const others = list.slice(1).map((p) => `${p.name} — ${dist(s, p.distanceM)}`).join("; ");
+  if (others) lines.push(L(s, `Ще: ${others}; ${note}.`, `Also: ${others}; ${note}.`));
+  else lines.push(note.charAt(0).toUpperCase() + note.slice(1) + ".");
   return { lines, actions: [walkTo(s, list[0]!)], tone, used, places: list };
 });
 
@@ -294,10 +299,14 @@ registerHandler("status", (s) => {
   const lines: string[] = [];
   const used: string[] = [];
   let tone: Tone = "calm";
+  const shelter = nearestShelter(s);
   if (s.alert?.active) {
-    lines.push(L(s, `Тривога ${s.alert.scope === "region" ? "по області" : s.alert.scope === "city" ? "у місті" : "у вашому районі"}${s.alert.since ? ` з ${formatClock(s.alert.since, s.lang)}` : ""}.`, `Air alert ${s.alert.scope === "region" ? "across the oblast" : s.alert.scope === "city" ? "in the city" : "in your district"}${s.alert.since ? ` since ${formatClock(s.alert.since, s.lang)}` : ""}.`));
-    const p = nearestShelter(s);
-    if (p) lines.push(shelterLine(s, p));
+    // Crisis: the alert and the shelter in one sentence, then GPS, then the trip.
+    const where = L(s, s.alert.scope === "region" ? "по області" : s.alert.scope === "city" ? "у місті" : "у вашому районі", s.alert.scope === "region" ? "across the oblast" : s.alert.scope === "city" ? "in the city" : "in your district");
+    const since = s.alert.since ? L(s, ` з ${formatClock(s.alert.since, s.lang)}`, ` since ${formatClock(s.alert.since, s.lang)}`) : "";
+    lines.push(shelter
+      ? L(s, `Тривога ${where}${since}: найближче укриття — ${shelter.name}, ${dist(s, shelter.distanceM)}.`, `Air alert ${where}${since}: nearest shelter ${shelter.name}, ${dist(s, shelter.distanceM)}.`)
+      : L(s, `Тривога ${where}${since}; даних про укриття поруч немає.`, `Air alert ${where}${since}; no shelter data nearby.`));
     used.push("alert.active", "alert.scope", "alert.since", "places.shelter");
     tone = "critical";
   } else if (s.alert?.active === false) { lines.push(L(s, "Тривоги у вашому районі немає.", "No air alert in your area.")); used.push("alert.active"); }
@@ -305,16 +314,15 @@ registerHandler("status", (s) => {
   const g = gpsLine(s);
   lines.push(g.line);
   used.push(...g.used);
-  if (s.gnss.mode === "navigator") { lines.push(howIGuide(s)); tone = "critical"; }
+  if (s.gnss.mode === "navigator") { lines[lines.length - 1] = g.line.replace(/\.$/, "") + L(s, " — веду за рахунком шляху.", " — guiding by dead reckoning."); tone = "critical"; }
   else if (s.gnss.mode === "degraded" && tone === "calm") tone = "warning";
   if (s.route) {
-    lines.push(s.route.offRoute ? L(s, "Ви поза маршрутом.", "You're off the route.") : L(s, `До «${s.route.destination}» — ${dist(s, s.route.remainingM)}.`, `${dist(s, s.route.remainingM)} to “${s.route.destination}”.`));
-    const next = s.route.offRoute ? null : nextLine(s, true);
-    if (next) lines.push(next);
+    const trip = s.route.offRoute ? L(s, "Ви поза маршрутом", "You're off the route") : L(s, `До «${s.route.destination}» — ${dist(s, s.route.remainingM)}`, `${dist(s, s.route.remainingM)} to “${s.route.destination}”`);
+    const next = s.route.offRoute || tone === "critical" ? null : nextLine(s, false);
+    lines.push(next ? `${trip}; ${L(s, "далі", "next")}: ${next.charAt(0).toLowerCase()}${next.slice(1)}` : `${trip}.`);
     used.push("route.offRoute", "route.remainingM", "route.next");
   }
   if (!s.online) { lines.push(L(s, "Інтернету немає — працюю з тим, що збережено на телефоні.", "No internet — working from what's saved on the phone.")); used.push("online"); }
-  const shelter = nearestShelter(s);
   return { lines, actions: s.alert?.active && shelter ? [walkTo(s, shelter)] : [], tone, used };
 });
 
@@ -429,7 +437,7 @@ registerHandler("smalltalk", (s, ctx) => {
   const g = gpsLine(s);
   const lines = [head, g.line];
   if (s.alert?.active) lines.push(L(s, "Увага: тривога у вашому районі.", "Note: air alert in your area."));
-  if (s.route && !s.route.offRoute) { const n = nextLine(s, true); if (n) lines.push(n); }
+  else if (s.route && !s.route.offRoute) { const n = nextLine(s, true); if (n) lines.push(n); }
   return { lines, actions: [], tone: s.alert?.active ? "critical" : "calm", used: [...g.used, "alert.active", "route.next"] };
 });
 
@@ -473,12 +481,14 @@ registerHandler("routeWhy", (s) => {
 registerHandler("shelterWhy", (s) => {
   const list = (s.places.shelter ?? []).slice(0, 3);
   if (list.length === 0) return handlerFor("shelter")(s, { question: "", lastReply: null });
-  const top = list.map((p, i) => `${i + 1}. ${p.name} — ${dist(s, p.distanceM)}`).join("; ");
+  const ord = ["перше", "друге", "третє"], ordEn = ["first", "second", "third"];
+  const top = list.map((p, i) => `${L(s, ord[i]!, ordEn[i]!)} — ${p.name}, ${dist(s, p.distanceM)}`).join("; ");
+  const Top = top.charAt(0).toUpperCase() + top.slice(1);
   const src = [...new Set(list.map((p) => p.source).filter(Boolean))].join(", ");
   return {
     lines: [
-      L(s, `Так, це найближче з відомих: укриття відсортовані за відстанню від вашої позиції (по прямій). Перші три: ${top}.`, `Yes, it's the nearest known: shelters are sorted by straight-line distance from you. Top three: ${top}.`),
-      L(s, `Дані${src ? ` (${src})` : ""} на ${formatClock(s.at, s.lang)}. Пішки по вулицях шлях може бути довшим.`, `Data${src ? ` (${src})` : ""} as of ${formatClock(s.at, s.lang)}. On foot the way along streets may be longer.`),
+      L(s, `Так, найближче з відомих: укриття відсортовані за відстанню від вас по прямій. ${Top}.`, `Yes, the nearest known: shelters are sorted by straight-line distance from you. ${Top}.`),
+      L(s, `Дані${src ? ` (${src})` : ""} на ${formatClock(s.at, s.lang)}; пішки по вулицях шлях може бути довшим.`, `Data${src ? ` (${src})` : ""} as of ${formatClock(s.at, s.lang)}; on foot the way along streets may be longer.`),
     ],
     actions: [walkTo(s, list[0]!)], tone: s.alert?.active ? "critical" : "calm", used: ["places.shelter", "fields.nearbyShelters", "fields.snapshotTimestamp"], places: list,
   };
@@ -487,13 +497,13 @@ registerHandler("shelterWhy", (s) => {
 // ——— fear, panic (З): short, calm, one concrete step ———
 
 registerHandler("emotion", (s) => {
-  const lines = [L(s, "Розумію. Ви не самі — NAVIA поруч і стежить за ситуацією.", "I understand. You're not alone — NAVIA is here and watching the situation.")];
+  const lines = [L(s, "Розумію, NAVIA поруч і стежить за ситуацією.", "I understand; NAVIA is here and watching the situation.")];
   const used: string[] = ["alert.active", "gnss.mode", "route"];
   const shelter = nearestShelter(s);
   let step: string;
   let actions: CopilotAction[] = [];
   if (s.alert?.active) {
-    lines.push(shelter ? L(s, `Тривога. Найближче укриття — ${shelter.name}, ${dist(s, shelter.distanceM)}.`, `Air alert. Nearest shelter: ${shelter.name}, ${dist(s, shelter.distanceM)}.`) : L(s, "Тривога; даних про укриття поруч немає.", "Air alert; no shelter data nearby."));
+    lines.push(shelter ? L(s, `Тривога: найближче укриття — ${shelter.name}, ${dist(s, shelter.distanceM)}.`, `Air alert: nearest shelter ${shelter.name}, ${dist(s, shelter.distanceM)}.`) : L(s, "Тривога; даних про укриття поруч немає.", "Air alert; no shelter data nearby."));
     step = shelter ? L(s, "Зараз одне: йдіть до укриття — кнопка нижче.", "One thing now: go to the shelter — button below.") : L(s, "Зараз одне: капітальне приміщення без вікон, подалі від скла.", "One thing now: a solid room without windows, away from glass.");
     if (shelter) actions = [walkTo(s, shelter)];
     used.push("places.shelter");
@@ -503,7 +513,7 @@ registerHandler("emotion", (s) => {
     lines.push(L(s, `Зараз: ${gps}, ${route}.`, `Now: ${gps}, ${route}.`));
     step = s.route && (s.motion.speedKmh ?? 0) > 5
       ? L(s, "Зараз одне: зменште швидкість і, де безпечно, зупиніться на кілька вдихів.", "One thing now: slow down and, where safe, stop for a few breaths.")
-      : L(s, "Зараз одне: кілька повільних вдихів. Якщо комусь потрібна допомога — 112.", "One thing now: a few slow breaths. If someone needs help, call 112.");
+      : L(s, "Зараз одне: кілька повільних вдихів; якщо комусь потрібна допомога — 112.", "One thing now: a few slow breaths; if someone needs help, call 112.");
     used.push("route.remainingM", "motion.speedKmh");
   }
   lines.push(step);

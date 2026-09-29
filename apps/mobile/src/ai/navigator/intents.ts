@@ -9,6 +9,7 @@
 // Deterministic, no network, < 1 ms. Pure; unit-tested.
 import { detectIntent, detectKind, fold, type PlaceKind } from "../copilotBrain";
 import { EXAMPLES } from "./examples";
+import { normalizeQuestion } from "./normalize";
 
 export type NavigatorIntent =
   | "repeat"          // "повтори"
@@ -311,12 +312,16 @@ export type Understanding = {
   confidence: number;
   /** Candidates for a clarifying question (best first). */
   options: NavigatorIntent[];
+  /** The question after typo / layout normalisation (what was classified). */
+  normalized?: string;
 };
 
 const ASKABLE: NavigatorIntent[] = ["explain", "signalLost", "gpsStatus", "confidence", "routeNext", "eta", "onRoute", "reroute", "routeWhy", "whereAmI", "shelter", "shelterWhy", "alert", "status", "offline", "emotion", "noData", "place"];
 
 /** Layer 2: normalise → classify → confidence → clarify when unsure. */
-export function understand(question: string): Understanding {
+export function understand(original: string): Understanding {
+  // Step 1: typo and keyboard-layout normalisation (normalize.ts).
+  const question = normalizeQuestion(original).text || original;
   const guess = classifyRaw(question);
   const sc = scores(question);
   const sim = similarIntent(question);
@@ -341,10 +346,10 @@ export function understand(question: string): Understanding {
   if (sim && sim.score >= 0.42 && ASKABLE.includes(sim.intent) && !ranked.includes(sim.intent)) ranked.push(sim.intent);
   const options = [...new Set([...(guess !== "unknown" && ASKABLE.includes(guess) ? [guess] : []), ...ranked])].slice(0, 2);
   const short = f.split(" ").filter(Boolean).length;
-  if (guess !== "unknown" && confidence < CLARIFY_BELOW && options.length === 2) return { intent: "clarify", guess, confidence, options };
+  if (guess !== "unknown" && confidence < CLARIFY_BELOW && options.length === 2) return { intent: "clarify", guess, confidence, options, normalized: question };
   // Nothing matched, but there is a weak lead: ask rather than refuse.
-  if (guess === "unknown" && options.length >= 1 && short >= 2) return { intent: "clarify", guess, confidence, options };
-  return { intent: guess, guess, confidence, options };
+  if (guess === "unknown" && options.length >= 1 && short >= 2) return { intent: "clarify", guess, confidence, options, normalized: question };
+  return { intent: guess, guess, confidence, options, normalized: question };
 }
 
 export function classify(question: string): NavigatorIntent {

@@ -93,11 +93,30 @@ export function lastTtsStartLatencyMs(): number | null {
 
 // ——— the shared queue (programme 2.4): nothing NAVIA says cuts a phrase short ———
 let queueOpts: SpeakOptions = { lang: "uk", gender: "female" };
-const queue = new SpeechQueue((text) => speak(text, { ...queueOpts, interrupt: false }));
+/** What kind of phrase is being spoken (hands-free opens a follow-up window after an answer). */
+export type SpeechTag = "answer" | "prompt" | "proactive" | "guidance";
+const tags = new Map<string, SpeechTag>();
+type SpeechListener = (speaking: boolean, tag: SpeechTag | null) => void;
+const speechListeners = new Set<SpeechListener>();
+/** Called when NAVIA starts / stops speaking (hands-free pauses listening meanwhile). */
+export function onSpeech(listener: SpeechListener): () => void {
+  speechListeners.add(listener);
+  return () => { speechListeners.delete(listener); };
+}
+const queue = new SpeechQueue(async (text) => {
+  const tag = tags.get(text) ?? null;
+  for (const l of speechListeners) l(true, tag);
+  try { await speak(text, { ...queueOpts, interrupt: false }); } finally {
+    tags.delete(text);
+    // Idle only when nothing else waits in the queue.
+    if (queue.pending.length === 0) for (const l of speechListeners) l(false, tag);
+  }
+});
 
 /** Say through the shared queue: the current phrase is finished, then the most urgent. */
-export function say(text: string, priority: number, opts: { lang: Lang; gender: VoiceGender }, slot?: string): Promise<void> {
+export function say(text: string, priority: number, opts: { lang: Lang; gender: VoiceGender }, slot?: string, tag?: SpeechTag): Promise<void> {
   queueOpts = { ...opts, interrupt: false };
+  if (tag) tags.set(text, tag);
   return queue.say(text, priority, slot);
 }
 

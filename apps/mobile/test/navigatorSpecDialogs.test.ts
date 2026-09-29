@@ -25,7 +25,7 @@ const CASES: Case[] = [
   { cat: "В", sit: "driving", q: "Почему ты меня туда ведёшь?", intents: ["routeWhy"], check: (t) => assert.match(t, /найшвидший[\s\S]*порівняти/) },
   // Г. safety and alert
   { cat: "Г", sit: "alert", q: "Тревога, что делать?", intents: ["alert", "shelter", "status"], check: (t, s) => assert.ok(t.includes(s.snapshot.places.shelter![0]!.name)) },
-  { cat: "Г", sit: "alert", q: "Это точно ближайшее укрытие?", intents: ["shelterWhy"], check: (t) => assert.match(t, /відсортовані за відстанню[\s\S]*1\./) },
+  { cat: "Г", sit: "alert", q: "Это точно ближайшее укрытие?", intents: ["shelterWhy"], check: (t) => assert.match(t, /відсортовані за відстанню[\s\S]*Перше —/) },
   { cat: "Г", sit: "alert", q: "Где ближайшее укрытие?", intents: ["shelter"], check: (t, s) => assert.ok(t.includes(d(s.snapshot.places.shelter![0]!.distanceM))) },
   // Д. off route
   { cat: "Д", sit: "offroute", q: "Я сбился с пути?", intents: ["reroute", "onRoute"], check: (t) => assert.match(t, /Так, ви зійшли/) },

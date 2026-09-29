@@ -27,7 +27,8 @@ csv.write("id,situation,category,form,question,answer,intent,source_field,honest
     "## Уся вибірка", "", `- обґрунтовані: ${res.all.grounded} (${pct(res.all.grounded, res.all.total)})`, `- чесні відмови / перепитування: ${res.all.honest} (${pct(res.all.honest, res.all.total)})`, `- провали: ${res.all.fail} (${pct(res.all.fail, res.all.total)}) — ${Object.entries(res.all.byOutcome).filter(([k]) => !["grounded", "honest"].includes(k)).map(([k, v]) => `${k}: ${v}`).join(", ")}`,
     `- затримка (CPU+wall, мс): середня ${res.all.latency.avg.toFixed(3)}, p95 ${res.all.latency.p95.toFixed(3)}, максимум ${res.all.latency.max.toFixed(3)}`,
     `- частка перепитувань (уточнювальних питань): ${(100 * res.clarifyShare).toFixed(2)} %`,
-    `- довжина (2.5): відповідей не в кризі ≤ 3 речень — ${pct(res.lengthOk, res.lengthChecked)}`, "",
+    `- довжина (2.5): відповідей не в кризі ≤ 3 речень — ${pct(res.lengthOk, res.lengthChecked)}`,
+    `- криза (Б, Г, З + критичний тон): довших за 3 речення — ${pct(res.crisisLong.reduce((a, c) => a + c.long, 0), res.crisisLong.reduce((a, c) => a + c.total, 0))} (${res.crisisLong.map((c) => `${c.key}: ${pct(c.long, c.total)}`).join("; ")})`, "",
     "## По категоріях", "", "| Категорія | Формулювань | Прогонів | Обґрунтовані | Чесні | Провали | Затримка сер / p95 / max, мс |", "|---|---|---|---|---|---|---|",
     ...res.perCategory.map((c) => `| ${c.letter}. ${c.name} | ${c.variants} | ${c.stats.total} | ${pct(c.stats.grounded, c.stats.total)} | ${pct(c.stats.honest, c.stats.total)} | ${pct(c.stats.fail, c.stats.total)} | ${c.stats.latency.avg.toFixed(3)} / ${c.stats.latency.p95.toFixed(3)} / ${c.stats.latency.max.toFixed(3)} |`), "",
     `## ${res.worst.length} найгірших випадків`, "", "| # | Ситуація | Кат. | Питання | Відповідь | Флаг | Причина (автоматично) | «Чому так?» — штурман |", "|---|---|---|---|---|---|---|---|",
@@ -36,5 +37,6 @@ csv.write("id,situation,category,form,question,answer,intent,source_field,honest
   writeFileSync(join(dir, "navigator-sim.md"), md);
   writeFileSync(join(dir, "navigator-sim-worst.json"), JSON.stringify(res.worst, null, 1));
   console.log(md.split("## По категоріях")[0]);
+  for (const c of res.crisisLong) { console.log(`CRISIS ${c.key}: ${c.long}/${c.total}`); for (const e of c.examples) console.log("   ", e.slice(0, 260)); }
   console.log(res.perCategory.map((c) => `${c.letter} ${c.key}: fail ${pct(c.stats.fail, c.stats.total)}`).join("\n"));
 })();

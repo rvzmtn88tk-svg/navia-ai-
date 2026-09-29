@@ -6,9 +6,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { checkCriteria, runSimulation } from "./sim/navigatorSimulator";
+import { GENDERED } from "../src/ai/navigator/grounding";
 
 test("navigator simulator: acceptance criteria and persona", async () => {
-  const gendered = /\b(я|NAVIA)\s+(\S+\s)?(\S*(ла|лася|лась)|готова|впевнена|рада|готовий|впевнений|радий)\b/i;
+  // Unicode-aware boundaries (the first version used \b, which does not work
+  // with Cyrillic in JavaScript and therefore caught nothing).
+  const gendered = GENDERED;
   const offenders: string[] = [];
   const res = await runSimulation({ numericSets: 2, keepWorst: 20, onRow: (r) => { if (gendered.test(r.answer) && !/був|була тривога/.test(r.answer)) offenders.push(r.answer); } });
   for (const c of checkCriteria(res)) {

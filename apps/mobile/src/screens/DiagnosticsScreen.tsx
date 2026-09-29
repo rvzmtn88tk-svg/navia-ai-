@@ -14,6 +14,8 @@ import { DiagnosticsEngine, type DiagnosticsSnapshot } from "@navia/core";
 import { navigationEngine, demoEngine, useNaviaStore } from "../engine/naviaController";
 import { AppText as Text } from "../components/AppText";
 import { config } from "../config";
+import { languageLevel } from "../ai/navigator/languageEngine";
+import { voiceLatencyLog } from "../perf/voiceLatency";
 import { Accelerometer, Gyroscope, Magnetometer } from "expo-sensors";
 import { useAppSettings } from "../settings/AppSettings";
 
@@ -131,6 +133,18 @@ export function DiagnosticsScreen(): JSX.Element {
           ? (en ? "Demo: synthetic GPS and motion samples through the same navigation engine. Not real GPS." : "Демо: синтетичні GNSS/IMU-семпли через ті самі системи навігації. НЕ реальний GPS.")
           : (en ? "Live mode: position comes from the phone's GPS and sensors." : "Реальний режим: дані з GPS і сенсорів телефону.")}
       </Text>
+
+      <Section title={en ? "Navigator: language understanding" : "Штурман: розуміння мови"} p={p} />
+      {(() => {
+        const lvl = languageLevel();
+        const lat = voiceLatencyLog();
+        const last = lat[lat.length - 1];
+        return <>
+          <Row label={en ? "Active level" : "Активний рівень"} value={lvl.mode === "llm" ? (en ? "Language model (NAVIA server)" : "Мовна модель (сервер NAVIA)") : (en ? "On-device rules (fallback)" : "Локальні правила на телефоні (запасний рівень)")} p={p} />
+          <Row label={en ? "Why" : "Чому"} value={lvl.reason} p={p} />
+          <Row label={en ? "Last voice question" : "Останнє голосове питання"} value={last ? `STT ${fmt(last.sttMs, " мс")} · ${en ? "understanding" : "розуміння"} ${last.understandMs.toFixed(0)} мс · TTS ${fmt(last.ttsStartMs, " мс")}` : "—"} p={p} />
+        </>;
+      })()}
 
       {isDemoMode && (
           <View style={[styles.demoControls, { backgroundColor: p.surfaceRaised }]}>

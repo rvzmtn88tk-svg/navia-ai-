@@ -130,7 +130,7 @@ export function cautiousPhrase(step: StepLike, lang: Lang, cue?: StepLandmark | 
   const lead = landmarkLead(cue, lang);
   const head = uk ? "Приготуйтеся: скоро" : "Get ready: soon";
   const confirm = landmarkConfirmation(cue, lang);
-  const ask = uk ? "Коли повернете — натисніть «Я вже повернув»." : "When you've turned, tap “I've turned”.";
+  const ask = uk ? "Коли повернете — натисніть «Поворот пройдено»." : "When you've turned, tap “I've turned”.";
   return `${head}${lead ? `, ${lead},` : ""} ${action(step, lang)}${onto(step, lang)}.${confirm ? ` ${confirm}` : ""} ${ask}`;
 }
 

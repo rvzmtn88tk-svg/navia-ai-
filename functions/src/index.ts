@@ -7,6 +7,7 @@ import { initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { defineSecret } from "firebase-functions/params";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { UNDERSTAND_MODEL, understand } from "./understand";
 
 initializeApp();
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
@@ -149,6 +150,18 @@ export const copilot = onCall(
     const question = str(data.question, MAX_QUESTION_CHARS);
     if (!question) throw new HttpsError("invalid-argument", "question is required");
     if (!(await consumeQuota(request.auth.uid))) throw new HttpsError("resource-exhausted", "Daily co-pilot limit reached.");
+
+    // Understand mode: intent + confidence + a short answer from the phone's facts
+    // (the phone validates the answer against its own snapshot before using it).
+    if (data.mode === "understand") {
+      const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+      try {
+        return { ...(await understand(client, question, (data as { facts?: unknown }).facts)), source: "claude", model: UNDERSTAND_MODEL };
+      } catch (err) {
+        if (err instanceof Anthropic.RateLimitError) throw new HttpsError("resource-exhausted", "The co-pilot is busy. Try again shortly.");
+        throw new HttpsError("unavailable", "Co-pilot understand service error.");
+      }
+    }
 
     if (data.mode === "intent") {
       const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });

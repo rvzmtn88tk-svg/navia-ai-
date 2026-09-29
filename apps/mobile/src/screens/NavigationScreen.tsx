@@ -30,12 +30,15 @@ import { Appear, Crossfade } from "../components/Crossfade";
 import { formatClock, formatDistance, formatDuration, useT, type Translate } from "../i18n";
 import { GuidanceAnnouncer, cautiousPhrase, instructionPhrase, type StepLike } from "../voice/guidance";
 import { navigatorModeOf, type NavigatorMode } from "../navigation/navigatorMode";
-import { ProactiveMonitor } from "../ai/navigator/navigator";
+import { askSmart, Navigator, ProactiveMonitor } from "../ai/navigator/navigator";
 import { perfEnd, perfStart } from "../perf/perf";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { saveRouteOffline, type OfflineProgress } from "../map/offlineRoute";
 import { config } from "../config";
-import { say, stopSpeaking } from "../voice/VoiceGuide";
+import { nextTtsStart, onSpeech, say, stopSpeaking } from "../voice/VoiceGuide";
+import { HandsFree, type HandsFreeState } from "../voice/handsFree";
+import { expoRecognizer, handsFreePermission } from "../voice/expoRecognizer";
+import { recordVoiceLatency } from "../perf/voiceLatency";
 import { PRIORITY } from "../voice/speechQueue";
 import { easing, elevation, iconSize, motion, radius, space, type ThemeColors } from "../theme/tokens";
 import { isNetworkError } from "../providers/netError";
@@ -299,6 +302,48 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   // events also drive the banner (the same words).
   const monitor = useRef(new ProactiveMonitor()).current;
   const snapshot = useNavigatorSnapshot();
+
+  // ——— Hands-free voice (one tap to turn on; then "NAVIA, …" by voice) ———
+  const [handsFreeOn, setHandsFreeOn] = useState(false);
+  const [hfState, setHfState] = useState<HandsFreeState>("off");
+  const [voiceReply, setVoiceReply] = useState<{ q: string; text: string } | null>(null);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+  const voiceNavigator = useRef(new Navigator()).current;
+  const hf = useRef<HandsFree | null>(null);
+  useEffect(() => {
+    if (!handsFreeOn || phase !== "navigating") { hf.current?.disable(); hf.current = null; setHfState("off"); return undefined; }
+    let alive = true;
+    const opts = { lang, gender: voiceGender };
+    const controller = new HandsFree(expoRecognizer(lang), {
+      onQuestion: (q) => {
+        const t0 = Date.now();
+        void askSmart(voiceNavigator, q, snapshotRef.current).then((r) => {
+          if (!alive) return;
+          setVoiceReply({ q, text: r.text });
+          const understandMs = Date.now() - t0;
+          void nextTtsStart().then((tts) => recordVoiceLatency({ question: q, sttMs: null, understandMs, ttsStartMs: tts, totalMs: null, at: Date.now() }));
+          void say(r.speech, PRIORITY.answer, opts, undefined, "answer");
+        });
+      },
+      onPrompt: (p) => { void say(p, PRIORITY.answer, opts, undefined, "prompt"); },
+      onState: (st) => { if (alive) setHfState(st); },
+      onError: (m) => { if (alive) { setHandsFreeOn(false); setVoiceReply({ q: "", text: t("nav.handsFreeError", { reason: m }) }); } },
+    });
+    const off = onSpeech((speaking, tag) => (speaking ? controller.speaking() : controller.doneSpeaking(tag === "answer")));
+    void handsFreePermission().then((ok) => {
+      if (!alive) return;
+      if (!ok) { setHandsFreeOn(false); setVoiceReply({ q: "", text: t("nav.handsFreeNoPermission") }); return; }
+      hf.current = controller;
+      controller.enable();
+    });
+    return () => { alive = false; off(); controller.disable(); hf.current = null; };
+  }, [handsFreeOn, phase, lang, voiceGender]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!voiceReply) return undefined;
+    const timer = setTimeout(() => setVoiceReply(null), 12_000);
+    return () => clearTimeout(timer);
+  }, [voiceReply]);
   const [modeNote, setModeNote] = useState<{ kind: "recovered" | "stable"; text: string } | null>(null);
   const navMode = navigatorModeOf(state);
   useEffect(() => {
@@ -465,6 +510,12 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           <Appear from={-24} style={[styles.maneuverWrap, { top: topInset }]}>
             <ManeuverCard step={nextStep} cue={nextCue ? landmarkCue(nextCue, lang) : null} distanceM={state.nextStepDistanceM ?? null} following={followingStep} reliable={positionReliable} estimated={estimated} uncertaintyM={uncertaintyM} offRoute={state.offRoute} t={t} lang={lang} c={c} />
             <NavigatorBanner mode={navMode} note={modeNote} state={state} t={t} lang={lang} c={c} />
+            {voiceReply && (
+              <View style={[styles.voiceReply, { backgroundColor: c.maneuverCard, borderColor: c.brandTeal }]}>
+                {voiceReply.q ? <Text variant="caption" color={{ custom: c.onManeuverSecondary }} numberOfLines={1}>🎙 {voiceReply.q}</Text> : null}
+                <Text variant="callout" color={{ custom: c.onManeuver }} numberOfLines={4}>{voiceReply.text}</Text>
+              </View>
+            )}
             {state.gnssConflict && (
               <Appear from={-8} style={[styles.resilientBanner, styles.conflict, { backgroundColor: c.criticalSoft, borderColor: c.critical }]}>
                 <Text variant="subhead" color="critical">{t("resilient.conflict", { distance: formatDistance(state.gnssConflict.distanceM, lang) })}</Text>
@@ -487,6 +538,12 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           <SpeedBadge speedMps={state.gnss === "NORMAL" ? state.speedMps : null} bottom={insets.bottom + 104} t={t} c={c} />
           {/* HUD: co-pilot and the two status beacons (GPS, air alert) */}
           <View style={[styles.hudRight, { bottom: insets.bottom + 104 }]} pointerEvents="box-none">
+            <Touchable accessibilityRole="button" accessibilityLabel={handsFreeOn ? t("nav.handsFreeOff") : t("nav.handsFreeOn")} accessibilityState={{ selected: handsFreeOn }}
+              onPress={() => setHandsFreeOn((v) => !v)}
+              style={[styles.hudToggle, { backgroundColor: handsFreeOn ? c.brandTeal : c.maneuverCard, borderColor: handsFreeOn ? c.brandTeal : c.border }]}>
+              <Icon name="mic" size={iconSize.md} color={handsFreeOn ? c.onAccent : c.onManeuver} />
+            </Touchable>
+            {handsFreeOn && <Text variant="caption" color={{ custom: c.brandTeal }}>{hfState === "followUp" || hfState === "command" ? t("nav.handsFreeListening") : hfState === "paused" ? t("nav.handsFreeSpeaking") : t("nav.handsFreeWake")}</Text>}
             <Touchable accessibilityRole="button" accessibilityLabel={phoneHeading ? t("nav.compassOff") : t("nav.compassOn")} accessibilityState={{ selected: phoneHeading }}
               onPress={() => setPhoneHeading((v) => !v)}
               style={[styles.hudToggle, { backgroundColor: phoneHeading ? c.brandTeal : c.maneuverCard, borderColor: phoneHeading ? c.brandTeal : c.border }]}>
@@ -705,6 +762,7 @@ const styles = StyleSheet.create({
   // HUD card: deep-space glass with a thin teal edge and glow.
   maneuverCard: { borderRadius: radius.xl, overflow: "hidden", borderWidth: 1, shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 0 } },
   hudRight: { position: "absolute", right: space.md, alignItems: "flex-end", gap: space.sm },
+  voiceReply: { marginTop: space.xs, padding: space.sm, borderRadius: radius.md, borderWidth: 1, gap: 2 },
   // Left of the HUD column (beacons row = 2 × 44 + gap) and above the speed badge.
   hudDetails: { position: "absolute", left: space.md, right: space.md + 96 + space.sm, maxWidth: 320 },
   fill: { width: "100%" },

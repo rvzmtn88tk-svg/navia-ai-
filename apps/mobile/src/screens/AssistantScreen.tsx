@@ -10,11 +10,11 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
 import { useAppSettings } from "../settings/AppSettings";
-import { classifyRemote, remoteCopilotAvailable } from "../ai/copilotClient";
+import { remoteCopilotAvailable } from "../ai/copilotClient";
 import type { NavigatorIntent } from "../ai/navigator/intents";
 import { detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type PlaceKind, type WorldPlace } from "../ai/copilotBrain";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
-import { Navigator } from "../ai/navigator/navigator";
+import { askSmart, LOCAL_SURE, Navigator, type NavigatorReply } from "../ai/navigator/navigator";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { useNearbyStore } from "../store/nearbyStore";
@@ -99,34 +99,36 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     timing.current = { id: replyId, t0, computeMs, question: text };
     setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) }]);
     setQuestion("");
-    if (spoken) {
-      // Voice pipeline timing (programme 3.2): STT → understanding → first sound.
+    // Not sure on the phone (or not understood): the server's language model,
+    // when configured and signed in, decides what is asked; the answer still
+    // comes from the snapshot (askSmart). Otherwise the on-device rules.
+    const needRemote = remote && (reply.intent === "unknown" || reply.intent === "clarify" || reply.confidence < LOCAL_SURE);
+    const speakReply = (r: NavigatorReply) => {
+      if (!spoken) return;
       const stt = listener.lastTiming.sttMs;
-      void nextTtsStart().then((tts) => recordVoiceLatency({ question: text, sttMs: stt, understandMs: reply.computeMs, ttsStartMs: tts, totalMs: stt != null ? stt + reply.computeMs + tts : null, at: Date.now() }));
-      void say(reply.speech).then(() => {
+      void nextTtsStart().then((tts) => recordVoiceLatency({ question: text, sttMs: stt, understandMs: r.computeMs, ttsStartMs: tts, totalMs: stt != null ? stt + r.computeMs + tts : null, at: Date.now() }));
+      void say(r.speech).then(() => {
         // Natural loop (3.3): a question back is answered by voice without a tap.
-        if (reply.intent === "clarify") void listenRef.current?.();
+        if (r.intent === "clarify") void listenRef.current?.();
       });
+    };
+    if (!needRemote) speakReply(reply);
+    else {
+      setBusy(true);
+      const t1 = nowMs();
+      void askSmart(navigatorRef.current, text, snapshotRef.current)
+        .then((r) => {
+          const fin = { ...r, computeMs: nowMs() - t1 };
+          setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: fin.text, actions: fin.actions, ...(fin.places ? { places: fin.places } : {}) } : m)));
+          speakReply(fin);
+        })
+        .finally(() => setBusy(false));
     }
     const kind = detectKind(text);
     const intent = detectIntent(text);
     if (kind && intent === "place" && w.placeStates?.[kind] !== "ready") {
       setFollowUps((f) => [...f, { id: replyId, text, kind, spoken }]);
       void useNearbyStore.getState().load(kind);
-    }
-    // Not understood on the phone: the server's language model (when signed
-    // in and connected) says only what was asked; the facts still come from
-    // the phone's own live snapshot.
-    if (remote && reply.intent === "unknown") {
-      setBusy(true);
-      void classifyRemote(text)
-        .then((intent) => {
-          if (!intent || intent === "unknown") return;
-          const r = navigatorRef.current.ask(text, snapshotRef.current, intent as NavigatorIntent);
-          setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: r.text, actions: r.actions, ...(r.places ? { places: r.places } : {}) } : m)));
-          if (spoken) void say(r.speech);
-        })
-        .finally(() => setBusy(false));
     }
     setTimeout(() => list.current?.scrollToEnd({ animated: true }), 60);
   }, [messages, remote, say]);

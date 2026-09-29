@@ -457,7 +457,7 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
         ? " Під час тривоги GPS часто глушать або підміняють (РЕБ): точка «стрибає» або зникає. Я відкидаю неправдоподібні стрибки й не показую їх вам."
         : " During alerts GPS is often jammed or spoofed (EW): the dot jumps or disappears. I reject implausible jumps and don't show them.";
       const plan = g.state === "NORMAL" ? "" : w.route
-        ? (uk ? " Маршрут збережено: якщо сигнал зникне, поведу за ним, повороти підкажу за орієнтирами — підтверджуйте їх кнопкою «Я вже повернув»." : " The route is saved: if the signal drops I'll guide along it and call turns by landmarks — confirm them with “I've turned”.")
+        ? (uk ? " Маршрут збережено: якщо сигнал зникне, поведу за ним, повороти підкажу за орієнтирами — підтверджуйте їх кнопкою «Поворот пройдено»." : " The route is saved: if the signal drops I'll guide along it and call turns by landmarks — confirm them with “I've turned”.")
         : (uk ? " Побудуйте маршрут, поки сигнал ще є, — я запам'ятаю його та орієнтири." : " Build a route while there is still a signal — I'll memorise it and its landmarks.");
       return { intent, text: `${gpsSentence(w)}${why}${plan}`, actions: g.state === "NORMAL" ? [] : [ask(uk ? "Де я зараз?" : "Where am I?")] };
     }
@@ -473,7 +473,7 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
         if (r?.next && !r.offRoute) {
           const cue = r.next.cue ? (uk ? `, ${r.next.cue}` : `, ${r.next.cue}`) : "";
           const road = r.next.road ? (uk ? ` на ${r.next.road}` : ` onto ${r.next.road}`) : "";
-          now.push(uk ? `Наступний маневр: ${r.next.action}${road}${cue}. Після повороту натисніть «Я вже повернув» — я уточню позицію.` : `Next: ${r.next.action}${road}${cue}. After the turn tap “I've turned” so I can correct the position.`);
+          now.push(uk ? `Наступний маневр: ${r.next.action}${road}${cue}. Після повороту натисніть «Поворот пройдено» — я уточню позицію.` : `Next: ${r.next.action}${road}${cue}. After the turn tap “I've turned” so I can correct the position.`);
         } else if (!r) {
           now.push(uk ? "Активного маршруту немає — без GPS я можу вести лише за маршрутом, збудованим заздалегідь. Скажіть, що бачите навколо (вулицю, вивіску), — я порівняю з картою." : "There is no active route — without GPS I can only guide along a route built beforehand. Tell me what you see (a street, a sign) and I'll match it with the map.");
         }
@@ -487,7 +487,7 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
           lost ? "Як я веду без GPS:" : g.state === "DEGRADED" ? "Якщо сигнал зникне:" : "",
           "• рахую пройдене за швидкістю й датчиками руху телефона;",
           "• перед кожним поворотом називаю орієнтир — світлофор, АЗС, міст, переїзд;",
-          "• після повороту натисніть «Я вже повернув» — я уточню позицію;",
+          "• після повороту натисніть «Поворот пройдено» — я уточню позицію;",
           "• якщо загубилися — напишіть, що бачите (назву вулиці, вивіску, АЗС), і я порівняю з картою.",
           r ? (r.landmarkCount > 0 ? `На цьому маршруті я знаю ${r.landmarkCount} орієнтирів.` : "Орієнтирів уздовж цього маршруту поки немає — орієнтуйтеся за назвами вулиць і дорожніми знаками.") : "Порада: будуйте маршрут, поки сигнал є — я збережу його разом з орієнтирами й мапою.",
         ]
@@ -501,7 +501,7 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
         ];
       const text = [now.join(" "), ...how.filter(Boolean)].join("\n");
       const actions: CopilotAction[] = [];
-      if (lost && r?.next) actions.push({ kind: "confirmTurn", label: uk ? "Я вже повернув" : "I've turned" });
+      if (lost && r?.next) actions.push({ kind: "confirmTurn", label: uk ? "Поворот пройдено" : "I've turned" });
       if (r?.next) actions.push(ask(uk ? "Що далі?" : "What's next?"));
       actions.push(ask(uk ? "Де я зараз?" : "Where am I?"));
       return { intent, text, actions };
@@ -523,7 +523,7 @@ export function answer(question: string, w: CopilotWorld): CopilotReply {
       const road = r.next.road ? (uk ? ` на ${r.next.road}` : ` onto ${r.next.road}`) : "";
       const confirm = r.next.confirm ? ` ${r.next.confirm}` : "";
       const then = r.then ? (uk ? ` Потім — ${r.then}.` : ` Then ${r.then}.`) : "";
-      const actions: CopilotAction[] = w.gps.positionMode === "DEAD_RECKONING" || w.gps.state === "LOST" ? [{ kind: "confirmTurn", label: uk ? "Я вже повернув" : "I've turned" }] : [];
+      const actions: CopilotAction[] = w.gps.positionMode === "DEAD_RECKONING" || w.gps.state === "LOST" ? [{ kind: "confirmTurn", label: uk ? "Поворот пройдено" : "I've turned" }] : [];
       return { intent, text: `${dist}${cue} ${r.next.action}${road}.${confirm}${then}`, actions };
     }
 
@@ -593,7 +593,7 @@ function whereAmI(w: CopilotWorld, intent: Intent): CopilotReply {
     if (g.uncertaintyM) parts.push(uk ? `Точність ±${Math.round(g.uncertaintyM)} м.` : `Accuracy ±${Math.round(g.uncertaintyM)} m.`);
     if (w.route.next) parts.push(uk ? `Далі: ${w.route.next.cue ? `${w.route.next.cue} ` : ""}${w.route.next.action}.` : `Next: ${w.route.next.cue ? `${w.route.next.cue}, ` : ""}${w.route.next.action}.`);
     parts.push(uk ? "Якщо бачите вивіску чи назву вулиці — напишіть, я уточню." : "If you see a sign or a street name, tell me and I'll refine it.");
-    actions.push({ kind: "confirmTurn", label: uk ? "Я вже повернув" : "I've turned" }, { kind: "ask", label: uk ? "Бачу " : "I see ", question: uk ? "Бачу " : "I see " });
+    actions.push({ kind: "confirmTurn", label: uk ? "Поворот пройдено" : "I've turned" }, { kind: "ask", label: uk ? "Бачу " : "I see ", question: uk ? "Бачу " : "I see " });
     return { intent, text: parts.join(" "), actions };
   }
   if (g.state === "LOST" || !g.hasPosition) {

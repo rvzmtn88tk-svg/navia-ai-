@@ -1,6 +1,6 @@
 # Hold-out phrasings
 
-Recognised: 36 of 52 (69.2 %)
+Recognised: 38 of 52 (73.1 %)
 
 | Question | Expected | Got | OK |
 |---|---|---|---|
@@ -18,7 +18,7 @@ Recognised: 36 of 52 (69.2 %)
 | где мне съезжать с трассы | routeNext | unknown | ✗ |
 | скільки ще метрів до маневру | routeNext | routeNext | ✓ |
 | ще довго їхати до кінця? | eta | eta | ✓ |
-| встигнемо до восьмої? | eta | unknown | ✗ |
+| встигнемо до восьмої? | eta | eta | ✓ |
 | какое расстояние до конца маршрута | eta | unknown | ✗ |
 | скільки хвилин лишилось | eta | eta | ✓ |
 | я ж по правильній їду? | onRoute | onRoute | ✓ |
@@ -55,4 +55,4 @@ Recognised: 36 of 52 (69.2 %)
 | потрібна аптека терміново | place | place | ✓ |
 | де пункт незламності поблизу | place | place | ✓ |
 | водій знепритомнів | emergency | unknown | ✗ |
-| збили пішохода, що робити | emergency | clarify | ✗ |
+| збили пішохода, що робити | emergency | emergency | ✓ |
