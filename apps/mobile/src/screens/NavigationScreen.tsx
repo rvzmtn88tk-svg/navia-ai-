@@ -11,9 +11,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { DEMO_POIS, type GNSSRawSample, type IMUSample } from "@navia/core";
+import type { GNSSRawSample, IMUSample } from "@navia/core";
 import type { RootStackParamList } from "../navigation/RootNavigator";
-import { navigationEngine, demoEngine, useNaviaStore } from "../engine/naviaController";
+import { DEMO_DESTINATION } from "@navia/core";
+import { navigationEngine, demoEngine, useNaviaStore, tripPlanner, demoTripPlanner, demoCopilot, activePlanner, activeCopilot } from "../engine/naviaController";
 import { ExpoLocationPositionProvider } from "../providers/ExpoLocationPositionProvider";
 import { ExpoSensorsMotionProvider } from "../providers/ExpoSensorsMotionProvider";
 import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
@@ -60,6 +61,13 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
     let tickHandle: ReturnType<typeof setInterval> | null = null;
 
     const destination = { lat: destinationLat, lon: destinationLon };
+    // The trip plan owns destination + stops + road preferences, so every
+    // (re)route — first route, off-route recovery, co-pilot actions — keeps them.
+    const planned = tripPlanner.getPlan().destination;
+    if (!isDemoMode && (!planned || planned.location.lat !== destinationLat || planned.location.lon !== destinationLon)) {
+      tripPlanner.setDestination({ label: destinationLabel, location: destination });
+      activeCopilot().resetConversation();
+    }
 
     async function startReal() {
       const locationProvider = new ExpoLocationPositionProvider();
@@ -86,7 +94,7 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
         // First fix with no route yet -> request one now that we know origin.
         if (!navigationEngine.getRoute() && !routeError) {
           try {
-            await navigationEngine.requestRoute({ lat: sample.lat, lon: sample.lon }, destination);
+            navigationEngine.applyRoute(await tripPlanner.route({ lat: sample.lat, lon: sample.lon }));
             refresh();
           } catch (err) {
             if (!cancelled) setRouteError((err as Error).message);
@@ -96,12 +104,17 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
 
       tickHandle = setInterval(() => {
         navigationEngine.tick(Date.now());
+        markStopsVisited();
         refresh();
-        maybeReroute({ lat: navigationEngine.getState().position?.position.lat ?? destinationLat, lon: navigationEngine.getState().position?.position.lon ?? destinationLon }, destination);
+        const here = navigationEngine.getState().position?.position;
+        if (here) void maybeReroute({ lat: here.lat, lon: here.lon });
       }, TICK_INTERVAL_MS);
     }
 
     async function startDemo() {
+      // A fresh demo drive starts with a fresh trip plan and conversation.
+      demoTripPlanner.setDestination({ label: "Бориспіль (demo)", location: DEMO_DESTINATION });
+      demoCopilot.resetConversation();
       try {
         await demoEngine.start();
         refresh();
@@ -111,16 +124,26 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
       }
       tickHandle = setInterval(() => {
         demoEngine.tick(DEMO_TICK_SECONDS);
+        markStopsVisited();
         refresh();
       }, TICK_INTERVAL_MS);
     }
 
-    async function maybeReroute(current: { lat: number; lon: number }, dest: { lat: number; lon: number }) {
+    /** Drop co-pilot stops the vehicle has reached, so later reroutes don't send it back. */
+    function markStopsVisited() {
+      const pos = (isDemoMode ? demoEngine : navigationEngine).getState().position?.position;
+      if (!pos) return;
+      for (const stop of activePlanner().markVisitedNear(pos)) {
+        void voice.speak(`Зупинка: ${stop.label}.`).catch(() => {});
+      }
+    }
+
+    async function maybeReroute(current: { lat: number; lon: number }) {
       if (rerouting.current) return;
       if (!navigationEngine.getState().offRoute) return;
       rerouting.current = true;
       try {
-        await navigationEngine.requestRoute(current, dest);
+        navigationEngine.applyRoute(await tripPlanner.route(current));
         refresh();
       } catch (err) {
         if (!cancelled) setRouteError((err as Error).message);
@@ -206,20 +229,9 @@ export function NavigationScreen({ route: navRoute }: Props): JSX.Element {
         {!state.nextStep && <Text style={styles.hudBottomStatus}>Маршрут до: {destinationLabel}</Text>}
       </View>
 
-      <VoicePanel
-        isDemoMode={isDemoMode}
-        context={{
-          state,
-          route,
-          nearbyLandmarks: state.nearbyLandmarks,
-          // No real POI database is wired into this pass (see LIMITATIONS.md,
-          // scripts/data's POI index isn't built/imported); Demo Mode uses
-          // the shipped demo fixture so landmark-query voice intents have
-          // something real to answer against, real mode honestly has none yet.
-          nearbyPOI: isDemoMode ? DEMO_POIS : [],
-          recentEvents: [...(isDemoMode ? demoEngine : navigationEngine).getTelemetry().getEvents()],
-        }}
-      />
+      {/* The co-pilot reads the live engine/trip plan itself (activeCopilot);
+          places come from OSM online in real mode, the labelled demo fixture in Demo Mode. */}
+      <VoicePanel isDemoMode={isDemoMode} onRouteChanged={refresh} />
     </View>
   );
 }

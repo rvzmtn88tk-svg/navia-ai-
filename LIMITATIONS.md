@@ -191,3 +191,33 @@ logic is runner-specific.
    `RoutingProvider` interface — no UI changes needed.
 7. Pick and wire a real STT module for `ExpoSpeechVoiceProvider.startListening`
    (currently an honest not-implemented stub) and validate it on-device.
+
+## AI co-pilot (added with the co-pilot upgrade)
+
+What is real and verified here: the co-pilot's tools, trip planner, place
+search (local + Overpass query/parse), routed detours, confirmation gate,
+agent loop, model-tier cascade, backend validation and the exact Claude API
+request it builds — 129 automated tests, typecheck clean for
+`packages/core` and `apps/ai-backend`.
+
+Not verified here, and why:
+- **No live model run.** This environment has no Claude API key, so the 23
+  eval scenarios have only been run in `--dry-run` mode. The agent-loop
+  tests use a scripted LLM (they test NAVIA's plumbing, not the model's
+  judgement). Run `ANTHROPIC_API_KEY=... npm run eval:ai` to measure real
+  pass rate, latency and cost, then tune the prompt/tool descriptions.
+- **Overpass (OSM place search) not called live** — unreachable from this
+  sandbox; the query/response handling is tested with a mocked fetch.
+- **Valhalla multi-stop/costing options** — written against the documented
+  API (`break` locations, `costing_options.auto`), not called live.
+- **No live traffic source.** `get_traffic_ahead` honestly reports
+  unavailable; route times are the routing engine's static estimates.
+- **No ratings/prices/reviews** in any data source — the co-pilot says so
+  rather than calling a place "good".
+- **"Bad roads"** maps to avoiding unpaved roads/tracks (the only road
+  quality signal in OSM routing); the demo router supports none of the
+  preferences and says so.
+- **Speech-to-text still not wired** (see above); the co-pilot is reachable
+  by the demo buttons and a text field until an STT module is added.
+- Saved home/work and AI consent are session-only (no persistent storage
+  yet), like recent destinations.

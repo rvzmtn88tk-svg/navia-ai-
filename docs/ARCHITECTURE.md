@@ -16,5 +16,20 @@ GNSS -> GNSSMonitor -> SensorFusion -> PositionEstimate -> MapMatcher -> RoutePr
 ## Core invariant
 AI never generates navigation truth. It only explains NavigationContext.
 
+## AI co-pilot
+See `docs/AI_COPILOT.md`. The LLM (behind `apps/ai-backend`, key never on the
+phone) understands the request and chooses tools; the tools
+(`packages/core/src/copilot/`) run on the phone against the navigation
+stack and compute every fact: along-route place search with routed
+detours, route overview/alternatives, trip actions through `TripPlanner`
+(stops, destination, road preferences) with a driver-confirmation gate.
+The model sees a compact `<trip_state>` snapshot and short ids, never
+coordinates. Without the backend or without the driver's consent, the
+on-device deterministic provider answers.
+
+    driver text -> NaviaCopilot -> LLM (fast/smart tier) -> tool_use
+                -> executeCopilotTool -> RouteGeometry / TripPlanner / RoutingProvider / PlaceSearchProvider
+                -> tool_result -> LLM -> short spoken answer
+
 ## Offline invariant
 When network is disabled, core navigation continues if the required regional package is installed. The UI must show exactly which capability is offline and which is unavailable.

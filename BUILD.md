@@ -66,6 +66,16 @@ Real GNSS and motion testing must be done on a physical device, not a
 simulator — `expo-location`/`expo-sensors` report fabricated values on
 simulators/emulators.
 
+## apps/ai-backend (AI co-pilot backend)
+
+```bash
+cp apps/ai-backend/.env.example .env   # or set the variables in your host's secret store
+ANTHROPIC_API_KEY=... npm run ai:backend   # listens on :8787; GET /healthz
+```
+
+Deploy behind HTTPS and point the app's `EXPO_PUBLIC_NAVIA_AI_BACKEND_URL`
+at it. The provider key lives only here. See `docs/AI_COPILOT.md`.
+
 ## scripts/data (needs a machine with normal internet access)
 
 ```bash

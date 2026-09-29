@@ -169,6 +169,8 @@ function edgesToRoute(graph: DemoRoadGraph, edges: DemoRoadEdge[], id: string): 
 
 /** Points farther than this from every graph node are attached by splitting the nearest edge. */
 const SNAP_TO_NODE_M = 30;
+/** Stops/destinations farther than this from the demo road network are outside demo coverage. */
+const MAX_ACCESS_M = 1500;
 
 /**
  * Attach an off-node point to the graph: project it onto the nearest edge,
@@ -218,7 +220,7 @@ export class DemoRoutingProvider implements RoutingProvider {
     const waypoints = request.waypoints ?? [];
     const unsupported = requestedPreferenceKeys(request.preferences);
     if (waypoints.length === 0) {
-      const route = await this.routeBetween(this.graph, request.origin, request.destination, "o", "d");
+      const route = await this.routeBetween(this.graph, request.origin, request.destination, "o", "d", false, true);
       return unsupported.length > 0 ? { ...route, appliedPreferences: [], unsupportedPreferences: unsupported } : route;
     }
 
@@ -229,7 +231,7 @@ export class DemoRoutingProvider implements RoutingProvider {
     const legs: Route[] = [];
     const points = [request.origin, ...waypoints, request.destination];
     for (let i = 0; i < points.length - 1; i++) {
-      const leg = await this.routeBetween(this.graph, points[i]!, points[i + 1]!, `p${i}`, `p${i + 1}`, i > 0, i + 1 < points.length - 1);
+      const leg = await this.routeBetween(this.graph, points[i]!, points[i + 1]!, `p${i}`, `p${i + 1}`, i > 0, true);
       legs.push(leg);
     }
     // Every intermediate leg ends at a stop, so its "arrive" is kept.
@@ -240,6 +242,8 @@ export class DemoRoutingProvider implements RoutingProvider {
     });
   }
 
+  /** `fromIsStop`/`toIsStop`: the point is a place to reach (stop or destination), so an off-road
+   * one gets an access spur from the road; a plain origin is where the car already is. */
   private async routeBetween(
     baseGraph: DemoRoadGraph, from: LatLon, to: LatLon, fromTag: string, toTag: string,
     fromIsStop = false, toIsStop = false,
@@ -249,6 +253,9 @@ export class DemoRoutingProvider implements RoutingProvider {
     graph = origin.graph;
     const dest = attachPoint(graph, to, toTag);
     graph = dest.graph;
+    if (toIsStop && dest.offsetM > MAX_ACCESS_M) {
+      throw new Error(`DemoRoutingProvider: target is ${Math.round(dest.offsetM)} m from the demo road network (outside demo coverage)`);
+    }
     if (origin.nodeId === dest.nodeId) {
       throw new Error(`DemoRoutingProvider: origin and destination snap to the same point (${origin.nodeId})`);
     }

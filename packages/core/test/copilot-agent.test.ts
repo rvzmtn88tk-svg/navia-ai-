@@ -229,6 +229,7 @@ test("chooseTier: cascade rules", () => {
 
 test("toSpeakable strips markdown the TTS would read aloud", () => {
   assert.equal(toSpeakable("**WOG** через 4 км\n- OKKO"), "WOG через 4 км\nOKKO");
+  assert.equal(toSpeakable("WOG (p3) через 4 км"), "WOG через 4 км");
 });
 
 test("integration with DemoEngine: the co-pilot adds a stop and the simulated drive follows the new route", async () => {

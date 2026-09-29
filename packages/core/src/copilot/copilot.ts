@@ -71,9 +71,10 @@ export type CopilotReply = {
 
 const LOCAL_NOTICE = "Розумний режим штурмана зараз недоступний.";
 
-/** Remove formatting that TTS would read out literally. */
+/** Remove formatting and internal ids (p3, s1, r2) that TTS would read out literally. */
 export function toSpeakable(text: string): string {
   return text
+    .replace(/\s*\((?:id\s*)?[prs]\d{1,3}\)/g, "")
     .replace(/\*\*|__|`|#+\s/g, "")
     .replace(/^\s*[-•*]\s+/gm, "")
     .replace(/\s+\n/g, "\n")

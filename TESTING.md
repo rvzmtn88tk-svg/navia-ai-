@@ -30,6 +30,28 @@ files, one per engine module plus the E2E scenario:
 | `test/geocoder.test.ts` *(new, Stage 2)* | `DemoGeocoderProvider`: substring match + source tag, empty query, `limit` respected (3 tests) |
 | `test/navigation-engine.test.ts` *(new, Stage 2)* | `NavigationEngine`: no-GNSS→LOST+null position, trusted fix→NORMAL+ACTIVE, staleness→LOST+dead-reckoning position, off-route detection, routing-failure→honest rejection, arrival (6 tests) |
 
+### AI co-pilot tests (added with the co-pilot upgrade)
+
+`npm test` now runs **129** tests (root script also covers `apps/ai-backend/test`):
+
+| File | Covers |
+|---|---|
+| `test/route-geometry.test.ts` | projection, side of road, ahead-only projection, time along route (timeline), detour estimate |
+| `test/place-search.test.ts` | `opening_hours` evaluation, name normalisation, local corridor/radius search, Overpass query building/parsing/failure (mocked fetch) |
+| `test/trip-planner.test.ts` | multi-stop demo routing through off-road stops, mid-edge origin, unsupported preferences, stop ordering, `DemoEngine.applyRoute` |
+| `test/copilot-tools.test.ts` | every tool against the demo world: detour limits, time windows, range reserve, parking at destination, explicit errors, LOW-confidence withholding, confirmation gate, rollback on routing failure, no coordinates in `trip_state` |
+| `test/copilot-agent.test.ts` | the agent loop with a scripted LLM: multi-step McDonald's flow over two turns, parallel tool results, tier cascade, outages, refusal, tool budget, memory, UI confirm/decline, DemoEngine integration |
+| `test/eval-grader.test.ts` | number-grounding grader, scenario worlds |
+| `apps/ai-backend/test/backend.test.ts` | request validation (no proxy abuse), auth, error mapping, exact Claude API request per tier |
+
+The scripted-LLM tests verify NAVIA's own code paths. The real model's
+behaviour is measured by the live eval (needs a Claude API key):
+
+```bash
+ANTHROPIC_API_KEY=... npm run eval:ai    # 23 scenarios, pass/fail + latency + cost report
+npm run eval:ai -- --dry-run             # no API calls
+```
+
 ## apps/mobile
 
 Not typechecked, not built, not run — see `LIMITATIONS.md` for exactly

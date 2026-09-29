@@ -216,13 +216,15 @@ export class DeterministicDemoAIProvider implements AIProvider {
 }
 
 /**
- * RemoteLLMProvider — the second provider spec section 39 names. Per its own
- * rules ("Remote LLM must be behind backend. Never put provider secret in
- * mobile code."), this class deliberately has no API key or HTTP call baked
- * in: it's a wiring point for a backend proxy endpoint the mobile app would
- * call, which this sandbox has no backend to stand up. Left as an honest
- * not-implemented stub — DeterministicDemoAIProvider is the production
- * default, per "the app must run without an API key."
+ * RemoteLLMProvider — the single-shot `answer()` shape spec section 39
+ * sketched. SUPERSEDED: the remote LLM path is now NaviaCopilot
+ * (copilot/copilot.ts) — an on-device tool-calling loop that reaches the
+ * model only through the NAVIA AI backend (apps/ai-backend) via
+ * BackendLLMClient, so no provider secret lives in mobile code. A plain
+ * answer(context, text) cannot express tool use or confirmations, so this
+ * class stays an honest not-implemented stub rather than a second,
+ * weaker remote path. DeterministicDemoAIProvider remains the key-free
+ * local fallback NaviaCopilot degrades to.
  */
 export class RemoteLLMProvider implements AIProvider {
   constructor(private backendEndpoint: string) {}
