@@ -18,6 +18,7 @@ import type { POI } from "../src/landmark-engine";
 import { TripPlanner } from "../src/trip-planner";
 import { EngineCopilotRuntime, type CopilotNavigationHost, type SavedPlace } from "../src/copilot/runtime";
 import type { TrafficProvider } from "../src/traffic";
+import type { PreferenceStore } from "../src/copilot/preferences";
 
 export type WorldOptions = {
   /** Vehicle position, metres along the demo road from Maidan. Default 2 km. */
@@ -34,6 +35,8 @@ export type WorldOptions = {
   routingFails?: boolean;
   traffic?: TrafficProvider;
   now?: Date;
+  /** Long-term driver preferences available to the co-pilot. */
+  preferences?: PreferenceStore;
 };
 
 /** Tuesday 29 Sep 2026, 14:00 device-local time. */
@@ -85,6 +88,8 @@ export type World = {
   planner: TripPlanner;
   routing: SwitchableRoutingProvider;
   position: LatLon;
+  /** Move the world clock (reminders, "minutes ago"). */
+  setNow: (d: Date) => void;
 };
 
 export async function buildWorld(opts: WorldOptions = {}): Promise<World> {
@@ -93,6 +98,7 @@ export async function buildWorld(opts: WorldOptions = {}): Promise<World> {
   const band = opts.band ?? "HIGH";
   const confidence = { HIGH: 0.9, MEDIUM: 0.6, LOW: 0.35, UNKNOWN: 0.1 }[band];
   const now = opts.now ?? WORLD_DEFAULT_NOW;
+  const clock = { now };
   const state: NavigationState = {
     mode: opts.noRoute ? "IDLE" : band === "LOW" || band === "UNKNOWN" ? "POSITION_UNCERTAIN" : "ACTIVE",
     position: { position: { ...position, timestamp: now.getTime(), accuracyM: band === "HIGH" ? 5 : 40, source: "FUSED" }, confidence, band, source: "FUSED" },
@@ -132,7 +138,8 @@ export async function buildWorld(opts: WorldOptions = {}): Promise<World> {
     ]),
     savedPlaces: () => opts.savedPlaces ?? [],
     localPois: () => DEMO_ROUTE_POIS,
-    now: () => now,
+    ...(opts.preferences ? { preferences: opts.preferences } : {}),
+    now: () => clock.now,
   });
-  return { runtime, host, planner, routing, position };
+  return { runtime, host, planner, routing, position, setNow: (d: Date) => { clock.now = d; } };
 }

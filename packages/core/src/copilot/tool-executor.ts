@@ -16,8 +16,9 @@ import { haversineMeters } from "../geodesy";
 import { RouteGeometryIndex, RouteTimeline, estimateDetourSeconds, DETOUR_ACCESS_SPEED_MPS, DETOUR_CIRCUITY_FACTOR } from "../route-geometry";
 import { evaluateOpeningHours, type PlaceFilter } from "../place-search";
 import { orderStopsAlongRoute, type TripStop } from "../trip-planner";
-import { CONFIRMATION_REQUIRED_TOOLS, SEARCHABLE_CATEGORIES } from "./tool-definitions";
+import { CONFIRMATION_REQUIRED_TOOLS, SEARCHABLE_CATEGORIES, TOOL_POLICY, type CopilotToolName } from "./tool-definitions";
 import type { CopilotRuntime, CopilotSession, EntityRegistry, PlaceEntity } from "./runtime";
+import { validatePreference } from "./preferences";
 
 export type ToolContext = {
   runtime: CopilotRuntime;
@@ -79,6 +80,10 @@ function filterArg(input: Record<string, unknown>): PlaceFilter {
     ? input.name_variants.filter((n): n is string => typeof n === "string" && n.trim().length > 0).slice(0, 6)
     : [];
   return { ...(cats.length ? { categories: cats } : {}), ...(names.length ? { nameVariants: names } : {}) };
+}
+
+function describeFilter(f: PlaceFilter): string {
+  return [...(f.categories ?? []), ...(f.nameVariants ?? [])].join("/") || "places";
 }
 
 function currentPosition(ctx: ToolContext): LatLon | null {
@@ -208,7 +213,11 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
   const filter = filterArg(input);
   if (!filter.categories && !filter.nameVariants) return err("bad_request", "Give categories and/or name_variants.");
   const limit = numArg(input, "limit", 1, 5) ?? 3;
-  const maxDetourS = numArg(input, "max_detour_minutes", 0, 120) != null ? numArg(input, "max_detour_minutes", 0, 120)! * 60 : null;
+  // A detour limit the driver set as a lasting preference applies when the request names none.
+  const prefDetour = ctx.runtime.preferences?.()?.get("max_detour_minutes");
+  const detourArg = numArg(input, "max_detour_minutes", 0, 120) ?? (typeof prefDetour === "number" ? prefDetour : undefined);
+  const maxDetourS = detourArg != null ? detourArg * 60 : null;
+  const excluded = new Set(Array.isArray(input.exclude_place_ids) ? input.exclude_place_ids.filter((x): x is string => typeof x === "string") : []);
   const rangeM = numArg(input, "vehicle_range_km", 0, 2000) != null ? numArg(input, "vehicle_range_km", 0, 2000)! * 1000 : null;
   const openOnly = boolArg(input, "open_now_only") ?? false;
   const now = ctx.runtime.now();
@@ -221,6 +230,13 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
   if (minMin != null) fromM = Math.max(fromM, rc.timeline.distanceAtSeconds(rc.secondsNow + minMin * 60));
   if (maxMin != null) toM = Math.min(toM, rc.timeline.distanceAtSeconds(rc.secondsNow + maxMin * 60));
   if (maxKm != null) toM = Math.min(toM, rc.alongNowM + maxKm * 1000);
+  const beyondId = strArg(input, "beyond_place_id");
+  if (beyondId) {
+    const b = ctx.registry.get(beyondId);
+    if (!b || b.kind !== "place") return err("unknown_place_id", `Unknown place id "${beyondId}".`);
+    const bp = rc.index.project(b.location, rc.alongNowM - 200);
+    if (bp) { fromM = Math.max(fromM, bp.alongM + 30); toM = Math.max(toM, Math.min(rc.index.lengthM, fromM + 20_000)); }
+  }
   // Look somewhat beyond the stated range: "the nearest station is 7 km away,
   // just past your 5 km" is exactly what a driver on reserve needs to hear.
   if (rangeM != null) toM = Math.min(toM, rc.alongNowM + Math.max(rangeM * 1.5, rangeM + 10_000));
@@ -256,6 +272,7 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
     if (!proj || proj.alongM < rc.alongNowM - 30) continue; // behind the car
     const open = openNowField(poi, now);
     if (openOnly && open === false) { closed++; continue; }
+    if (excluded.size > 0 && excluded.has(registerPoi(ctx, poi).id)) continue;
     cands.push({
       poi,
       aheadM: Math.max(0, proj.alongM - rc.alongNowM),
@@ -334,10 +351,10 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
       ...(r !== undefined ? { reachable: r } : {}),
     };
   });
-  ctx.session.recentResults = results.map((r) => ({
+  ctx.session.pushResults(`along route: ${describeFilter(filter)}`, results.map((r) => ({
     id: r.id,
     line: `${r.id} ${r.name} (${r.category}) ${r.ahead_km} km ahead, +${r.detour_min} min`,
-  }));
+  })));
 
   return {
     content: {
@@ -349,6 +366,7 @@ async function searchAlongRoute(input: Record<string, unknown>, ctx: ToolContext
       ...(closed > 0 ? { excluded_closed: closed } : {}),
       ...(rangeM != null ? { range_reserve: `reachable assumes ${Math.round(RANGE_SAFETY_FACTOR * 100)}% of the stated range` } : {}),
       ...(routingNote ? { note: routingNote } : {}),
+      ...(numArg(input, "max_detour_minutes", 0, 120) == null && typeof prefDetour === "number" ? { applied_preference: `max_detour_minutes=${prefDetour} (driver's saved preference)` } : {}),
       results,
     },
     isError: false,
@@ -395,9 +413,11 @@ async function searchNear(input: Record<string, unknown>, ctx: ToolContext): Pro
     return err("place_search_failed", `Place search failed: ${(e as Error).message}`);
   }
   let closed = 0;
+  const excludedNear = new Set(Array.isArray(input.exclude_place_ids) ? input.exclude_place_ids.filter((x): x is string => typeof x === "string") : []);
   const rows = raw
     .map((poi) => ({ poi, d: haversineMeters(center!, poi.location), open: openNowField(poi, now) }))
     .filter((x) => { if (openOnly && x.open === false) { closed++; return false; } return true; })
+    .filter((x) => excludedNear.size === 0 || !excludedNear.has(registerPoi(ctx, x.poi).id))
     .sort((a, b) => a.d - b.d)
     .slice(0, limit);
   const walking = anchor !== "current_position";
@@ -412,7 +432,7 @@ async function searchNear(input: Record<string, unknown>, ctx: ToolContext): Pro
       open_now: x.open,
     };
   });
-  ctx.session.recentResults = results.map((r) => ({ id: r.id, line: `${r.id} ${r.name} (${r.category}) ${r.distance_m} m from ${anchorLabel}` }));
+  ctx.session.pushResults(`near ${anchorLabel}: ${describeFilter(filter)}`, results.map((r) => ({ id: r.id, line: `${r.id} ${r.name} (${r.category}) ${r.distance_m} m from ${anchorLabel}` })));
   return {
     content: {
       source: places.source,
@@ -501,6 +521,7 @@ async function compareRoutes(ctx: ToolContext): Promise<ToolOutcome> {
         main_roads: mainRoads(x.route.steps, 3),
       };
     });
+  ctx.session.pushResults("alternative routes", rows.map((r) => ({ id: r.id, line: `${r.id} ${r.minutes} min (${r.delta_min >= 0 ? "+" : ""}${r.delta_min} min vs active) via ${r.main_roads.map((m) => m.road).join(", ")}` })));
   return {
     content: {
       provider: rc.route.source,
@@ -565,6 +586,7 @@ async function findDestination(input: Record<string, unknown>, ctx: ToolContext)
     const e = ctx.registry.registerPlace(`geo:${r.location.lat.toFixed(5)},${r.location.lon.toFixed(5)}`, { label: r.label, location: r.location });
     return { id: e.id, label: r.label, source: r.source, ...withDistance(r.location) };
   });
+  ctx.session.pushResults(`destinations for "${query}"`, candidates.map((c) => ({ id: c.id, line: `${c.id} ${c.label}` })));
   return { content: { found: candidates.length > 0, candidates }, isError: false };
 }
 
@@ -724,6 +746,11 @@ async function addStop(input: Record<string, unknown>, ctx: ToolContext, confirm
   try {
     const route = await rerouteWithPlan(ctx, rc.position);
     const newRemaining = route.durationS;
+    ctx.session.focus = { id: e.id, label: e.label };
+    ctx.session.recordAction({
+      at: ctx.runtime.now().getTime(), tool: "add_stop", summary: `added stop ${stop.id} "${e.label}"`,
+      undo: { tool: "remove_stop", input: { stop_id: stop.id }, summary: `remove stop ${stop.id}` },
+    });
     return {
       content: {
         status: "done",
@@ -752,6 +779,11 @@ async function removeStop(input: Record<string, unknown>, ctx: ToolContext): Pro
   ctx.runtime.planner.removeStop(stop.id);
   try {
     const route = await rerouteWithPlan(ctx, pos);
+    const again = ctx.registry.registerPlace(`stop:${stop.label}:${stop.location.lat.toFixed(5)},${stop.location.lon.toFixed(5)}`, { label: stop.label, location: stop.location, ...(stop.category ? { category: stop.category } : {}) });
+    ctx.session.recordAction({
+      at: ctx.runtime.now().getTime(), tool: "remove_stop", summary: `removed stop "${stop.label}"`,
+      undo: { tool: "add_stop", input: { place_id: again.id }, summary: `add ${again.id} "${stop.label}" back (needs confirmation)` },
+    });
     return { content: { status: "done", removed: stop.label, remaining_min: minutes(route.durationS) }, isError: false, spoken: `Зупинку ${stop.label} прибрано.` };
   } catch (x) {
     ctx.runtime.planner.addStop({ label: stop.label, location: stop.location, ...(stop.category ? { category: stop.category } : {}) }, ctx.runtime.getNavigation().route);
@@ -781,6 +813,14 @@ async function setDestination(input: Record<string, unknown>, ctx: ToolContext, 
   try {
     const route = await rerouteWithPlan(ctx, pos);
     const arrival = arrivalClock(ctx.runtime.now(), route.durationS);
+    const prev = before.destination
+      ? ctx.registry.registerPlace(`dest:${before.destination.label}:${before.destination.location.lat.toFixed(5)},${before.destination.location.lon.toFixed(5)}`, { label: before.destination.label, location: before.destination.location })
+      : null;
+    ctx.session.focus = { id: e.id, label: e.label };
+    ctx.session.recordAction({
+      at: ctx.runtime.now().getTime(), tool: "set_destination", summary: `destination changed to "${e.label}"${prev ? ` (was "${prev.label}")` : ""}`,
+      undo: prev ? { tool: "set_destination", input: { place_id: prev.id, keep_stops: true }, summary: `go back to ${prev.id} "${prev.label}" (needs confirmation)` } : null,
+    });
     return {
       content: { status: "done", destination: e.label, remaining_km: km(route.distanceM), remaining_min: minutes(route.durationS), arrival },
       isError: false,
@@ -826,6 +866,12 @@ async function setRoutePreferences(input: Record<string, unknown>, ctx: ToolCont
     };
   }
   ctx.runtime.applyRoute(route);
+  const undoInput = Object.fromEntries(mapping.filter(([, k]) => change[k] !== undefined).map(([arg, k]) => [arg, previous[k] ?? false]));
+  ctx.session.recordAction({
+    at: ctx.runtime.now().getTime(), tool: "set_route_preferences",
+    summary: `route preferences: ${Object.entries(change).map(([k, v]) => `${k}=${v}`).join(", ")}`,
+    undo: { tool: "set_route_preferences", input: undoInput, summary: "restore previous road preferences" },
+  });
   return {
     content: {
       status: "done",
@@ -851,7 +897,13 @@ async function switchRoute(input: Record<string, unknown>, ctx: ToolContext, con
       minutes: minutes(e.route.durationS), ...(deltaMin != null ? { delta_min: deltaMin } : {}),
     });
   }
+  const previousRoute = ctx.runtime.getNavigation().route;
   ctx.runtime.applyRoute(e.route);
+  const back = previousRoute ? ctx.registry.registerRoute(previousRoute) : null;
+  ctx.session.recordAction({
+    at: ctx.runtime.now().getTime(), tool: "switch_route", summary: `switched to route ${e.id}`,
+    undo: back ? { tool: "switch_route", input: { route_id: back.id }, summary: `back to previous route ${back.id} (needs confirmation)` } : null,
+  });
   return {
     content: { status: "done", remaining_min: minutes(e.route.durationS), ...(deltaMin != null ? { delta_min: deltaMin } : {}) },
     isError: false,
@@ -860,14 +912,174 @@ async function switchRoute(input: Record<string, unknown>, ctx: ToolContext, con
 }
 
 function propose(ctx: ToolContext, tool: string, input: Record<string, unknown>, summary: string, details: Record<string, unknown>): ToolOutcome {
-  ctx.session.pending = {
-    tool, input: { ...input }, key: actionKey(tool, input), proposedAtTurn: ctx.session.turn,
-    createdAt: ctx.runtime.now().getTime(), summary,
-  };
+  const key = actionKey(tool, input);
+  const s = ctx.session;
+  // A new proposal replaces proposals from earlier turns; proposals made in the
+  // same turn form one plan ("coffee first, then home") confirmed together.
+  s.pendingActions = s.pendingActions.filter((p) => p.proposedAtTurn === s.turn && p.key !== key);
+  const { driver_confirmed_in_this_message: _flag, ...stored } = input;
+  s.pendingActions.push({ tool, input: stored, key, proposedAtTurn: s.turn, createdAt: ctx.runtime.now().getTime(), summary });
+  const id = strArg(input, "place_id");
+  const ent = id ? ctx.registry.get(id) : undefined;
+  if (ent && ent.kind === "place") s.focus = { id: ent.id, label: ent.label };
   return {
-    content: { status: "awaiting_user_confirmation", ...details, instruction: "Ask the driver a short yes/no question. Call this tool again only after they agree." },
+    content: {
+      status: "awaiting_user_confirmation", ...details,
+      ...(s.pendingActions.length > 1 ? { plan_so_far: s.pendingActions.map((p) => p.summary) } : {}),
+      instruction: "Ask the driver one short yes/no question (covering the whole plan if several actions are pending). Call the action again only after they agree.",
+    },
     isError: false,
   };
+}
+
+// ---------- details, reorder, reminders, preferences ----------
+
+async function placeDetails(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
+  const id = strArg(input, "place_id");
+  const e = id ? ctx.registry.get(id) : undefined;
+  if (!e || e.kind !== "place") return err("unknown_place_id", `Unknown place id "${id ?? ""}". Use an id from an earlier result.`);
+  ctx.session.focus = { id: e.id, label: e.label };
+  if (!ctx.session.presented.has(e.id)) ctx.session.presented.set(e.id, ctx.session.turn);
+  const now = ctx.runtime.now();
+  const out: Record<string, unknown> = { id: e.id, name: e.label };
+  if (e.poi) {
+    out.category = e.poi.category;
+    if (e.poi.brand) out.brand = e.poi.brand;
+    if (e.poi.cuisine) out.cuisine = e.poi.cuisine;
+    if (e.poi.openingHours) out.opening_hours = e.poi.openingHours;
+    out.open_now = openNowField(e.poi, now);
+  }
+  const pos = currentPosition(ctx);
+  if (pos) out.straight_line_km_from_car = km(haversineMeters(pos, e.location));
+  const dest = ctx.runtime.planner.getPlan().destination;
+  if (dest) out.straight_line_km_from_destination = km(haversineMeters(dest.location, e.location));
+  out.is_stop = ctx.runtime.planner.getPlan().stops.some((st) => haversineMeters(st.location, e.location) < 30);
+  const rc = buildRouteContext(ctx.runtime);
+  if (rc) {
+    const proj = rc.index.project(e.location, rc.alongNowM - 200);
+    if (proj && proj.alongM >= rc.alongNowM - 30) {
+      out.ahead_km = km(Math.max(0, proj.alongM - rc.alongNowM));
+      out.ahead_min = minutes(Math.max(0, rc.timeline.secondsAt(proj.alongM) - rc.secondsNow));
+      out.side = proj.side;
+      out.distance_from_route_m = r0(proj.offsetM);
+    } else {
+      out.position = "behind the car or not along the active route";
+    }
+    if (!out.is_stop && dest) {
+      try {
+        const baseline = await withTimeout(ctx.runtime.planner.route(rc.position), 8_000);
+        const s = await withTimeout(routedDetourSeconds(ctx, rc, e, baseline.durationS), 8_000);
+        if (s != null) { out.added_min_if_stopping = r1(s / 60); out.detour = "routed"; }
+        else if (proj) { out.added_min_if_stopping = r1(estimateDetourSeconds(proj.offsetM) / 60); out.detour = "estimated"; }
+      } catch (x) {
+        out.added_min_if_stopping = "unknown";
+        out.note = `routing unavailable: ${(x as Error).message}`;
+      }
+    }
+    if (positionUncertain(rc.band)) out.position_uncertain = true;
+  }
+  return { content: out, isError: false };
+}
+
+async function reorderStops(input: Record<string, unknown>, ctx: ToolContext, confirmed: boolean): Promise<ToolOutcome> {
+  const ids = Array.isArray(input.stop_ids) ? input.stop_ids.filter((x): x is string => typeof x === "string") : [];
+  const plan = ctx.runtime.planner.getPlan();
+  const current = plan.stops.map((st) => st.id);
+  if (ids.length !== current.length || !ids.every((id) => current.includes(id)) || new Set(ids).size !== ids.length) {
+    return err("bad_request", `Give every stop id exactly once. Current stops in order: ${plan.stops.map((st) => `${st.id} ${st.label}`).join(", ") || "none"}.`);
+  }
+  const pos = currentPosition(ctx);
+  if (!pos) return err("no_position", "The current position is unknown.");
+  const ordered = ids.map((id) => plan.stops.find((st) => st.id === id)!);
+  if (!confirmed) {
+    let preview: Record<string, unknown> = {};
+    try {
+      const r = await withTimeout(ctx.runtime.planner.route(pos, { stops: ordered }), 8_000);
+      preview = { remaining_min: minutes(r.durationS), arrival: arrivalClock(ctx.runtime.now(), r.durationS) };
+    } catch (x) { preview = { route: `could not be computed: ${(x as Error).message}` }; }
+    return propose(ctx, "reorder_stops", input, `Змінити порядок зупинок: ${ordered.map((st) => st.label).join(" → ")}`, { order: ordered.map((st) => st.label), ...preview });
+  }
+  ctx.runtime.planner.restore({ ...plan, stops: ordered });
+  try {
+    const route = await rerouteWithPlan(ctx, pos);
+    ctx.session.recordAction({
+      at: ctx.runtime.now().getTime(), tool: "reorder_stops", summary: `stop order: ${ordered.map((st) => st.label).join(" → ")}`,
+      undo: { tool: "reorder_stops", input: { stop_ids: current }, summary: "restore previous stop order (needs confirmation)" },
+    });
+    return { content: { status: "done", order: ordered.map((st) => st.label), remaining_min: minutes(route.durationS) }, isError: false, spoken: "Порядок зупинок змінено." };
+  } catch (x) {
+    ctx.runtime.planner.restore(plan);
+    return err("routing_failed", `Rerouting failed: ${(x as Error).message}. Order unchanged.`);
+  }
+}
+
+function setReminder(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  const topic = strArg(input, "topic");
+  if (!topic) return err("bad_request", "Give a topic.");
+  const afterMin = numArg(input, "after_minutes", 1, 600);
+  const afterKm = numArg(input, "after_km", 0.5, 2000);
+  if (afterMin == null && afterKm == null) return err("bad_request", "Give after_minutes or after_km.");
+  const now = ctx.runtime.now().getTime();
+  let dueAtAlongM: number | null = null;
+  if (afterKm != null) {
+    const rc = buildRouteContext(ctx.runtime);
+    if (!rc) return err("no_active_route", "after_km needs an active route; use after_minutes.");
+    dueAtAlongM = rc.alongNowM + afterKm * 1000;
+  }
+  const cats = filterArg(input).categories ?? [];
+  const r = ctx.session.addReminder({ topic, categories: cats, dueAtMs: afterMin != null ? now + afterMin * 60_000 : null, dueAtAlongM, createdAt: now });
+  ctx.session.recordAction({ at: now, tool: "set_reminder", summary: `reminder ${r.id} "${topic}"`, undo: { tool: "cancel_reminder", input: { reminder_id: r.id }, summary: `cancel reminder ${r.id}` } });
+  return {
+    content: { status: "done", reminder_id: r.id, topic, ...(afterMin != null ? { due_at: clockTime(new Date(now + afterMin * 60_000)) } : {}), ...(afterKm != null ? { due_after_km: afterKm } : {}) },
+    isError: false,
+  };
+}
+
+function cancelReminder(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  const id = strArg(input, "reminder_id");
+  const i = ctx.session.reminders.findIndex((r) => r.id === id);
+  if (i < 0) return err("unknown_reminder_id", `No reminder "${id ?? ""}". Current: ${ctx.session.reminders.map((r) => `${r.id} ${r.topic}`).join(", ") || "none"}.`);
+  const [r] = ctx.session.reminders.splice(i, 1);
+  return { content: { status: "done", cancelled: r!.topic }, isError: false };
+}
+
+function rememberPreference(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  const store = ctx.runtime.preferences?.();
+  if (!store) return err("preferences_unavailable", "This app build does not keep long-term preferences.");
+  const words = strArg(input, "driver_words");
+  if (!words) return err("bad_request", "driver_words is required: quote what the driver said.");
+  const v = validatePreference(strArg(input, "key") ?? "", input.value);
+  if (!v.ok) return err("bad_request", v.message);
+  const prev = store.set(v.key, v.value, words, ctx.runtime.now().getTime());
+  ctx.session.recordAction({
+    at: ctx.runtime.now().getTime(), tool: "remember_preference", summary: `saved preference ${v.key}`,
+    undo: prev ? { tool: "remember_preference", input: { key: v.key, value: prev.value, driver_words: prev.driverWords }, summary: `restore previous ${v.key}` } : { tool: "forget_preference", input: { key: v.key }, summary: `forget ${v.key}` },
+  });
+  return { content: { status: "done", key: v.key, value: v.value }, isError: false };
+}
+
+function forgetPreference(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  const store = ctx.runtime.preferences?.();
+  if (!store) return err("preferences_unavailable", "This app build does not keep long-term preferences.");
+  const key = strArg(input, "key") ?? "";
+  const v = validatePreference(key, "x");
+  const known = v.ok || !/Unknown preference/.test(v.message);
+  if (!known) return err("bad_request", v.ok ? "" : v.message);
+  const prev = store.remove(key as never);
+  return { content: { status: prev ? "done" : "not_set", key }, isError: false };
+}
+
+// Short-lived cache for read tools: the same question twice in a row (or the
+// model re-checking) doesn't hit the network again. Keyed by tool, input and
+// the car's position rounded to ~150 m; 60 s lifetime.
+const CACHEABLE = new Set(["search_along_route", "search_near", "get_landmarks_ahead"]);
+const toolCache = new WeakMap<CopilotSession, Map<string, { at: number; outcome: ToolOutcome }>>();
+function cacheKey(name: string, input: Record<string, unknown>, ctx: ToolContext): string | null {
+  if (!CACHEABLE.has(name)) return null;
+  const p = currentPosition(ctx);
+  const route = ctx.runtime.getNavigation().route;
+  const cell = p ? `${Math.round(p.lat * 750)}:${Math.round(p.lon * 480)}` : "nopos";
+  return `${name}|${JSON.stringify(input)}|${cell}|${route?.id ?? ""}|${ctx.runtime.planner.getPlan().stops.length}`;
 }
 
 // ---------- dispatch ----------
@@ -881,17 +1093,51 @@ export async function executeCopilotTool(
   try {
     if (CONFIRMATION_REQUIRED_TOOLS.has(name)) {
       const key = actionKey(name, input);
-      const pending = ctx.session.pending;
+      const match = ctx.session.pendingActions.find((p) => p.key === key);
       // Confirmed = the driver tapped Confirm, or the model repeats the exact
       // proposed action in a LATER turn (i.e. after the driver replied).
-      const confirmed = opts.confirmedByUi === true || (pending != null && pending.key === key && ctx.session.turn > pending.proposedAtTurn);
-      if (confirmed) ctx.session.pending = null;
+      // …or the driver, having heard this target's impact in an earlier answer,
+      // now orders exactly this action ("the second one is fine — add it").
+      const target = strArg(input, "place_id") ?? strArg(input, "route_id");
+      const heardAt = target ? ctx.session.presented.get(target) : undefined;
+      const orderedNow = input.driver_confirmed_in_this_message === true && heardAt != null && heardAt < ctx.session.turn;
+      const confirmed = opts.confirmedByUi === true || orderedNow || (match != null && ctx.session.turn > match.proposedAtTurn);
+      if (confirmed) ctx.session.pendingActions = ctx.session.pendingActions.filter((p) => p.key !== key);
       switch (name) {
         case "add_stop": return await addStop(input, ctx, confirmed);
         case "set_destination": return await setDestination(input, ctx, confirmed);
         case "switch_route": return await switchRoute(input, ctx, confirmed);
+        case "reorder_stops": return await reorderStops(input, ctx, confirmed);
       }
     }
+    if (!(name in TOOL_POLICY)) return err("unknown_tool", `No tool named "${name}".`);
+    const ck = cacheKey(name, input, ctx);
+    if (ck) {
+      const cache = toolCache.get(ctx.session) ?? new Map();
+      toolCache.set(ctx.session, cache);
+      const hit = cache.get(ck);
+      const nowMs = ctx.runtime.now().getTime();
+      if (hit && nowMs - hit.at < 60_000) {
+        // Re-publish the list so "the second one" still refers to what the driver just heard.
+        if (Array.isArray(hit.outcome.content.results)) {
+          const items = (hit.outcome.content.results as { id: string; name: string }[]).map((r) => ({ id: r.id, line: `${r.id} ${r.name}` }));
+          ctx.session.pushResults(`${name} (cached)`, items);
+        }
+        return { ...hit.outcome, content: { ...hit.outcome.content, cached: true } };
+      }
+      const out = await dispatchRead(name as CopilotToolName, input, ctx);
+      if (!out.isError) cache.set(ck, { at: nowMs, outcome: out });
+      if (cache.size > 30) cache.delete(cache.keys().next().value as string);
+      return out;
+    }
+    return await dispatchRead(name as CopilotToolName, input, ctx);
+  } catch (e) {
+    return err("tool_failed", `${name} failed: ${(e as Error).message}`);
+  }
+}
+
+async function dispatchRead(name: CopilotToolName, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
+  {
     switch (name) {
       case "search_along_route": {
         const out = await searchAlongRoute(input, ctx);
@@ -906,6 +1152,11 @@ export async function executeCopilotTool(
         return out;
       }
       case "search_near": return await searchNear(input, ctx);
+      case "get_place_details": return await placeDetails(input, ctx);
+      case "set_reminder": return setReminder(input, ctx);
+      case "cancel_reminder": return cancelReminder(input, ctx);
+      case "remember_preference": return rememberPreference(input, ctx);
+      case "forget_preference": return forgetPreference(input, ctx);
       case "get_route_overview": return routeOverview(ctx);
       case "compare_routes": return await compareRoutes(ctx);
       case "get_traffic_ahead": return await trafficAhead(input, ctx);
@@ -915,14 +1166,12 @@ export async function executeCopilotTool(
       case "remove_stop": return await removeStop(input, ctx);
       case "set_route_preferences": return await setRoutePreferences(input, ctx);
       case "cancel_pending_action": {
-        const had = ctx.session.pending;
-        ctx.session.pending = null;
-        return { content: { status: had ? "cancelled" : "nothing_pending" }, isError: false, spoken: "Добре, скасовано." };
+        const had = ctx.session.pendingActions.length;
+        ctx.session.pendingActions = [];
+        return { content: { status: had ? "cancelled" : "nothing_pending", ...(had > 1 ? { cancelled_actions: had } : {}) }, isError: false, spoken: "Добре, скасовано." };
       }
       default:
         return err("unknown_tool", `No tool named "${name}".`);
     }
-  } catch (e) {
-    return err("tool_failed", `${name} failed: ${(e as Error).message}`);
   }
 }

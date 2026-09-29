@@ -7,14 +7,13 @@
 // Put it behind TLS (a reverse proxy or your platform's HTTPS) in production.
 
 import { createServer, type IncomingMessage } from "node:http";
-import Anthropic from "@anthropic-ai/sdk";
 import { COPILOT_PROTOCOL_VERSION } from "@navia/core";
 import { loadConfig } from "./config";
-import { AnthropicLLMClient } from "./anthropic-llm-client";
+import { createLLMClient } from "./provider-factory";
 import { handleCompletion, LIMITS, RateLimiter } from "./handler";
 
 const config = loadConfig();
-const llm = new AnthropicLLMClient(new Anthropic({ timeout: 45_000, maxRetries: 1 }), config);
+const llm = createLLMClient(config);
 const limiter = new RateLimiter(config.rateLimitPerMinute);
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -39,7 +38,7 @@ const server = createServer(async (req, res) => {
   };
   try {
     if (req.method === "GET" && req.url === "/healthz") {
-      return send(200, { ok: true, protocolVersion: COPILOT_PROTOCOL_VERSION, tiers: { fast: config.fastModel, smart: config.smartModel } });
+      return send(200, { ok: true, protocolVersion: COPILOT_PROTOCOL_VERSION, provider: config.provider, tiers: { fast: config.fastModel, smart: config.smartModel } });
     }
     if (req.method === "POST" && req.url === "/v1/copilot/complete") {
       const key = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
@@ -58,5 +57,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(config.port, () => {
-  console.log(`NAVIA AI backend listening on :${config.port} (fast=${config.fastModel}, smart=${config.smartModel}, effort=${config.smartEffort})`);
+  console.log(`NAVIA AI backend listening on :${config.port} (provider=${config.provider}, fast=${config.fastModel}, smart=${config.smartModel}, effort=${config.smartEffort})`);
 });

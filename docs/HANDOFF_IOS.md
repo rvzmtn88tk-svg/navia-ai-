@@ -73,7 +73,7 @@ ANTHROPIC_API_KEY=… npm run eval:ai       # live eval on the real models (cost
 ```
 
 The app talks to `POST {backend}/v1/copilot/complete` (protocol
-`2026-09-29.2`). If you already run a different server, either deploy
+`2026-09-29.3`). If you already run a different server, either deploy
 `apps/ai-backend` or make yours implement this contract (see
 `apps/ai-backend/src/handler.ts`).
 

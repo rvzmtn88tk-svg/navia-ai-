@@ -56,7 +56,7 @@ test("multi-step: McDonald's within +10 min -> propose -> driver says yes -> sto
     // Turn 2
     (v) => {
       assert.match(v.tripState, /pending_action: add_stop/);
-      assert.match(v.tripState, /last_results: p1 McDonald's/);
+      assert.match(v.tripState, /last_results \([^)]*\): #1 p1 McDonald's/);
       return { tools: [{ name: "add_stop", input: { place_id: "p1" } }] };
     },
     (v) => {

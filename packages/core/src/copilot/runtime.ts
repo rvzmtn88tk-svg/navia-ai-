@@ -9,6 +9,7 @@ import type { PlaceSearchProvider } from "../place-search";
 import type { TrafficProvider } from "../traffic";
 import { UnavailableTrafficProvider } from "../traffic";
 import type { TripPlanner } from "../trip-planner";
+import type { PreferenceStore } from "./preferences";
 
 export type SavedPlace = { kind: "home" | "work"; label: string; location: LatLon };
 
@@ -31,6 +32,8 @@ export interface CopilotRuntime {
   isNetworkAvailable(): boolean;
   /** POIs available on-device, used by the offline deterministic fallback. */
   localPois(): readonly POI[];
+  /** The driver's long-term preferences, when the app keeps them. */
+  preferences?(): PreferenceStore | null;
 }
 
 /** Anything that owns the active route: NavigationEngine and DemoEngine both qualify. */
@@ -48,6 +51,7 @@ export type EngineRuntimeOptions = {
   geocoder?: GeocoderProvider | null;
   savedPlaces?: () => SavedPlace[];
   localPois?: () => readonly POI[];
+  preferences?: PreferenceStore | null;
   now?: () => Date;
 };
 
@@ -76,6 +80,7 @@ export class EngineCopilotRuntime implements CopilotRuntime {
   applyRoute(route: Route): void { this.host().applyRoute(route); }
   isNetworkAvailable(): boolean { return this.host().getState().networkAvailable; }
   localPois(): readonly POI[] { return this.options.localPois?.() ?? []; }
+  preferences(): PreferenceStore | null { return this.options.preferences ?? null; }
 }
 
 // --- entity registry: short ids the model uses instead of coordinates ---
@@ -151,30 +156,96 @@ export type PendingAction = {
 
 export type RecentResult = { id: string; line: string };
 
+/** One list of results the driver heard ("the second one" refers to its item #2). */
+export type ResultSet = { label: string; turn: number; items: RecentResult[] };
+
+/** An action that changed the trip, with how to reverse it ("no, remove it again"). */
+export type ActionRecord = {
+  at: number;
+  turn: number;
+  tool: string;
+  summary: string;
+  undo: { tool: string; input: Record<string, unknown>; summary: string } | null;
+};
+
+/** Something the driver asked to be reminded of; the proactive engine fires it. */
+export type Reminder = {
+  id: string;
+  topic: string;
+  categories: string[];
+  /** Fire at this time (ms), or when the car is this far along the route (m). */
+  dueAtMs: number | null;
+  dueAtAlongM: number | null;
+  createdAt: number;
+};
+
 export type DialogueTurn = { user: string; assistant: string; at: number };
 
 /** A pending action nobody confirmed within this many ms is dropped. */
 export const PENDING_ACTION_TTL_MS = 5 * 60_000;
 
+/**
+ * Conversation + trip memory the tools and the agent loop share. Structured
+ * (not keyword-parsed): the model sees it in <trip_state> and resolves
+ * references itself — "the second one" = item #2 of the last result list,
+ * "it" = the focus, "undo that" = the last action's undo.
+ */
 export class CopilotSession {
   turn = 0;
-  pending: PendingAction | null = null;
-  recentResults: RecentResult[] = [];
+  /** Actions proposed and awaiting the driver's yes/no — several for a plan ("coffee first, then home"). */
+  pendingActions: PendingAction[] = [];
+  /** The latest result list first; a few earlier ones kept for "the one from before". */
+  resultSets: ResultSet[] = [];
+  /** The place or route most recently singled out (details asked, proposed, added). */
+  focus: { id: string; label: string } | null = null;
+  actions: ActionRecord[] = [];
+  reminders: Reminder[] = [];
+  /** Place/route ids whose time impact the driver has heard, with the turn they heard it. */
+  presented = new Map<string, number>();
+  private reminderSeq = 0;
   history: DialogueTurn[] = [];
   lastSmartTurnAt: number | null = null;
+
+  /** First pending action (single-action compatibility). */
+  get pending(): PendingAction | null { return this.pendingActions[0] ?? null; }
+  set pending(p: PendingAction | null) { this.pendingActions = p ? [p] : []; }
+
+  /** Items of the latest result list. */
+  get recentResults(): RecentResult[] { return this.resultSets[0]?.items ?? []; }
+  set recentResults(items: RecentResult[]) { this.pushResults("results", items); }
+
+  pushResults(label: string, items: RecentResult[]): void {
+    if (items.length === 0) return;
+    for (const it of items) if (!this.presented.has(it.id)) this.presented.set(it.id, this.turn);
+    this.resultSets.unshift({ label, turn: this.turn, items });
+    if (this.resultSets.length > 3) this.resultSets.length = 3;
+  }
+
+  recordAction(a: Omit<ActionRecord, "turn">): void {
+    this.actions.unshift({ ...a, turn: this.turn });
+    if (this.actions.length > 6) this.actions.length = 6;
+  }
+
+  addReminder(r: Omit<Reminder, "id">): Reminder {
+    const rem = { ...r, id: `m${++this.reminderSeq}` };
+    this.reminders.push(rem);
+    return rem;
+  }
 
   /** Called at the start of every driver message. */
   beginTurn(nowMs: number): void {
     this.turn += 1;
-    if (this.pending && (nowMs - this.pending.createdAt > PENDING_ACTION_TTL_MS || this.turn - this.pending.proposedAtTurn > 2)) {
-      this.pending = null;
-    }
+    this.pendingActions = this.pendingActions.filter((p) => nowMs - p.createdAt <= PENDING_ACTION_TTL_MS && this.turn - p.proposedAtTurn <= 2);
   }
 
   reset(): void {
     this.turn = 0;
-    this.pending = null;
-    this.recentResults = [];
+    this.pendingActions = [];
+    this.resultSets = [];
+    this.focus = null;
+    this.actions = [];
+    this.reminders = [];
+    this.presented.clear();
     this.history = [];
     this.lastSmartTurnAt = null;
   }

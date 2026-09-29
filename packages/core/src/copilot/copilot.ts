@@ -18,8 +18,9 @@ import {
   type CopilotMessage, type LLMClient, type ModelTier, type ToolResultBlock, type Usage,
 } from "./protocol";
 import { chooseTier, DEFAULT_ROUTER_POLICY, type RouterPolicy } from "./model-router";
-import { CopilotSession, EntityRegistry, type CopilotRuntime } from "./runtime";
+import { CopilotSession, EntityRegistry, type CopilotRuntime, type Reminder } from "./runtime";
 import { executeCopilotTool, type ToolContext } from "./tool-executor";
+import { TOOL_POLICY } from "./tool-definitions";
 import { buildTripSnapshot } from "./trip-snapshot";
 import { parseLocalPlaceIntent, phraseLocalPlaceResult } from "./local-place-intent";
 
@@ -42,6 +43,11 @@ export type CopilotOptions = {
   fallback?: AIProvider;
   onProgress?: (event: CopilotProgress) => void;
 };
+
+/** Things NAVIA notices on its own (see ProactiveEngine). */
+export type CopilotEvent =
+  | { type: "reminder_due"; description: string; reminder: Reminder }
+  | { type: "traffic_delay"; description: string; delayMin: number };
 
 export type CopilotProgress =
   | { stage: "llm"; callIndex: number; tier: ModelTier }
@@ -91,9 +97,11 @@ export class NaviaCopilot {
     this.fallback = options.fallback ?? new DeterministicDemoAIProvider();
   }
 
+  /** The action (or plan of actions) awaiting the driver's yes/no, as one confirm-button line. */
   getPendingAction(): { tool: string; summary: string } | null {
-    const p = this.session.pending;
-    return p ? { tool: p.tool, summary: p.summary } : null;
+    const ps = this.session.pendingActions;
+    if (ps.length === 0) return null;
+    return { tool: ps.map((p) => p.tool).join("+"), summary: ps.map((p) => p.summary).join("; потім ") };
   }
 
   resetConversation(): void {
@@ -119,6 +127,31 @@ export class NaviaCopilot {
 
     const enabled = this.llmEnabled();
     if (!enabled.ok) return this.localAnswer(text, started, enabled.reason, false);
+    return this.runAgent(text, text, started, nowMs);
+  }
+
+  /**
+   * Something happened that the driver may want to hear about (a reminder is
+   * due, traffic ahead got much worse). The model gets it as an <event> with
+   * the live trip state and decides: say one short sentence, look up places
+   * and propose an action, or stay silent ("SKIP"). Returns null when there
+   * is nothing to say.
+   */
+  async handleEvent(event: CopilotEvent): Promise<CopilotReply | null> {
+    const started = Date.now();
+    const nowMs = this.options.runtime.now().getTime();
+    this.session.beginTurn(nowMs);
+    const enabled = this.llmEnabled();
+    if (!enabled.ok) return this.localEvent(event, started, enabled.reason);
+    const eventText = `<event type="${event.type}">${event.description}\nThis is not the driver speaking: NAVIA noticed it. Bring it up only if useful right now, in one short sentence; you may look things up and propose one action. If it is not worth interrupting the driver, reply exactly SKIP.</event>`;
+    const reply = await this.runAgent(eventText, `[подія] ${event.description}`, started, nowMs, event);
+    if (!reply || /^\s*SKIP\s*\.?$/i.test(reply.text)) return null;
+    return reply;
+  }
+
+  private async runAgent(text: string, memoryText: string, started: number, nowMs: number): Promise<CopilotReply>;
+  private async runAgent(text: string, memoryText: string, started: number, nowMs: number, event: CopilotEvent): Promise<CopilotReply | null>;
+  private async runAgent(text: string, memoryText: string, started: number, nowMs: number, event?: CopilotEvent): Promise<CopilotReply | null> {
 
     const maxCalls = this.options.maxLlmCalls ?? 6;
     const maxTools = this.options.maxToolCalls ?? 12;
@@ -164,7 +197,7 @@ export class NaviaCopilot {
           response = await this.options.llm!.complete({ protocolVersion: COPILOT_PROTOCOL_VERSION, tier, messages }, controller?.signal);
         } catch (e) {
           const reason = e instanceof LLMUnavailableError ? e.message : `LLM call failed: ${(e as Error).message}`;
-          if (callIndex === 0 && trace.length === 0) return this.localAnswer(text, started, reason, true);
+          if (callIndex === 0 && trace.length === 0) return event ? this.localEvent(event, started, reason) : this.localAnswer(text, started, reason, true);
           // Mid-turn failure after tools ran: don't discard what the tools established.
           const partial = trace.length > 0 ? " Частину даних я отримала, але не встигла їх опрацювати — спитайте ще раз." : "";
           return this.reply(`${LOCAL_NOTICE}${partial}`, "llm", started, { trace, tiers, models, usage, degradedReason: reason });
@@ -184,7 +217,9 @@ export class NaviaCopilot {
 
         if (response.stopReason === "tool_use" && toolUses.length > 0) {
           const lastAllowedCall = callIndex >= maxCalls - 2;
-          const results: ToolResultBlock[] = await Promise.all(toolUses.map(async (use) => {
+          // Reads run in parallel; actions run one after another in the order the
+          // model called them (a plan's order matters: "coffee first, then home").
+          const runOne = async (use: (typeof toolUses)[number]): Promise<ToolResultBlock> => {
             toolCalls++;
             distinctTools.add(use.name);
             if (lastAllowedCall || toolCalls > maxTools || (controller?.signal.aborted ?? false)) {
@@ -205,7 +240,12 @@ export class NaviaCopilot {
               content: JSON.stringify(outcome.content),
               ...(outcome.isError ? { is_error: true } : {}),
             };
-          }));
+          };
+          const isRead = (name: string) => (TOOL_POLICY as Record<string, string>)[name] === "read";
+          const byId = new Map<string, ToolResultBlock>();
+          await Promise.all(toolUses.filter((u) => isRead(u.name)).map(async (u) => { byId.set(u.id, await runOne(u)); }));
+          for (const u of toolUses.filter((x) => !isRead(x.name))) byId.set(u.id, await runOne(u));
+          const results: ToolResultBlock[] = toolUses.map((u) => byId.get(u.id)!);
           // All results for one assistant message go back in ONE user message.
           messages.push({ role: "user", content: results });
           continue;
@@ -225,34 +265,56 @@ export class NaviaCopilot {
         : "Вибачте, не вдалося сформулювати відповідь.";
     }
     finalText = toSpeakable(finalText);
-    this.remember(text, finalText);
+    if (!/^\s*SKIP\s*\.?$/i.test(finalText)) this.remember(memoryText, finalText);
     if (tiers.includes("smart")) this.session.lastSmartTurnAt = nowMs;
     return this.reply(finalText, "llm", started, { trace, tiers, models, usage, ...(stopReason ? { stopReason } : {}) });
   }
 
-  /** The driver tapped "Confirm" on the pending action: execute it directly, no LLM round-trip. */
+  /** The driver tapped "Confirm": execute the pending action(s) in order, no LLM round-trip. */
   async confirmPendingAction(): Promise<CopilotReply> {
     const started = Date.now();
-    const pending = this.session.pending;
-    if (!pending) return this.reply("Немає дії, яку потрібно підтвердити.", "local", started, {});
-    const t0 = Date.now();
-    const outcome = await executeCopilotTool(pending.tool, pending.input, this.toolContext(), { confirmedByUi: true });
-    const text = outcome.spoken ?? (outcome.isError
-      ? `Не вдалося виконати: ${String(outcome.content.message ?? "помилка")}`
-      : "Готово.");
-    this.remember(`[підтверджено кнопкою] ${pending.summary}`, text);
-    return this.reply(text, "local", started, {
-      trace: [{ tool: pending.tool, input: pending.input, isError: outcome.isError, result: outcome.content, ms: Date.now() - t0 }],
-    });
+    const plan = [...this.session.pendingActions];
+    if (plan.length === 0) return this.reply("Немає дії, яку потрібно підтвердити.", "local", started, {});
+    const trace: ToolTraceEntry[] = [];
+    const spoken: string[] = [];
+    for (const pending of plan) {
+      const t0 = Date.now();
+      const outcome = await executeCopilotTool(pending.tool, pending.input, this.toolContext(), { confirmedByUi: true });
+      trace.push({ tool: pending.tool, input: pending.input, isError: outcome.isError, result: outcome.content, ms: Date.now() - t0 });
+      spoken.push(outcome.spoken ?? (outcome.isError ? `Не вдалося виконати: ${String(outcome.content.message ?? "помилка")}` : "Готово."));
+      if (outcome.isError) break; // don't run the rest of a plan whose first step failed
+    }
+    this.session.pendingActions = [];
+    const text = spoken.join(" ");
+    this.remember(`[підтверджено кнопкою] ${plan.map((p) => p.summary).join("; ")}`, text);
+    return this.reply(text, "local", started, { trace });
   }
 
   declinePendingAction(): CopilotReply {
     const started = Date.now();
-    const pending = this.session.pending;
-    this.session.pending = null;
-    const text = pending ? "Добре, скасовано." : "Немає дії, яку потрібно скасувати.";
-    if (pending) this.remember(`[скасовано кнопкою] ${pending.summary}`, text);
+    const plan = this.session.pendingActions;
+    this.session.pendingActions = [];
+    const text = plan.length ? "Добре, скасовано." : "Немає дії, яку потрібно скасувати.";
+    if (plan.length) this.remember(`[скасовано кнопкою] ${plan.map((p) => p.summary).join("; ")}`, text);
     return this.reply(text, "local", started, {});
+  }
+
+  /** Without the LLM: a reminder is still delivered, with a real along-route search when it names categories. */
+  private async localEvent(event: CopilotEvent, started: number, reason: string): Promise<CopilotReply | null> {
+    if (event.type !== "reminder_due") return null;
+    const r = event.reminder;
+    let text = `Нагадую: ${r.topic}.`;
+    const trace: ToolTraceEntry[] = [];
+    if (r.categories.length > 0 && this.options.runtime.places()) {
+      const input = { categories: r.categories, max_detour_minutes: 5, limit: 1 };
+      const t0 = Date.now();
+      const out = await executeCopilotTool("search_along_route", input, this.toolContext());
+      trace.push({ tool: "search_along_route", input, isError: out.isError, result: out.content, ms: Date.now() - t0 });
+      const first = !out.isError ? (out.content.results as { name: string; ahead_km: number; detour_min: number }[] | undefined)?.[0] : undefined;
+      if (first) text += ` Найближче по дорозі: ${first.name}, через ${first.ahead_km} км, заїзд близько ${Math.max(1, Math.round(first.detour_min))} хв.`;
+    }
+    this.remember(`[подія] ${event.description}`, text);
+    return this.reply(text, "local", started, { trace, degradedReason: reason });
   }
 
   private async localAnswer(text: string, started: number, reason: string, notify: boolean): Promise<CopilotReply> {

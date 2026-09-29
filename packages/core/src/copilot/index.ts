@@ -8,3 +8,6 @@ export * from "./model-router";
 export * from "./backend-client";
 export * from "./copilot";
 export * from "./local-place-intent";
+export * from "./preferences";
+export * from "./proactive";
+export * from "./voice-conversation";

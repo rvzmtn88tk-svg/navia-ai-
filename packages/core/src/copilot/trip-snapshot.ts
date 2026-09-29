@@ -6,6 +6,7 @@
 // polylines, no raw POI lists.
 
 import type { NavigationState, RouteStep } from "../types";
+import type { Route } from "../route-engine";
 import type { CopilotRuntime, CopilotSession } from "./runtime";
 import { arrivalClock, buildRouteContext } from "./tool-executor";
 import { UnavailableTrafficProvider } from "../traffic";
@@ -46,6 +47,22 @@ function positioningLine(state: NavigationState): string | null {
     `${p.gnssSuspectedSpoofing ? " suspected_spoofing=yes" : ""} uncertainty=±${Math.round(p.uncertaintyM)} m` +
     ` confidence=${p.locationConfidence} maneuver_guidance=${p.guidance}` +
     ` motion_sensors=${p.imuAvailable ? "yes" : "no"} last_trusted_fix=${ago}`;
+}
+
+/**
+ * DrivingContext: how much attention the driver has for the answer.
+ * phase: stopped (can take a fuller answer) / moving / maneuver_imminent (one
+ * short sentence or nothing). trip_phase: where in the trip we are.
+ */
+function drivingLine(state: NavigationState, route: Route | null, rc: ReturnType<typeof buildRouteContext>, stops: number): string {
+  const v = state.speedMps ?? null;
+  const toTurnS = v != null && v > 2 && state.nextManeuverDistanceM != null ? state.nextManeuverDistanceM / v : null;
+  const phase = v != null && v < 1 ? "stopped" : toTurnS != null && toTurnS < 15 ? "maneuver_imminent" : v == null ? "unknown" : "moving";
+  let trip = "no_route";
+  if (state.mode === "ARRIVED") trip = "arrived";
+  else if (route && rc) trip = rc.remainingM < 1000 ? "approaching_destination" : rc.alongNowM < 300 ? "starting" : stops > 0 ? "en_route_with_stops" : "en_route";
+  const style = phase === "stopped" ? "fuller answer ok (up to 5 options)" : phase === "maneuver_imminent" ? "one short sentence, or wait" : "brief, spoken";
+  return `driving: phase=${phase} trip_phase=${trip}${toTurnS != null ? ` next_maneuver_in_s=${Math.round(toTurnS)}` : ""} reply_style=${style}`;
 }
 
 export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSession): string {
@@ -111,11 +128,26 @@ export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSessi
   const places = runtime.places();
   lines.push(`data: places=${places ? places.source : "unavailable"} traffic=${runtime.traffic() instanceof UnavailableTrafficProvider ? "unavailable" : "connected"}`);
 
-  if (session.pending) {
-    lines.push(`pending_action: ${session.pending.tool} — "${session.pending.summary}" — awaiting driver's yes/no`);
+  // --- conversation & trip memory ---
+  const ago = (ms: number) => { const m = Math.round((now.getTime() - ms) / 60_000); return m < 1 ? "just now" : `${m} min ago`; };
+  if (session.pendingActions.length > 0) {
+    lines.push(`pending_action: ${session.pendingActions.map((p) => `${p.tool} ${JSON.stringify(p.input)} — "${p.summary}"`).join(" + ")} — awaiting driver's yes/no${session.pendingActions.length > 1 ? " (one plan: yes confirms all)" : ""}`);
   }
-  if (session.recentResults.length > 0) {
-    lines.push(`last_results: ${session.recentResults.slice(0, 5).map((r) => r.line).join("; ")}`);
+  if (session.resultSets.length > 0) {
+    const [last, ...earlier] = session.resultSets;
+    lines.push(`last_results (${last!.label}): ${last!.items.slice(0, 5).map((r, i) => `#${i + 1} ${r.line}`).join("; ")}`);
+    for (const e of earlier.slice(0, 1)) lines.push(`earlier_results (${e.label}): ${e.items.slice(0, 5).map((r, i) => `#${i + 1} ${r.line}`).join("; ")}`);
   }
+  if (session.focus) lines.push(`focus: ${session.focus.id} ${session.focus.label} (the place "it"/"that one" most likely refers to)`);
+  if (session.actions.length > 0) {
+    lines.push(`recent_actions: ${session.actions.slice(0, 3).map((a) => `${ago(a.at)}: ${a.summary}${a.undo ? ` [undo: ${a.undo.tool} ${JSON.stringify(a.undo.input)}]` : ""}`).join("; ")}`);
+  }
+  if (session.reminders.length > 0) {
+    lines.push(`reminders: ${session.reminders.map((r) => `${r.id} "${r.topic}"${r.dueAtMs != null ? ` at ${clock(new Date(r.dueAtMs))}` : ""}${r.dueAtAlongM != null ? " (distance-based)" : ""}`).join("; ")}`);
+  }
+  const prefs = runtime.preferences?.();
+  if (prefs) lines.push(`preferences (driver's saved, long-term): ${prefs.summary()}`);
+  lines.push(drivingLine(state, route, rc, plan.stops.length));
+
   return `<trip_state>\n${lines.join("\n")}\n</trip_state>`;
 }
