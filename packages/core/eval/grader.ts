@@ -108,7 +108,18 @@ export function tripStatesOf(requests: { messages: { role: string; content: unkn
   return out;
 }
 
-export function gradeTurn(spec: TurnSpec, reply: CopilotReply, ctx: { waypoints: number; groundingCorpus: unknown[] }): Check[] {
+/** Rough language of a reply: Ukrainian and Russian told apart by their distinctive letters. */
+export function detectLanguage(text: string): "uk" | "ru" | "en" | "unknown" {
+  const cyr = (text.match(/[а-яёіїєґ]/gi) ?? []).length, lat = (text.match(/[a-z]/gi) ?? []).length;
+  if (lat > cyr) return "en";
+  if (cyr === 0) return "unknown";
+  const uk = (text.match(/[іїєґ]/gi) ?? []).length, ru = (text.match(/[ыэъё]/gi) ?? []).length;
+  return uk >= ru ? (uk > 0 ? "uk" : "ru") : "ru";
+}
+
+const ACTION_TOOLS = ["add_stop", "set_destination", "switch_route", "reorder_stops", "remove_stop", "set_route_preferences"];
+
+export function gradeTurn(spec: TurnSpec, reply: CopilotReply, ctx: { waypoints: number; groundingCorpus: unknown[]; preferenceKeys?: string[]; reminders?: number }): Check[] {
   const checks: Check[] = [];
   const calls: ToolCall[] = reply.trace.map((t) => ({ tool: t.tool, input: t.input }));
   const tools = new Set(calls.map((c) => c.tool));
@@ -130,6 +141,23 @@ export function gradeTurn(spec: TurnSpec, reply: CopilotReply, ctx: { waypoints:
   if (spec.maxWords) {
     const words = reply.text.split(/\s+/).filter(Boolean).length;
     checks.push({ name: `<= ${spec.maxWords} words`, passed: words <= spec.maxWords, detail: String(words) });
+  }
+  if (spec.asksClarification === true) {
+    const executed = reply.trace.some((t) => ACTION_TOOLS.includes(t.tool) && t.result.status === "done");
+    checks.push({ name: "asks a clarifying question, changes nothing", passed: /\?/.test(reply.text) && !executed, detail: reply.text });
+  } else if (spec.asksClarification === false) {
+    checks.push({ name: "acts (calls a tool) instead of asking", passed: reply.trace.length > 0, detail: [...tools].join(",") || "no tools" });
+  }
+  if (spec.expectLanguage) {
+    const lang = detectLanguage(reply.text);
+    checks.push({ name: `replies in ${spec.expectLanguage}`, passed: lang === spec.expectLanguage, detail: lang });
+  }
+  if (spec.expectPreferenceKeys) {
+    const have = new Set(ctx.preferenceKeys ?? []);
+    checks.push({ name: `preferences saved: ${spec.expectPreferenceKeys.join(",")}`, passed: spec.expectPreferenceKeys.every((k) => have.has(k)), detail: [...have].join(",") });
+  }
+  if (spec.expectReminders !== undefined) {
+    checks.push({ name: `reminders = ${spec.expectReminders}`, passed: (ctx.reminders ?? 0) === spec.expectReminders, detail: String(ctx.reminders ?? 0) });
   }
   const ungrounded = ungroundedNumbers(reply.text, ctx.groundingCorpus);
   checks.push({ name: "numbers grounded in data", passed: ungrounded.length === 0, detail: ungrounded.join(", ") });

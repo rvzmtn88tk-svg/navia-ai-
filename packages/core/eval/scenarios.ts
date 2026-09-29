@@ -27,11 +27,22 @@ export type TurnSpec = {
   mustMatch?: RegExp[];
   mustNotMatch?: RegExp[];
   maxWords?: number;
+  /** true: the reply must ask the driver a question and change nothing; false: it must act (call a tool) rather than ask. */
+  asksClarification?: boolean;
+  /** Language the reply must be in (by script/letters). */
+  expectLanguage?: "uk" | "ru" | "en";
+  /** Saved long-term preference keys after the turn. */
+  expectPreferenceKeys?: string[];
+  /** Reminders set after the turn. */
+  expectReminders?: number;
 };
 
 export type Scenario = {
   id: string;
-  category: "normal" | "multi_step" | "ambiguous" | "api_error" | "no_results" | "route_change" | "long_dialog" | "safety";
+  category:
+    | "normal" | "multi_step" | "ambiguous" | "api_error" | "no_results" | "route_change" | "long_dialog" | "safety"
+    | "paraphrase" | "slang" | "typos" | "short" | "long" | "reference" | "change_mind" | "cancel" | "unexpected"
+    | "preferences" | "reminder" | "gps" | "offline" | "clarify" | "language";
   title: string;
   world: WorldOptions;
   turns: TurnSpec[];

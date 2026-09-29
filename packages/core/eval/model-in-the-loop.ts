@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 import { NaviaCopilot, type CopilotReply } from "../src/copilot/copilot";
 import { LLMUnavailableError, type CompletionRequest, type CompletionResponse, type ContentBlock, type LLMClient } from "../src/copilot/protocol";
 import { SCENARIOS, type Scenario } from "./scenarios";
+import { DEV_SUITE } from "./suite/dev";
+import { HOLDOUT_SUITE } from "./suite/holdout";
+
+const ALL: Scenario[] = [...SCENARIOS, ...DEV_SUITE, ...HOLDOUT_SUITE];
 import { buildWorld } from "./world";
 import { gradeTurn, tripStatesOf, type Check } from "./grader";
 
@@ -82,7 +86,14 @@ export async function replayScenario(s: Scenario, transcript: Transcript): Promi
     const reply = await copilot.ask(spec.user);
     if (llm.needed) return { turns, needed: llm.needed, neededTurn: i, extra: [] };
     const corpus: unknown[] = [spec.user, ...earlier, ...tripStatesOf(llm.requests.slice(before)), ...reply.trace.map((t) => t.result)];
-    turns.push({ user: spec.user, reply, requests: llm.requests.slice(before), checks: gradeTurn(spec, reply, { waypoints: world.host.route?.waypointCount ?? 0, groundingCorpus: corpus }) });
+    const prefs = world.runtime.preferences();
+    turns.push({
+      user: spec.user, reply, requests: llm.requests.slice(before),
+      checks: gradeTurn(spec, reply, {
+        waypoints: world.host.route?.waypointCount ?? 0, groundingCorpus: corpus,
+        preferenceKeys: prefs ? [...prefs.all().keys()] : [], reminders: copilot.session.reminders.length,
+      }),
+    });
     earlier.push(reply.text);
   }
   const extra: Check[] = [];
@@ -127,6 +138,22 @@ export function estimateCallCostUsd(req: CompletionRequest, outputChars: number,
   return { inTok: Math.round(staticTok + msgTok), outTok: Math.round(outTok), usd };
 }
 
+/** Holdout transcripts (the model-in-the-loop sample): pass/fail per scenario, never used for tuning. */
+async function summarizeHoldout() {
+  let pass = 0, have = 0;
+  for (const s of HOLDOUT_SUITE) {
+    const t = loadTranscript(s.id);
+    if (!t) continue;
+    have++;
+    const r = await replayScenario(s, t);
+    const ok = !r.needed && r.turns.every((x) => x.checks.every((c) => c.passed)) && r.extra.every((c) => c.passed);
+    if (ok) pass++;
+    const failed = r.turns.flatMap((x) => x.checks.filter((c) => !c.passed).map((c) => c.name));
+    console.log(`${s.id.padEnd(28)}${(r.needed ? "INCOMPLETE" : ok ? "PASS" : "FAIL").padEnd(11)}${s.category.padEnd(14)}${failed.join("; ")}`);
+  }
+  console.log(`\nholdout sample: ${pass}/${have} pass (of ${HOLDOUT_SUITE.length} holdout scenarios)`);
+}
+
 async function summarizeAll() {
   const { COPILOT_SYSTEM_PROMPT } = await import("../src/copilot/system-prompt");
   const { COPILOT_TOOLS } = await import("../src/copilot/tool-definitions");
@@ -164,10 +191,11 @@ async function summarizeAll() {
 
 async function main() {
   if (process.argv[2] === "--all") return summarizeAll();
+  if (process.argv[2] === "--holdout") return summarizeHoldout();
   const id = process.argv[2];
-  const s = SCENARIOS.find((x) => x.id === id);
+  const s = ALL.find((x) => x.id === id);
   if (!s) {
-    console.error(`usage: model-in-the-loop.ts <scenario-id>\n${SCENARIOS.map((x) => `  ${x.id}`).join("\n")}`);
+    console.error(`usage: model-in-the-loop.ts <scenario-id> | --all | --holdout\n${ALL.map((x) => `  ${x.id}`).join("\n")}`);
     process.exit(2);
   }
   const t = loadTranscript(s.id) ?? { scenario: s.id, decider: "unset", turns: [] };

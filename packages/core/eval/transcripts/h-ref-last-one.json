@@ -1,0 +1,39 @@
+{
+  "scenario": "h-ref-last-one",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "limit": 5
+            }
+          }
+        ]
+      },
+      {
+        "text": "По маршруту: ОККО через 7 кілометрів, WOG через 16 і SOCAR через 25."
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "get_place_details",
+            "input": {
+              "place_id": "p3"
+            }
+          }
+        ]
+      },
+      {
+        "text": "SOCAR — ліворуч, приблизно 900 метрів від траси, заїзд додасть близько 4 хвилин."
+      }
+    ]
+  ]
+}

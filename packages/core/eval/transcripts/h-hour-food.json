@@ -1,0 +1,55 @@
+{
+  "scenario": "h-hour-food",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "restaurant"
+              ],
+              "ahead_min_minutes": 35,
+              "ahead_max_minutes": 55,
+              "max_detour_minutes": 7,
+              "open_now_only": true,
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "restaurant"
+              ],
+              "max_detour_minutes": 7,
+              "open_now_only": true,
+              "limit": 3
+            }
+          },
+          {
+            "name": "search_near",
+            "input": {
+              "anchor": "destination",
+              "categories": [
+                "restaurant"
+              ],
+              "radius_m": 1500,
+              "open_now_only": true,
+              "limit": 2
+            }
+          }
+        ]
+      },
+      {
+        "text": "Ми будемо на місці вже через 48 хвилин, і біля кінцевої ресторанів я не знайшла. Найпізніший варіант по дорозі — Ресторан Козак через 27 хвилин, майже без гаку. Підійде?"
+      }
+    ]
+  ]
+}

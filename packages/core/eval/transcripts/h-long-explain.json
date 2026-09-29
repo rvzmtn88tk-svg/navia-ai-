@@ -1,0 +1,11 @@
+{
+  "scenario": "h-long-explain",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "text": "Коли GPS зникає, я веду за маршрутом: знаю дорогу, по якій ви їдете, а гіроскоп телефона показує повороти, тож позицію уточнюю на кожному повороті. Похибка росте з кожним кілометром, і я прямо скажу, коли відстані вже приблизні — тоді звіряйтеся зі знаками."
+      }
+    ]
+  ]
+}

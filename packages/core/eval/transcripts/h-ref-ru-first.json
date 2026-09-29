@@ -1,0 +1,39 @@
+{
+  "scenario": "h-ref-ru-first",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "cafe"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "По пути: Aroma Kava через 4 километра справа и Кава Кофи через 23 слева."
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "get_place_details",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "До Aroma Kava примерно 6 минут, она справа, заезд меньше минуты."
+      }
+    ]
+  ]
+}

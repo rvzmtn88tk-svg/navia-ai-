@@ -780,6 +780,8 @@ async function removeStop(input: Record<string, unknown>, ctx: ToolContext): Pro
   try {
     const route = await rerouteWithPlan(ctx, pos);
     const again = ctx.registry.registerPlace(`stop:${stop.label}:${stop.location.lat.toFixed(5)},${stop.location.lon.toFixed(5)}`, { label: stop.label, location: stop.location, ...(stop.category ? { category: stop.category } : {}) });
+    // The driver already accepted this place once: putting it back ("no, return it") is an informed order.
+    if (!ctx.session.presented.has(again.id)) ctx.session.presented.set(again.id, ctx.session.turn);
     ctx.session.recordAction({
       at: ctx.runtime.now().getTime(), tool: "remove_stop", summary: `removed stop "${stop.label}"`,
       undo: { tool: "add_stop", input: { place_id: again.id }, summary: `add ${again.id} "${stop.label}" back (needs confirmation)` },

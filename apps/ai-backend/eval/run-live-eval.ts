@@ -1,6 +1,9 @@
 // Live evaluation of the NAVIA co-pilot against the real Claude API.
 //
-//   ANTHROPIC_API_KEY=... npm run eval:ai                 # all scenarios, auto tier routing
+//   ANTHROPIC_API_KEY=... npm run eval:ai                 # legacy 28 scenarios, auto tier routing
+//   npm run eval:ai -- --suite dev                        # 264-scenario development suite
+//   npm run eval:ai -- --suite holdout                    # 59 holdout scenarios (generalisation; never tune on these)
+//   npm run eval:ai -- --suite all                        # everything, reported per suite
 //   npm run eval:ai -- --only mcdonalds-10min-add,no-kfc  # a subset
 //   npm run eval:ai -- --policy always_smart              # compare routing policies
 //   npm run eval:ai -- --dry-run                          # no API calls: checks worlds + prompt sizes
@@ -20,6 +23,8 @@ import {
   type CompletionRequest, type CompletionResponse, type LLMClient, type RouterPolicy, DEFAULT_ROUTER_POLICY, type Usage,
 } from "@navia/core";
 import { SCENARIOS, type Scenario } from "../../../packages/core/eval/scenarios";
+import { DEV_SUITE } from "../../../packages/core/eval/suite/dev";
+import { HOLDOUT_SUITE } from "../../../packages/core/eval/suite/holdout";
 import { buildWorld } from "../../../packages/core/eval/world";
 import { gradeTurn, tripStatesOf, type Check } from "../../../packages/core/eval/grader";
 import { AnthropicLLMClient } from "../src/anthropic-llm-client";
@@ -59,8 +64,11 @@ function parseArgs() {
   const argv = process.argv.slice(2);
   const get = (flag: string) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
   const policyMode = get("--policy") as RouterPolicy["mode"] | undefined;
+  const suite = (get("--suite") ?? "legacy") as "legacy" | "dev" | "holdout" | "all";
   return {
+    suite,
     dryRun: argv.includes("--dry-run"),
+    baselineLocal: argv.includes("--baseline-local"),
     only: get("--only")?.split(",").map((s) => s.trim()).filter(Boolean) ?? null,
     policy: { ...DEFAULT_ROUTER_POLICY, ...(policyMode ? { mode: policyMode } : {}) },
   };
@@ -71,10 +79,11 @@ type TurnReport = {
   latencyMs: number; usage: Usage; costUsd: number | null; checks: Check[]; passed: boolean;
 };
 
-async function runScenario(s: Scenario, llmFactory: () => LLMClient, policy: RouterPolicy) {
+async function runScenario(s: Scenario, llmFactory: (() => LLMClient) | null, policy: RouterPolicy) {
   const world = await buildWorld(s.world);
-  const recorder = new RecordingLLM(llmFactory());
-  const copilot = new NaviaCopilot({ runtime: world.runtime, llm: recorder, aiEnabled: () => true, routerPolicy: policy });
+  const recorder = llmFactory ? new RecordingLLM(llmFactory()) : new RecordingLLM(new OfflineLLM());
+  // llmFactory null = the previous, deterministic intent/template system alone (baseline).
+  const copilot = new NaviaCopilot({ runtime: world.runtime, llm: llmFactory ? recorder : null, aiEnabled: () => true, routerPolicy: policy });
   const turns: TurnReport[] = [];
   const earlierAnswers: string[] = [];
   for (const spec of s.turns) {
@@ -82,7 +91,12 @@ async function runScenario(s: Scenario, llmFactory: () => LLMClient, policy: Rou
     const reply = await copilot.ask(spec.user);
     const thisTurn = recorder.calls.slice(before);
     const corpus: unknown[] = [spec.user, ...earlierAnswers, ...tripStatesOf(thisTurn.map((c) => c.request)), ...reply.trace.map((t) => t.result)];
-    const checks = gradeTurn(spec, reply, { waypoints: world.host.route?.waypointCount ?? 0, groundingCorpus: corpus });
+    const prefs = world.runtime.preferences();
+    const graded = gradeTurn(spec, reply, {
+      waypoints: world.host.route?.waypointCount ?? 0, groundingCorpus: corpus,
+      preferenceKeys: prefs ? [...prefs.all().keys()] : [], reminders: copilot.session.reminders.length,
+    });
+    const checks = llmFactory ? graded : graded.filter((c) => c.name !== "answered_by_llm");
     const cost = thisTurn.reduce<number | null>((acc, c) => {
       const x = costUsd(c.response.model, c.response.usage);
       return acc == null || x == null ? null : acc + x;
@@ -104,7 +118,12 @@ async function runScenario(s: Scenario, llmFactory: () => LLMClient, policy: Rou
 
 async function main() {
   const args = parseArgs();
-  const scenarios = SCENARIOS.filter((s) => !args.only || args.only.includes(s.id));
+  const pool: (Scenario & { suite: string })[] = [
+    ...(args.suite === "legacy" || args.suite === "all" ? SCENARIOS.map((s) => ({ ...s, suite: "legacy" })) : []),
+    ...(args.suite === "dev" || args.suite === "all" ? DEV_SUITE.map((s) => ({ ...s, suite: "dev" })) : []),
+    ...(args.suite === "holdout" || args.suite === "all" ? HOLDOUT_SUITE.map((s) => ({ ...s, suite: "holdout" })) : []),
+  ];
+  const scenarios = pool.filter((s) => !args.only || args.only.includes(s.id));
   const promptChars = COPILOT_SYSTEM_PROMPT.length + JSON.stringify(COPILOT_TOOLS).length;
   console.log(`Scenarios: ${scenarios.length}. Static prompt (system + ${COPILOT_TOOLS.length} tools): ${promptChars} chars (~${Math.round(promptChars / 4)} tokens).`);
 
@@ -120,6 +139,26 @@ async function main() {
     return;
   }
 
+  if (args.baselineLocal) {
+    // Grade the deterministic (keyword/intent/template) system on the same scenarios: the "before" number.
+    const results = [];
+    for (const s of scenarios) results.push({ ...(await runScenario(s, null, args.policy)), suite: s.suite });
+    const by: Record<string, { passed: number; total: number; byCategory: Record<string, { passed: number; total: number }> }> = {};
+    for (const r of results) {
+      const g = (by[r.suite] ??= { passed: 0, total: 0, byCategory: {} });
+      g.total++; if (r.passed) g.passed++;
+      const c = (g.byCategory[r.category] ??= { passed: 0, total: 0 });
+      c.total++; if (r.passed) c.passed++;
+    }
+    for (const [name, g] of Object.entries(by)) console.log(`[${name}] deterministic baseline ${g.passed}/${g.total} — ${Object.entries(g.byCategory).map(([c, x]) => `${c} ${x.passed}/${x.total}`).join(", ")}`);
+    const here = dirname(fileURLToPath(import.meta.url));
+    const out = join(here, "reports", `baseline-local-${args.suite}.json`);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, JSON.stringify({ summary: by, results }, null, 2));
+    console.log(`Report: ${out}`);
+    return;
+  }
+
   if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
     console.error("No Claude API credential found. Set ANTHROPIC_API_KEY (or run `ant auth login`) to run the live eval, or use --dry-run.");
     process.exit(2);
@@ -132,7 +171,7 @@ async function main() {
   for (const s of scenarios) {
     process.stdout.write(`${s.id.padEnd(26)}`);
     try {
-      const r = await runScenario(s, factory, args.policy);
+      const r = { ...(await runScenario(s, factory, args.policy)), suite: s.suite };
       results.push(r);
       const ms = r.turns.reduce((a, t) => a + t.latencyMs, 0);
       const cost = r.turns.reduce((a, t) => a + (t.costUsd ?? 0), 0);
@@ -144,22 +183,33 @@ async function main() {
       for (const c of r.extra.filter((c) => !c.passed)) console.log(`    ✗ ${c.name} (${c.detail ?? ""})`);
     } catch (e) {
       console.log(`ERROR ${(e as Error).message}`);
-      results.push({ id: s.id, category: s.category, title: s.title, error: (e as Error).message, passed: false });
+      results.push({ id: s.id, suite: s.suite, category: s.category, title: s.title, error: (e as Error).message, passed: false });
     }
   }
 
   const passed = results.filter((r) => r.passed).length;
+  // Per suite and per category: generalisation (holdout) is reported apart from dev.
+  const bySuite: Record<string, { passed: number; total: number; byCategory: Record<string, { passed: number; total: number }> }> = {};
+  for (const r of results) {
+    const g = (bySuite[r.suite] ??= { passed: 0, total: 0, byCategory: {} });
+    g.total++; if (r.passed) g.passed++;
+    const c = (g.byCategory[r.category] ??= { passed: 0, total: 0 });
+    c.total++; if (r.passed) c.passed++;
+  }
   const allTurns = results.flatMap((r) => ("turns" in r ? r.turns : []));
   const latencies = allTurns.map((t) => t.latencyMs).sort((a, b) => a - b);
   const pct = (p: number) => latencies[Math.min(latencies.length - 1, Math.floor(p * latencies.length))] ?? 0;
   const totalCost = allTurns.reduce((a, t) => a + (t.costUsd ?? 0), 0);
   const summary = {
-    passed, total: results.length, turns: allTurns.length,
+    passed, total: results.length, turns: allTurns.length, bySuite,
     latencyMs: { p50: pct(0.5), p90: pct(0.9), max: latencies[latencies.length - 1] ?? 0 },
     costUsd: { total: totalCost, perTurn: allTurns.length ? totalCost / allTurns.length : 0 },
     fastOnlyTurns: allTurns.filter((t) => t.tiers.length > 0 && t.tiers.every((x) => x === "fast")).length,
     models: { fast: config.fastModel, smart: config.smartModel, smartEffort: config.smartEffort }, policy: args.policy.mode,
   };
+  for (const [name, g] of Object.entries(bySuite)) {
+    console.log(`\n[${name}] ${g.passed}/${g.total} passed — ${Object.entries(g.byCategory).map(([c, x]) => `${c} ${x.passed}/${x.total}`).join(", ")}`);
+  }
   console.log(`\n${passed}/${results.length} scenarios passed · p50 ${summary.latencyMs.p50} ms · p90 ${summary.latencyMs.p90} ms · $${totalCost.toFixed(4)} total · ${summary.fastOnlyTurns}/${allTurns.length} turns fast-only`);
 
   const here = dirname(fileURLToPath(import.meta.url));

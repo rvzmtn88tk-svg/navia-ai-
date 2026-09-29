@@ -1,0 +1,26 @@
+{
+  "scenario": "h-window-words",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "ahead_min_minutes": 18,
+              "ahead_max_minutes": 32,
+              "limit": 2
+            }
+          }
+        ]
+      },
+      {
+        "text": "Приблизно на півдорозі — WOG праворуч через 16 кілометрів, це хвилин 24 їзди, заїзд майже без гаку. Додати зупинку?"
+      }
+    ]
+  ]
+}

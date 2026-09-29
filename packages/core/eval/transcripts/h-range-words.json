@@ -1,0 +1,25 @@
+{
+  "scenario": "h-range-words",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "vehicle_range_km": 10,
+              "limit": 2
+            }
+          }
+        ]
+      },
+      {
+        "text": "Їдьте на ОККО — праворуч через 7 кілометрів, з запасом дотягнете. WOG через 16 кілометрів уже може не вистачити. Додати ОККО як зупинку?"
+      }
+    ]
+  ]
+}

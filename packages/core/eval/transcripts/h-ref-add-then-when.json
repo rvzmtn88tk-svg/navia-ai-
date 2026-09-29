@@ -1,0 +1,40 @@
+{
+  "scenario": "h-ref-add-then-when",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "cafe"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Aroma Kava через 4 кілометри праворуч і Кава Кофі через 23 ліворуч."
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p1",
+              "driver_confirmed_in_this_message": true
+            }
+          }
+        ]
+      },
+      {
+        "text": "Додала Aroma Kava. Заїзд — менше хвилини, прибуття так само орієнтовно о 14:48."
+      }
+    ]
+  ]
+}
