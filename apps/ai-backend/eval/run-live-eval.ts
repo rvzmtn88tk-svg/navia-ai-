@@ -1,7 +1,7 @@
 // Live evaluation of the NAVIA co-pilot against the real Claude API.
 //
 //   ANTHROPIC_API_KEY=... npm run eval:ai                 # legacy 28 scenarios, auto tier routing
-//   npm run eval:ai -- --suite dev                        # 264-scenario development suite
+//   npm run eval:ai -- --suite dev                        # 265-scenario development suite
 //   npm run eval:ai -- --suite holdout                    # 59 holdout scenarios (generalisation; never tune on these)
 //   npm run eval:ai -- --suite all                        # everything, reported per suite
 //   npm run eval:ai -- --only mcdonalds-10min-add,no-kfc  # a subset

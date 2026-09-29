@@ -72,6 +72,21 @@ npm run sim:replay -- 160 # one scenario; SIM_TRACE=1 / SIM_TRACE_TURNS=1 for tr
 npx tsx packages/core/sim/render-report.ts packages/core/sim/reports/mc-100k.json   # Markdown tables
 ```
 
+### GNSS loss / offline and AI core (this round)
+
+| File | Covers |
+|---|---|
+| `test/location-resilience.test.ts` | 18 GPS-loss / offline scenarios end to end (5 s / 30 s / 2 min loss, tunnel, long tunnel, underground parking, urban drift, weak GPS, jump, no internet, GPS+internet lost, recovery on/off route, app suspended while driving/parked), trip cache, voice-guidance policy, marker smoother |
+| `test/copilot-memory.test.ts` | "second one → how much → add → remove it", informed-order vs. proposal, "not this one, the next", plans ("coffee first, then home") by voice and by tap, preferences, reminders → proactive events (model and offline), SKIP, read cache, driving context, voice loop |
+| `test/eval-suites.test.ts` | suite structure (≥200 dev, ≥50 holdout, unique ids, categories, no holdout wording in dev) and replay of the recorded holdout transcripts |
+| `apps/ai-backend/test/backend.test.ts` | + OpenAI-compatible gateway translation and provider selection |
+
+```bash
+npm run eval:ai -- --suite all --dry-run          # load all 352 scenarios, no API calls
+npm run eval:ai -- --suite all --baseline-local   # grade the deterministic fallback alone
+npx tsx packages/core/eval/model-in-the-loop.ts --holdout   # replay the holdout sample
+```
+
 ## apps/mobile
 
 Not typechecked, not built, not run — see `LIMITATIONS.md` for exactly

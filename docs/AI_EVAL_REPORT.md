@@ -3,10 +3,11 @@
 Date: 2026-09-29. Everything below is reproducible from the repo:
 
 ```bash
-npm test              # 165 tests, incl. transcript replay, negative controls, usefulness claims
+npm test              # all tests, incl. transcript replay (legacy + holdout), negative controls, usefulness claims
 npm run eval:replay   # model-in-the-loop scenarios: pass/fail, tiers, estimated tokens/cost
 npm run bench:ai      # usefulness benchmark vs. baselines (writes packages/core/eval/benchmark-report.json)
-ANTHROPIC_API_KEY=... npm run eval:ai   # same scenarios against the production models (not run here: no key)
+ANTHROPIC_API_KEY=... npm run eval:ai -- --suite all   # 351 scenarios against the production models (not run here: no key)
+npm run eval:ai -- --suite all --baseline-local        # the previous deterministic system on the same checks
 ```
 
 ## What was and was not measured
@@ -19,6 +20,53 @@ ANTHROPIC_API_KEY=... npm run eval:ai   # same scenarios against the production 
 | Route-aware search beats what drivers get without it | benchmark on seeded synthetic places, ground truth from the routing engine | ✅ measured (synthetic data) |
 | Production model pass rate, latency, real token cost | `npm run eval:ai` with an API key | ❌ not measured — no Claude API key in this environment |
 | Live OSM (Overpass) and Valhalla | — | ❌ unreachable from this environment |
+
+## 0. Generalisation suites (AI core rework)
+
+Two new suites test understanding of *unseen* requests rather than known
+phrases (`packages/core/eval/suite/`):
+
+- **dev**: 265 scenarios, may be looked at while improving the system.
+- **holdout**: 59 scenarios written after the implementation, never used
+  for tuning.
+
+Both cover implicit needs, slang/surzhyk, typos, one-word commands, long
+multi-goal requests, multi-step constraints, references ("the second one",
+"not this one, the next", "put it back"), changes of mind, ambiguity,
+missing data (prices, ratings, Wi-Fi, queues), API errors, route changes,
+preferences, reminders, GPS states, off-topic requests and uk/ru/en. Checks
+are behavioural only: tool kind and constraints, propose vs. execute, ask
+vs. act, grounded numbers, language, length. Any wording that behaves
+correctly passes.
+
+| System | legacy (28) | dev (265) | holdout (59) |
+|---|---|---|---|
+| Previous deterministic system (regex intents + templates), measured | 8 | 99 (of 264) | 25 |
+| New co-pilot, **production models** | not measured — needs the API key | not measured | not measured |
+| New co-pilot, model-in-the-loop (Claude in this session as the model) | 28 (earlier round) | — | **59/59** automated checks; **58/59** after manual review |
+
+The model-in-the-loop holdout run is evidence that the tools and state are
+sufficient for a capable model, not a production measurement. The decider is
+the same model family as the smart tier and also wrote the suite. Its
+transcripts are in `eval/transcripts/h-*.json`, replayed in `npm test`.
+
+Manual review of that run:
+
+- **One defect the grader missed.** In `h-u-tip` the answer promised
+  roundabout exit numbers, which NAVIA's route data does not have.
+- **One friction point found and fixed generally.** Restoring a just-removed
+  stop asked for a second yes; a different dev case was added.
+- **Grader lenience.** Several of the deterministic system's 99 dev "passes"
+  are information questions answered with a generic sentence. The info-style
+  checks only prove it changed nothing and invented no number, not that the
+  answer was relevant.
+
+The live run that settles it:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-… npm run eval:ai -- --suite holdout   # generalisation
+ANTHROPIC_API_KEY=sk-ant-… npm run eval:ai -- --suite dev
+```
 
 ## 1. Scenario evaluation (model-in-the-loop)
 

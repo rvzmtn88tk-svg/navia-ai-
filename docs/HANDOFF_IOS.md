@@ -59,9 +59,10 @@ Then verify:
 ```bash
 npm install                  # repo root (workspaces)
 npm run typecheck            # must be 0 errors
-npm test                     # 165 tests
+npm test                     # all tests (core + backend) must pass
 (cd apps/mobile && npx tsc --noEmit)
-npm run eval:replay          # 26/26 recorded scenarios
+npm run eval:replay          # recorded legacy scenarios
+npx tsx packages/core/eval/model-in-the-loop.ts --holdout   # recorded holdout sample
 ```
 
 ## 2. Backend (holds the Anthropic key — never in the app or Git)
@@ -69,7 +70,10 @@ npm run eval:replay          # 26/26 recorded scenarios
 ```bash
 export ANTHROPIC_API_KEY='sk-ant-…'       # the key only, not a whole curl command
 npm run ai:backend                        # :8787 ; check: curl localhost:8787/healthz
-ANTHROPIC_API_KEY=… npm run eval:ai       # live eval on the real models (costs a few cents)
+ANTHROPIC_API_KEY=… npm run eval:ai -- --suite all   # live eval: legacy + dev + holdout (≈ $3–8 for 352 scenarios)
+# Other provider instead of Claude (OpenAI-compatible Chat Completions with function calling):
+#   NAVIA_LLM_PROVIDER=openai_compatible NAVIA_OPENAI_BASE_URL=… NAVIA_OPENAI_API_KEY=… \
+#   NAVIA_AI_MODEL_FAST=… NAVIA_AI_MODEL_SMART=… npm run ai:backend
 ```
 
 The app talks to `POST {backend}/v1/copilot/complete` (protocol
@@ -117,6 +121,16 @@ GNSS-denied navigation needs no extra native module or permission: it uses
 in a holder (any orientation); the first few minutes with good GPS calibrate
 it (gravity sign, vibration level). What to check on a real drive is in
 `docs/GNSS_DENIED_REPORT.md` → "Validating on the phone".
+
+What to try on the phone after this round:
+- First question → a card asks once to enable the smart co-pilot (sends the question + a compact trip summary, no coordinates). Answer is remembered.
+- Talk naturally, including follow-ups: "Знайди заправку" → "Друга норм, скільки втратимо?" → "Додавай" → "Хоча ні, прибери її".
+- "Заїдь спочатку за кавою, потім додому" → one Yes/No for the whole plan.
+- "Нагадай про каву за пів години" → NAVIA brings it up by itself later.
+- "Запам'ятай, я заправляюсь тільки на ОККО" → used in later searches (saved on the phone).
+- Voice panel → **Руки вільні**: say "Навіа, …" without touching the phone.
+- GPS loss: HUD/voice switch to "приблизно…" and say when GPS is lost or looks spoofed.
+- No internet: navigation continues on the saved route; a banner says what is unavailable.
 
 On the phone: allow Location, then on the Home screen switch on
 **«Надсилати контекст поїздки ШІ»** (off by default). Tap 🎤 in navigation

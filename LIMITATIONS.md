@@ -254,3 +254,27 @@ closed-loop Monte Carlo of 100,000 simulated trips. Not verified here:
   stop.
 - **IMU calibration** (gravity sign, stop/move vibration threshold) is
   learned from good GPS during the first minutes; untested on real mounts.
+
+## AI core rework (conversation memory, tools, proactive, voice, gateway)
+
+Verified here:
+- scripted-LLM tests of every code path: references via numbered results /
+  focus / undo, plans confirmed together, informed-order confirmation,
+  preferences, reminders → proactive events (including SKIP and offline
+  delivery), read cache, driving context, voice loop, gateway translation;
+- 324 new evaluation scenarios (dev 265, holdout 59), with the previous
+  deterministic system measured on them;
+- a model-in-the-loop run of the whole holdout (Claude in this session as the
+  model).
+
+Not verified here:
+- **No production-model run**: no LLM API key in this environment. Run
+  `ANTHROPIC_API_KEY=… npm run eval:ai -- --suite all`.
+- **Hands-free voice** (continuous recognition, wake word) is compiled and
+  unit-tested but untested on a device. iOS speech recognition sessions are
+  time-limited; the loop re-arms, and battery use is unmeasured.
+- **OpenAI-compatible gateway**: request/response translation is unit-tested
+  with a mocked endpoint, not against a live provider.
+- **Proactive traffic alerts** need a live traffic feed (none connected).
+- **Preferences and the active-trip cache** use expo-sqlite key-value
+  storage; typechecked and bundled, not run on a device.
