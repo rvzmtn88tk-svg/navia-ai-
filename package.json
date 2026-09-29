@@ -12,7 +12,8 @@
     "test": "tsx --test packages/*/test/**/*.test.ts apps/mobile/test/**/*.test.ts",
     "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p packages/core/tsconfig.test.json",
     "android": "npm run android --workspace=@navia/mobile --",
-    "ios": "npm run ios --workspace=@navia/mobile --"
+    "ios": "npm run ios --workspace=@navia/mobile --",
+    "navigator:sim": "caffeinate -i tsx apps/mobile/test/sim/run.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.15",

@@ -17,3 +17,6 @@ xcuserdata/
 
 # Cloud Functions build output
 functions/lib/
+
+# Navigator simulator: every run (≈50 MB), regenerate with npm run navigator:sim
+apps/mobile/test/reports/navigator-sim.csv

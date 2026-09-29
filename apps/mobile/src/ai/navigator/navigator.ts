@@ -5,7 +5,7 @@
 // Pure; unit-tested.
 import type { NavigationState } from "@navia/core";
 import { NavigatorModeTracker, modeFacts } from "../../navigation/navigatorMode";
-import { classify, type NavigatorIntent } from "./intents";
+import { understand, type NavigatorIntent } from "./intents";
 import { fieldWords, handlerFor, type Draft, type LastAnswer, type Tone } from "./handlers";
 import type { Snapshot } from "./snapshot";
 import type { CopilotAction, WorldPlace } from "../copilotBrain";
@@ -18,8 +18,13 @@ export type NavigatorReply = {
   speech: string;
   actions: CopilotAction[];
   tone: Tone;
+  /** Snapshot fields the answer is built from (programme: requiresData). */
   used: string[];
   missing: string[];
+  /** An honest refusal / "not known" with a reason. */
+  honest: boolean;
+  /** Layer 2 confidence (0..1) of the understood intent. */
+  confidence: number;
   /** Time to compute the answer (ms). */
   computeMs: number;
   places?: WorldPlace[];
@@ -50,16 +55,20 @@ export class Navigator {
    * decides only what is asked; the answer still comes from the snapshot). */
   ask(question: string, snapshot: Snapshot, forced?: NavigatorIntent): NavigatorReply {
     const t0 = now();
-    const intent = forced ?? classify(question);
-    const draft = handlerFor(intent)(snapshot, { question, lastReply: this.lastReply, last: this.last });
+    const u = forced ? { intent: forced, confidence: 1, options: [] as NavigatorIntent[] } : understand(question);
+    const intent = u.intent;
+    // The previous answer is part of the context ("repeat").
+    snapshot = { ...snapshot, fields: { ...snapshot.fields, lastNavaResponse: this.lastReply } };
+    const draft = handlerFor(intent)(snapshot, { question, lastReply: this.lastReply, last: this.last, options: u.options });
     // Only fields that really had a value (so "why" never cites empty data).
     draft.used = draft.used.filter((f) => f === "lastAnswer" || f === "lastReply" || f.startsWith("places") || f.startsWith("placeStates") || f.startsWith("placeGaps") || fieldWords(f, snapshot) !== null);
     const { text, speech } = generate(draft);
-    if (intent !== "repeat" && intent !== "explain") {
+    if (intent !== "repeat" && intent !== "explain" && intent !== "clarify") {
       this.lastReply = text;
       this.last = { question, intent, text, used: draft.used, missing: draft.missing ?? [], snapshot };
     }
-    return { intent, text, speech, actions: draft.actions, tone: draft.tone, used: draft.used, missing: draft.missing ?? [], computeMs: now() - t0, ...(draft.places ? { places: draft.places } : {}) };
+    const honest = draft.honest ?? (intent === "noData" || intent === "unknown" || (draft.missing?.length ?? 0) > 0);
+    return { intent, text, speech, actions: draft.actions, tone: draft.tone, used: draft.used, missing: draft.missing ?? [], honest, confidence: u.confidence, computeMs: now() - t0, ...(draft.places ? { places: draft.places } : {}) };
   }
 }
 

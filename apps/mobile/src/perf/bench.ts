@@ -49,12 +49,47 @@ export async function runBench(layerBefore: MapLayer): Promise<void> {
   }
   setBenchDepth("full"); benchHooks.restyle?.();
   benchHooks.setLayer?.(layerBefore);
+  const navigator = benchNavigator();
+  const tts = await benchTts();
   const { width, height } = Dimensions.get("window");
-  const report = { at: new Date().toISOString(), platform: Platform.OS, version: Platform.Version, model: (Platform.constants as { systemName?: string; interfaceIdiom?: string }).interfaceIdiom, window: `${width}x${height}`, results: [...fpsLog] };
+  const report = { at: new Date().toISOString(), platform: Platform.OS, version: Platform.Version, model: (Platform.constants as { systemName?: string; interfaceIdiom?: string }).interfaceIdiom, window: `${width}x${height}`, results: [...fpsLog], navigator, tts };
   try {
     const kv = (require("expo-sqlite/kv-store") as { default: { setItemAsync(k: string, v: string): Promise<void> } }).default;
     await kv.setItemAsync("navia.bench.v1", JSON.stringify(report));
   } catch { /* storage unavailable */ }
   console.log("[bench]", JSON.stringify(report));
   running = false;
+}
+
+/** Layers 2–5 on the phone: every question answered 20 times from a live snapshot. */
+function benchNavigator(): { questions: number; runs: number; avgMs: number; p95Ms: number; maxMs: number } {
+  const { Navigator } = require("../ai/navigator/navigator") as typeof import("../ai/navigator/navigator");
+  const { buildSnapshot } = require("../ai/navigator/snapshot") as typeof import("../ai/navigator/snapshot");
+  const { worldGps } = require("../ai/worldGps") as typeof import("../ai/worldGps");
+  const { useNaviaStore } = require("../engine/naviaController") as typeof import("../engine/naviaController");
+  const state = useNaviaStore.getState().state;
+  const world = { lang: "uk" as const, now: Date.now(), remote: false, landmarks: [], gps: worldGps(state, { hasPosition: !!state.position }), alert: { active: false }, places: {}, placeStates: {} };
+  const snap = buildSnapshot({ state, world });
+  const qs = ["Где я?", "Куда дальше?", "Через сколько поворот?", "У меня пропал сигнал, что делать?", "Насколько ты уверен в моей позиции?", "Объявлена тревога, где ближайшее укрытие?", "Я сбился с маршрута?", "Какая сейчас пробка на дороге?", "Почему ты так ответил?", "Скока ещё пилить", "мене страшно шо робити", "повтори", "що з gps", "де аптека", "нема інтернету що тепер", "це точно найближче укриття?", "чому цей маршрут", "розкажи анекдот"];
+  const times: number[] = [];
+  const clock = () => (globalThis as { performance?: { now(): number } }).performance?.now() ?? Date.now();
+  for (let k = 0; k < 20; k++) {
+    const nav = new Navigator();
+    for (const q of qs) { const t0 = clock(); nav.ask(q, snap); times.push(clock() - t0); }
+  }
+  times.sort((a, b) => a - b);
+  return { questions: qs.length, runs: times.length, avgMs: times.reduce((a, b) => a + b, 0) / times.length, p95Ms: times[Math.floor(0.95 * (times.length - 1))]!, maxMs: times[times.length - 1]! };
+}
+
+/** Speech: from the speak call to the first sound, three short phrases. */
+async function benchTts(): Promise<number[]> {
+  const { speak, nextTtsStart } = require("../voice/VoiceGuide") as typeof import("../voice/VoiceGuide");
+  const out: number[] = [];
+  for (const phrase of ["Перевірка голосу NAVIA.", "Через триста метрів праворуч.", "GPS у нормі."]) {
+    const started = nextTtsStart();
+    const done = speak(phrase, { lang: "uk", gender: "female", interrupt: false });
+    out.push(await Promise.race([started, new Promise<number>((r) => setTimeout(() => r(-1), 5000))]));
+    await done;
+  }
+  return out;
 }

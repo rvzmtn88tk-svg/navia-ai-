@@ -24,6 +24,10 @@ export type WorldPlace = {
   bearingDeg?: number;
   address?: string;
   hours?: string;
+  /** Where the record comes from: fetched now, the offline package, or the demo dataset. */
+  origin?: "online" | "offline" | "demo";
+  /** Publisher ("Kyiv City open data", "OpenStreetMap", …). */
+  source?: string;
 };
 
 export type WorldLandmark = { name: string; kindLabel: string; location: LatLonLite; onRoute: boolean; alongM?: number };

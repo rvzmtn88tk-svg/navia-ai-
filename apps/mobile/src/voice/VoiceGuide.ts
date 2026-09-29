@@ -5,6 +5,7 @@
 import * as Speech from "expo-speech";
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from "expo-av";
 import type { VoiceGender } from "../settings/AppSettings";
+import { SpeechQueue } from "./speechQueue";
 
 type Lang = "uk" | "en";
 
@@ -64,17 +65,44 @@ export async function speak(text: string, { lang, gender, interrupt = true }: Sp
   // connected, "male" lowers the pitch of the available voice.
   const lowered = gender === "male" && !(await hasGenderVoice(lang, "male"));
   if (interrupt) Speech.stop();
+  const t0 = Date.now();
   await new Promise<void>((resolve) => {
     Speech.speak(text, {
       language: lang === "uk" ? "uk-UA" : "en-US",
       voice: voice?.identifier,
       rate: lang === "uk" ? 0.98 : 1,
       pitch: lowered ? 0.72 : 1,
+      onStart: () => { lastTtsStartMs = Date.now() - t0; const w = startWaiters.splice(0); for (const f of w) f(lastTtsStartMs); },
       onDone: () => resolve(),
       onStopped: () => resolve(),
       onError: () => resolve(),
     });
   });
+}
+
+/** Time from the speak call to the first sound of the last phrase (ms). */
+let lastTtsStartMs: number | null = null;
+const startWaiters: ((ms: number) => void)[] = [];
+/** Resolves with the speak → first sound time of the next phrase that starts. */
+export function nextTtsStart(): Promise<number> {
+  return new Promise((resolve) => startWaiters.push(resolve));
+}
+export function lastTtsStartLatencyMs(): number | null {
+  return lastTtsStartMs;
+}
+
+// ——— the shared queue (programme 2.4): nothing NAVIA says cuts a phrase short ———
+let queueOpts: SpeakOptions = { lang: "uk", gender: "female" };
+const queue = new SpeechQueue((text) => speak(text, { ...queueOpts, interrupt: false }));
+
+/** Say through the shared queue: the current phrase is finished, then the most urgent. */
+export function say(text: string, priority: number, opts: { lang: Lang; gender: VoiceGender }, slot?: string): Promise<void> {
+  queueOpts = { ...opts, interrupt: false };
+  return queue.say(text, priority, slot);
+}
+
+export function clearSpeechQueue(): void {
+  queue.clear();
 }
 
 export function stopSpeaking(): void {

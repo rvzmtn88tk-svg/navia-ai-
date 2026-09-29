@@ -59,6 +59,9 @@ type NaviaStore = {
    * wired up in this pass, see LIMITATIONS.md) list of recently navigated destinations. */
   recentDestinations: RecentDestination[];
   addRecentDestination: (d: RecentDestination) => void;
+  /** A new route is being built after leaving the old one. */
+  rerouting: boolean;
+  setRerouting: (v: boolean) => void;
   /** Pushes a fresh read of the active engine's state/route into the store — call after every push/tick. */
   refresh: () => void;
 };
@@ -78,6 +81,8 @@ export const useNaviaStore = create<NaviaStore>((set, get) => ({
   destination: null,
   setDestination: (d) => set({ destination: d }),
   recentDestinations: [],
+  rerouting: false,
+  setRerouting: (rerouting) => set({ rerouting }),
   addRecentDestination: (d) =>
     set((s) => ({ recentDestinations: [d, ...s.recentDestinations.filter((r) => r.label !== d.label)].slice(0, 8) })),
   refresh: () => {

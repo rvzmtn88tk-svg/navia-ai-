@@ -2,7 +2,8 @@
 // and position mode from the engine, the alert, the trip and its landmarks,
 // and nearby places with distance and direction from the user.
 import { useEffect, useMemo, useState } from "react";
-import { initialBearing, haversineMeters, nearestFirst, type LatLon, type RouteStep } from "@navia/core";
+import { initialBearing, haversineMeters, type LatLon, type RouteStep } from "@navia/core";
+import { rankWorldPlaces } from "../places/worldPlaces";
 import { useNaviaStore } from "../engine/naviaController";
 import { useNearbyStore } from "../store/nearbyStore";
 import { useRouteIntel } from "../store/routeIntelStore";
@@ -64,17 +65,8 @@ export function useCopilotWorld(): CopilotWorld {
       placeStates[kind] = entry.state;
       if (entry.unavailable?.length) placeGaps[kind] = entry.unavailable;
     }
-    for (const [kind, entry] of Object.entries(byCategory) as [PlaceKind, { places: { id: string; name: string; location: LatLon; address?: string; openingHours?: string }[] }][]) {
-      // Nearest to the user NOW (the one shared nearest-first search), then 12.
-      const ranked = here ? nearestFirst(entry.places.map((p) => ({ ...p, category: kind })), here, { limit: 12 }) : entry.places.slice(0, 12);
-      places[kind] = ranked.map<WorldPlace>((p) => ({
-        id: p.id, name: p.name, kind, location: p.location,
-        distanceM: here ? haversineMeters(here, p.location) : 0,
-        ...(here ? { bearingDeg: initialBearing(here, p.location) } : {}),
-        ...(p.address ? { address: p.address } : {}),
-        ...(p.openingHours ? { hours: p.openingHours } : {}),
-      })).sort((a, b) => a.distanceM - b.distanceM);
-    }
+    // The one shared nearest-first search (places/worldPlaces.ts).
+    Object.assign(places, rankWorldPlaces(byCategory as never, here, useNaviaStore.getState().isDemoMode));
 
     const landmarks: WorldLandmark[] = [
       ...intel.along.map((l) => ({ name: landmarkName(l.kind, l.name), kindLabel: KIND_LABEL_UK[l.kind], location: l.location, onRoute: true, alongM: l.alongM })),

@@ -175,7 +175,8 @@ test("navigator harness: every scenario × every question is answered from the s
       let field = "";
       try { field = grounded(intent, sc.snapshot, r.text); }
       catch (e) { throw new Error(`[${sc.name}] «${q}» → «${r.text}»: ${(e as Error).message}`); }
-      assert.ok(r.used.length > 0 || intent === "repeat", `${sc.name} «${q}»: no snapshot fields used`);
+      // Either built from snapshot fields, or an honest "not known / not my area" with the reason.
+      assert.ok(r.used.length > 0 || intent === "repeat" || r.honest, `${sc.name} «${q}»: no snapshot fields used and not an honest refusal`);
       times.push(r.computeMs);
       checked++;
       rows.push(`| ${sc.name} | ${q} | ${r.intent} | ${r.text.replace(/\n/g, " ").replace(/\|/g, "/").slice(0, 220)} | так: ${field}${r.missing.length ? ` (немає: ${r.missing.join(", ")})` : ""} | ${r.computeMs.toFixed(2)} |`);

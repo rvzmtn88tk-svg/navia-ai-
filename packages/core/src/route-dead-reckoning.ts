@@ -141,8 +141,8 @@ export class RouteDeadReckoner {
     const ageS = (nowMs - anchor.atMs) / 1000;
     // Along-route error: anchor error + 10 % of distance (speed error) + slow
     // drift; an assumed pace (no trusted speed) is far less certain.
-    const paceFactor = this.trustedSpeedMps != null ? 0.1 : 0.3;
-    const uncertaintyM = anchor.accuracyM + paceFactor * this.travelledSinceAnchorM + 0.5 * ageS;
+    const paceFactor = this.trustedSpeedMps != null ? DR_PACE_ERROR_TRUSTED : DR_PACE_ERROR_ASSUMED;
+    const uncertaintyM = anchor.accuracyM + paceFactor * this.travelledSinceAnchorM + DR_DRIFT_MPS * ageS;
     const position = positionAtDistance(route.geometry, this.progressM);
     const ahead = positionAtDistance(route.geometry, Math.min(route.distanceM, this.progressM + 15));
     const headingDeg = haversineMeters(position, ahead) > 1 ? initialBearing(position, ahead) : 0;
@@ -164,6 +164,19 @@ export class RouteDeadReckoner {
     this.progressM = 0;
     this.travelledSinceAnchorM = 0;
   }
+}
+
+/** Share of the distance driven that becomes along-route error (trusted speed / assumed pace). */
+export const DR_PACE_ERROR_TRUSTED = 0.1;
+export const DR_PACE_ERROR_ASSUMED = 0.3;
+/** Slow drift of the estimate per second, metres. */
+export const DR_DRIFT_MPS = 0.5;
+
+/** How fast the dead-reckoning error grows at a speed, metres per minute —
+ * the same model as the estimate above (for "what if the signal is gone
+ * for long?"). */
+export function drErrorGrowthMPerMin(speedMps: number, speedTrusted: boolean): number {
+  return 60 * ((speedTrusted ? DR_PACE_ERROR_TRUSTED : DR_PACE_ERROR_ASSUMED) * Math.max(0, speedMps) + DR_DRIFT_MPS);
 }
 
 /** Maps along-route uncertainty to a confidence value and band (never HIGH

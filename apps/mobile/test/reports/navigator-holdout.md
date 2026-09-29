@@ -1,6 +1,6 @@
 # Hold-out phrasings
 
-Recognised: 40 of 52 (76.9 %)
+Recognised: 36 of 52 (69.2 %)
 
 | Question | Expected | Got | OK |
 |---|---|---|---|
@@ -9,12 +9,12 @@ Recognised: 40 of 52 (76.9 %)
 | чувак, связи со спутником нет, веди как-нибудь | signalLost | signalLost | ✓ |
 | що мені робити, якщо навігація зовсім вимкнеться | signalLost | signalLost | ✓ |
 | точка на карті стрибає, це нормально? | gpsStatus/signalLost | gpsStatus | ✓ |
-| наскільки точно ти зараз знаєш де я | gpsStatus/whereAmI | whereAmI | ✓ |
+| наскільки точно ти зараз знаєш де я | gpsStatus/whereAmI | confidence | ✗ |
 | джипіес живий? | gpsStatus | gpsStatus | ✓ |
 | ловит нормально спутники? | gpsStatus | gpsStatus | ✓ |
-| наступним що буде, ліво чи право? | routeNext | routeNext | ✓ |
+| наступним що буде, ліво чи право? | routeNext | clarify | ✗ |
 | мені прямо чи повертати? | routeNext | routeNext | ✓ |
-| на світлофорі куди? | routeNext | unknown | ✗ |
+| на світлофорі куди? | routeNext | routeNext | ✓ |
 | где мне съезжать с трассы | routeNext | unknown | ✗ |
 | скільки ще метрів до маневру | routeNext | routeNext | ✓ |
 | ще довго їхати до кінця? | eta | eta | ✓ |
@@ -22,7 +22,7 @@ Recognised: 40 of 52 (76.9 %)
 | какое расстояние до конца маршрута | eta | unknown | ✗ |
 | скільки хвилин лишилось | eta | eta | ✓ |
 | я ж по правильній їду? | onRoute | onRoute | ✓ |
-| ми точно в той бік їдемо? | onRoute | onRoute | ✓ |
+| ми точно в той бік їдемо? | onRoute | clarify | ✗ |
 | не проскочили ми часом? | onRoute/reroute | noData | ✗ |
 | здається я не туди завернув | reroute | reroute | ✓ |
 | я заехал куда-то не туда | reroute | reroute | ✓ |
@@ -30,7 +30,7 @@ Recognised: 40 of 52 (76.9 %)
 | що буде якщо я пропущу з'їзд | reroute | reroute | ✓ |
 | підкажи адресу, де я зараз стою | whereAmI | whereAmI | ✓ |
 | я вообще где нахожусь | whereAmI | whereAmI | ✓ |
-| який це район? | whereAmI | whereAmI | ✓ |
+| який це район? | whereAmI | clarify | ✗ |
 | де тут можна перечекати обстріл | shelter | alert | ✗ |
 | найближче бомбосховище пішки | shelter | shelter | ✓ |
 | куди бігти якщо зараз прилетить | shelter | shelter | ✓ |
@@ -39,11 +39,11 @@ Recognised: 40 of 52 (76.9 %)
 | в області зараз неспокійно? | alert/status | alert | ✓ |
 | дай короткий огляд ситуації | status | status | ✓ |
 | розкажи що зараз з усім | status | status | ✓ |
-| як там у нас справи з дорогою і сигналом | status/gpsStatus | gpsStatus | ✓ |
+| як там у нас справи з дорогою і сигналом | status/gpsStatus | clarify | ✗ |
 | скажи це ще раз | repeat | repeat | ✓ |
 | не зрозумів, повтори повільніше | repeat | repeat | ✓ |
 | а звідки такі цифри? | explain | explain | ✓ |
-| чому ти вирішив що я на маршруті? | explain | onRoute | ✗ |
+| чому ти вирішив що я на маршруті? | explain | routeWhy | ✗ |
 | на трасі затор? | noData | noData | ✓ |
 | чи йде зараз сніг у Броварах | noData | noData | ✓ |
 | де стоять камери швидкості | noData | noData | ✓ |
@@ -55,4 +55,4 @@ Recognised: 40 of 52 (76.9 %)
 | потрібна аптека терміново | place | place | ✓ |
 | де пункт незламності поблизу | place | place | ✓ |
 | водій знепритомнів | emergency | unknown | ✗ |
-| збили пішохода, що робити | emergency | signalLost | ✗ |
+| збили пішохода, що робити | emergency | clarify | ✗ |

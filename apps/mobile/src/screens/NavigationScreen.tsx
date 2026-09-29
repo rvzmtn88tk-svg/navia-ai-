@@ -35,7 +35,8 @@ import { perfEnd, perfStart } from "../perf/perf";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { saveRouteOffline, type OfflineProgress } from "../map/offlineRoute";
 import { config } from "../config";
-import { speak, stopSpeaking } from "../voice/VoiceGuide";
+import { say, stopSpeaking } from "../voice/VoiceGuide";
+import { PRIORITY } from "../voice/speechQueue";
 import { easing, elevation, iconSize, motion, radius, space, type ThemeColors } from "../theme/tokens";
 import { isNetworkError } from "../providers/netError";
 
@@ -179,11 +180,12 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
         const here = s.gnss === "NORMAL" ? s.trustedPosition?.position : null;
         if (here && s.offRoute && !rerouting && Date.now() - lastRerouteAt > 30_000 && phaseRef.current === "navigating") {
           rerouting = true;
+          useNaviaStore.getState().setRerouting(true);
           lastRerouteAt = Date.now();
           navigationEngine.requestRoute(here, destination, modeRef.current)
             .then(() => { if (!cancelled) { setRouteError(null); refresh(); } })
             .catch((err: Error) => { if (!cancelled) setRouteError(err.message); })
-            .finally(() => { rerouting = false; });
+            .finally(() => { rerouting = false; useNaviaStore.getState().setRerouting(false); });
         }
       }, TICK_MS);
     }
@@ -273,7 +275,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const nextCue = nextStep ? intel.byStep[nextStep.id] ?? null : null;
 
   // ——— Voice guidance ———
-  const speakText = useCallback((text: string) => { void speak(text, { lang, gender: voiceGender }); }, [lang, voiceGender]);
+  // Turn prompts share the queue: a newer prompt replaces a stale one waiting.
+  const speakText = useCallback((text: string) => { void say(text, PRIORITY.guidance, { lang, gender: voiceGender }, "turn"); }, [lang, voiceGender]);
   useEffect(() => {
     if (phase !== "navigating" || !nextStep) return;
     if (positionReliable) {
@@ -306,9 +309,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     const gnss = events.find((e) => e.kind === "gnssRecovered" || e.kind === "gnssStable");
     if (gnss) setModeNote({ kind: gnss.kind === "gnssRecovered" ? "recovered" : "stable", text: gnss.text });
     else if (events.some((e) => e.kind === "gnssLost" || e.kind === "gnssDegraded")) setModeNote(null);
-    // The most urgent message is spoken now; the others follow it.
-    const spoken = events.filter((e) => e.spoken);
-    if (spoken[0]) void speak(spoken.map((e) => e.speech).join(" "), { lang, gender: voiceGender, interrupt: true });
+    // Proactive messages: the phrase being spoken is finished, then these go
+    // first (before waiting answers and turn prompts), most urgent first.
+    for (const e of events.filter((x) => x.spoken)) void say(e.speech, e.priority >= 80 ? PRIORITY.proactiveCritical : PRIORITY.proactive, { lang, gender: voiceGender });
   }, [phase, state, snapshot.alert?.active]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!modeNote) return;

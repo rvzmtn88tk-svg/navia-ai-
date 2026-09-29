@@ -18,7 +18,9 @@ import { Navigator } from "../ai/navigator/navigator";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { useNearbyStore } from "../store/nearbyStore";
-import { speak, stopSpeaking } from "../voice/VoiceGuide";
+import { clearSpeechQueue, nextTtsStart, say as sayQueued, stopSpeaking } from "../voice/VoiceGuide";
+import { PRIORITY } from "../voice/speechQueue";
+import { recordVoiceLatency } from "../perf/voiceLatency";
 import { formatDistance, useT } from "../i18n";
 import { CATEGORY_META } from "../places/categories";
 import { Icon, type IconName } from "../components/Icon";
@@ -68,9 +70,11 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     for (const k of ["shelter", "pharmacy", "fuel", "shop", "hospital", "atm"] as const) void useNearbyStore.getState().load(k);
   }, []);
 
+  // Answers go through the shared queue: a proactive message being spoken is
+  // finished first (programme 2.4).
   const say = useCallback(async (text: string) => {
     setSpeaking(true);
-    try { await speak(forSpeech(text), { lang, gender: voiceGender }); } finally { setSpeaking(false); }
+    try { await sayQueued(forSpeech(text), PRIORITY.answer, { lang, gender: voiceGender }); } finally { setSpeaking(false); }
   }, [lang, voiceGender]);
 
   // Instant replies: the answer is computed from what NAVIA knows right now
@@ -95,7 +99,15 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     timing.current = { id: replyId, t0, computeMs, question: text };
     setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) }]);
     setQuestion("");
-    if (spoken) void say(reply.speech);
+    if (spoken) {
+      // Voice pipeline timing (programme 3.2): STT → understanding → first sound.
+      const stt = listener.lastTiming.sttMs;
+      void nextTtsStart().then((tts) => recordVoiceLatency({ question: text, sttMs: stt, understandMs: reply.computeMs, ttsStartMs: tts, totalMs: stt != null ? stt + reply.computeMs + tts : null, at: Date.now() }));
+      void say(reply.speech).then(() => {
+        // Natural loop (3.3): a question back is answered by voice without a tap.
+        if (reply.intent === "clarify") void listenRef.current?.();
+      });
+    }
     const kind = detectKind(text);
     const intent = detectIntent(text);
     if (kind && intent === "place" && w.placeStates?.[kind] !== "ready") {
@@ -144,17 +156,30 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     if (__DEV__) console.log(`[copilot-timing] "${tm.question}" compute ${tm.computeMs.toFixed(1)} ms, on screen ${shownMs.toFixed(1)} ms`);
   }, [messages]);
 
-  const listen = useCallback(async () => {
+  const listenRef = useRef<(() => Promise<void>) | null>(null);
+  const listen = useCallback(async (hold = false) => {
     stopSpeaking();
+    clearSpeechQueue();
     setListening(true);
     try {
-      await listener.startListening((heard) => send(heard, true), { language: lang === "uk" ? "uk-UA" : "en-US" });
+      await listener.startListening((heard) => send(heard, true), { language: lang === "uk" ? "uk-UA" : "en-US", hold });
     } catch (err) {
       setMessages((old) => [...old, { id: ++seq.current, role: "assistant", text: (err as Error).message || t("copilot.error") }]);
     } finally {
       setListening(false);
     }
   }, [lang, send, t]);
+
+  listenRef.current = () => listen(false);
+  // Hold-to-talk: pressing starts listening, releasing ends the phrase; a
+  // short tap listens until a pause.
+  const pressedAt = useRef<number | null>(null);
+  const onMicIn = useCallback(() => { pressedAt.current = Date.now(); void listen(true); }, [listen]);
+  const onMicOut = useCallback(() => {
+    const held = pressedAt.current != null ? Date.now() - pressedAt.current : 0;
+    pressedAt.current = null;
+    if (held > 400) listener.stopListening();
+  }, []);
 
   const run = useCopilotActions(useCallback((q: string) => {
     // "Бачу …" is a prompt to type, not a finished question.
@@ -220,7 +245,10 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
         <TextField value={question} onChangeText={setQuestion} placeholder={listening ? t("copilot.listening") : t("copilot.placeholder")} returnKeyType="send" onSubmitEditing={() => void send(question)} accessibilityLabel={t("copilot.placeholder")} />
         {question.trim()
           ? <IconButton icon="send" tone="accent" size={40} label={t("copilot.send")} onPress={() => void send(question)} />
-          : <IconButton icon="mic" tone="accent" active={listening} size={40} label={t("copilot.mic")} onPress={() => void listen()} />}
+          : <Touchable accessibilityRole="button" accessibilityLabel={t("copilot.mic")} accessibilityHint={t("copilot.micHold")} onPressIn={onMicIn} onPressOut={onMicOut} hitSlop={space.xxs}
+              style={[styles.mic, { backgroundColor: listening ? c.critical : c.accent }]}>
+              <Icon name="mic" size={22} color={c.onAccent} />
+            </Touchable>}
       </View>
     </KeyboardAvoidingView>
   );
@@ -267,6 +295,7 @@ function ActionButton({ action, onPress }: { action: CopilotAction; onPress: () 
 }
 
 const styles = StyleSheet.create({
+  mic: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   screen: { flex: 1, paddingHorizontal: space.md },
   flex: { flex: 1, minWidth: 0 },
   badgeRow: { paddingTop: space.sm, flexDirection: "row", alignItems: "center", gap: space.sm },

@@ -8,13 +8,13 @@ Recognised: 26 of 41 (63.4 %)
 | супутники не підхоплюються вже хвилину | signalLost/gpsStatus | gpsStatus | ✓ |
 | если связь со спутником оборвется ты справишься | signalLost | signalLost | ✓ |
 | чи можна їхати далі якщо нема gps | signalLost | signalLost | ✓ |
-| наскільки зараз можна довіряти позиції | gpsStatus | whereAmI | ✗ |
+| наскільки зараз можна довіряти позиції | gpsStatus | confidence | ✗ |
 | стрілка не рухається, в чому справа | gpsStatus/signalLost | unknown | ✗ |
 | наступний маневр через скільки | routeNext | routeNext | ✓ |
 | на кільці який виїзд брати | routeNext | unknown | ✗ |
 | після заправки куди | routeNext | place | ✗ |
 | мне сейчас перестраиваться вправо? | routeNext | reroute | ✗ |
-| скільки нам ще пилити | eta | unknown | ✗ |
+| скільки нам ще пилити | eta | eta | ✓ |
 | коли будемо в борисполі | eta | eta | ✓ |
 | сколько по времени еще | eta | eta | ✓ |
 | чи ми вже близько | eta | unknown | ✗ |
@@ -34,9 +34,9 @@ Recognised: 26 of 41 (63.4 %)
 | давай ще раз те саме | repeat | repeat | ✓ |
 | не почув що ти сказав | repeat | repeat | ✓ |
 | це ти звідки взяв | explain | explain | ✓ |
-| на чому базується твоя відповідь | explain | explain | ✓ |
+| на чому базується твоя відповідь | explain | clarify | ✗ |
 | чи є затори на виїзді з міста | noData | noData | ✓ |
-| холодно на вулиці? | noData | whereAmI | ✗ |
+| холодно на вулиці? | noData | clarify | ✗ |
 | де пости поліції | noData | place | ✗ |
 | дякую тобі | smalltalk | smalltalk | ✓ |
 | ну добре | smalltalk | smalltalk | ✓ |

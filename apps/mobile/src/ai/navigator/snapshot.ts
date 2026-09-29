@@ -5,12 +5,56 @@
 // shelters / places with real distances, speed, heading, online/offline.
 // Every answer and every proactive message is built from this object only.
 // Pure; unit-tested.
-import type { NavigationState } from "@navia/core";
+import { drErrorGrowthMPerMin, type NavigationState } from "@navia/core";
 import { gpsDetails, type PositionSourceKind } from "../../engine/liveStatus";
 import { navigatorModeOf, type NavigatorMode } from "../../navigation/navigatorMode";
 import type { CopilotWorld, PlaceKind, WorldPlace } from "../copilotBrain";
 
+/**
+ * The programme's context contract (part 2.1): one flat record with every
+ * field an answer may use. Every number or name the navigator says must come
+ * from here (or the nested views below, built from the same inputs). null =
+ * not known — handlers then say so instead of guessing.
+ */
+export type NavFields = {
+  gnssState: "NORMAL" | "DEGRADED" | "LOST";
+  /** ms since the last trusted fix; null = no trusted fix yet. */
+  gnssLastFixAgeMs: number | null;
+  /** MAP_MATCH is not produced by the engine (dead reckoning runs along the route itself). */
+  positionSource: "GNSS" | "DEAD_RECKONING" | "MAP_MATCH" | "FUSED" | "MANUAL" | "NONE";
+  positionConfidence: number;
+  positionConfidenceBand: string;
+  /** Accuracy of the GNSS fix / error of the estimate, metres. */
+  positionAccuracyM: number | null;
+  currentLat: number | null;
+  currentLon: number | null;
+  routeActive: boolean;
+  routeProgressM: number;
+  routeRemainingM: number;
+  nextManeuver: { type: string; distanceM: number | null; roadName: string | null } | null;
+  etaTimestamp: number | null;
+  offRoute: boolean;
+  reroutingInProgress: boolean;
+  /** UNKNOWN = the alert source has not answered. */
+  alarmStatus: "NONE" | "ACTIVE" | "CLEARED" | "UNKNOWN";
+  alarmDeclaredAt: number | null;
+  nearbyShelters: { id: string; label: string; distanceM: number; source: "real" | "demo" }[];
+  nearbyPOI: { id: string; category: string; label: string; distanceM: number }[];
+  speedMps: number | null;
+  headingDeg: number | null;
+  networkOnline: boolean;
+  /** null = not known (package status not read). */
+  offlinePackageAvailable: boolean | null;
+  isDemoMode: boolean;
+  lastNavaResponse: string | null;
+  snapshotTimestamp: number;
+  /** Dead-reckoning error growth at the current speed, m/min (engine's model); null without speed. */
+  drErrorGrowthMPerMin: number | null;
+};
+
 export type Snapshot = {
+  /** Part 2.1 contract (flat). */
+  fields: NavFields;
   lang: "uk" | "en";
   at: number;
   gnss: {
@@ -68,12 +112,55 @@ export type SnapshotInput = {
   /** false when the phone has no network (or the "no internet" test mode). */
   online?: boolean;
   now?: number;
+  /** "Київ + область" offline package ready on the phone; null = unknown. */
+  offlinePackageAvailable?: boolean | null;
+  isDemo?: boolean;
+  /** When the last alert at the user's place ended (for CLEARED). */
+  alertEndedAt?: number | null;
+  rerouting?: boolean;
+  lastResponse?: string | null;
 };
 
-export function buildSnapshot({ state, world, online = true, now = Date.now() }: SnapshotInput): Snapshot {
+/** An alert that ended less than this long ago is reported as "cleared". */
+const CLEARED_FOR_MS = 30 * 60_000;
+
+export function buildSnapshot({ state, world, online = true, now = Date.now(), offlinePackageAvailable = null, isDemo = false, alertEndedAt = null, rerouting = false, lastResponse = null }: SnapshotInput): Snapshot {
   const d = gpsDetails(state);
   const r = world.route;
+  const pos = state.position?.position ?? null;
+  const active = world.alert?.active ?? null;
+  const speedTrusted = state.gnss === "NORMAL";
+  const fields: NavFields = {
+    gnssState: state.gnss,
+    gnssLastFixAgeMs: d.lastTrustedFixAgeS != null ? Math.round(d.lastTrustedFixAgeS * 1000) : world.gps.lastFixAgeS != null ? Math.round(world.gps.lastFixAgeS * 1000) : null,
+    positionSource: d.source,
+    positionConfidence: Math.max(0, Math.min(1, state.confidence)),
+    positionConfidenceBand: state.confidenceBand,
+    positionAccuracyM: d.uncertaintyM ?? d.accuracyM ?? null,
+    currentLat: pos?.lat ?? null,
+    currentLon: pos?.lon ?? null,
+    routeActive: !!r,
+    routeProgressM: r ? state.routeProgressM : 0,
+    routeRemainingM: r ? r.remainingM : 0,
+    nextManeuver: r?.next && state.nextStep ? { type: state.nextStep.maneuver, distanceM: r.next.distanceM ?? null, roadName: r.next.road ?? null } : null,
+    etaTimestamp: r?.etaS != null ? now + r.etaS * 1000 : null,
+    offRoute: r?.offRoute ?? false,
+    reroutingInProgress: rerouting,
+    alarmStatus: active == null ? "UNKNOWN" : active ? "ACTIVE" : alertEndedAt != null && now - alertEndedAt < CLEARED_FOR_MS ? "CLEARED" : "NONE",
+    alarmDeclaredAt: active ? world.alert?.since ?? null : null,
+    nearbyShelters: (world.places.shelter ?? []).map((p) => ({ id: p.id, label: p.name, distanceM: p.distanceM, source: p.origin === "demo" ? "demo" : "real" })),
+    nearbyPOI: Object.entries(world.places).filter(([k]) => k !== "shelter").flatMap(([k, list]) => (list ?? []).map((p) => ({ id: p.id, category: k, label: p.name, distanceM: p.distanceM }))),
+    speedMps: state.speedMps != null && Number.isFinite(state.speedMps) ? state.speedMps : null,
+    headingDeg: state.headingDeg,
+    networkOnline: online,
+    offlinePackageAvailable,
+    isDemoMode: isDemo,
+    lastNavaResponse: lastResponse,
+    snapshotTimestamp: now,
+    drErrorGrowthMPerMin: state.speedMps != null && Number.isFinite(state.speedMps) ? drErrorGrowthMPerMin(state.speedMps, speedTrusted) : null,
+  };
   return {
+    fields,
     lang: world.lang,
     at: now,
     gnss: {
