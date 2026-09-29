@@ -601,8 +601,15 @@ registerHandler("clarify", (s, ctx) => {
 });
 
 // "general": answered by the language model (askSmart); this handler is used
-// only when its wording did not pass the snapshot check.
-registerHandler("general", (s, ctx) => handlerFor("unknown")(s, ctx));
+// only when its wording did not pass the snapshot check — said as it is.
+registerHandler("general", (s) => ({
+  lines: [
+    L(s, "Відповідь мовної моделі не пройшла перевірку: в ній були дані, яких немає в NAVIA, тому її не показано.", "The language model's answer failed the check: it had data NAVIA doesn't have, so it isn't shown."),
+    L(s, "Спробуйте сформулювати інакше або спитайте про дорогу — маршрут, GPS, тривоги, укриття.", "Try asking differently, or ask about the road — route, GPS, alerts, shelters."),
+  ],
+  actions: [ask(L(s, "Що далі?", "What's next?")), ask(L(s, "Де укриття?", "Where's a shelter?"))],
+  tone: "calm", used: [], missing: ["grounded answer"], honest: true,
+}));
 
 registerHandler("unknown", (s) => ({
   lines: [

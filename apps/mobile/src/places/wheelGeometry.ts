@@ -1,7 +1,7 @@
 // Layout of the radial category menu (components/CategoryWheel.tsx): a ring
-// — slightly taller than wide, so the side items, stacked above each other,
-// keep room for their labels — that fits between the button row and the
-// bottom of the screen and inside the side gutters, on every phone size.
+// in the middle of the screen (owner's decision 29.09.2026: centred, not
+// under the button), inside the safe areas and the side gutters, on every
+// phone size.
 // Pure, so tests can check it for overlaps on every screen size.
 
 export type WheelItem = { x: number; y: number };
@@ -18,11 +18,11 @@ export type WheelGeometry = {
 
 export const WHEEL_GUTTER = 12;
 /**
- * `preferredTop`: under the button that opens the menu; the ring moves up
- * (over the search bar — it is under the dimmed backdrop then) only when
- * the screen is too short for it there. `safeTop`: never above this.
+ * The whole ring with its labels is centred vertically between `safeTop`
+ * and the bottom inset. (`_preferredTop`, the button row, is where the ring
+ * flies out from — the animation's business, not the layout's.)
  */
-export function wheelGeometry(n: number, width: number, height: number, preferredTop: number, safeTop: number, bottomInset: number): WheelGeometry {
+export function wheelGeometry(n: number, width: number, height: number, _preferredTop: number, safeTop: number, bottomInset: number): WheelGeometry {
   const narrow = width < 360;
   const disc = narrow ? 40 : 44;
   // One line: short names on the ring ("Незламність"), full ones for VoiceOver.
@@ -33,10 +33,13 @@ export function wheelGeometry(n: number, width: number, height: number, preferre
   const aspect = narrow ? 1.3 : 1;
   const rx = Math.max(80, Math.min(150, (width - 2 * WHEEL_GUTTER - labelW) / 2));
   const extra = 2 * WHEEL_GUTTER + disc + labelH + 4;
-  const topY = Math.max(safeTop, Math.min(preferredTop, height - bottomInset - extra - 2 * rx * aspect));
-  const ry = Math.max(80, Math.min(rx * aspect, (height - topY - bottomInset - extra) / 2));
+  const available = height - safeTop - bottomInset;
+  const ry = Math.max(80, Math.min(rx * aspect, (available - extra) / 2));
+  // The block from the top disc to the bottom label, centred in the available height.
+  const blockH = 2 * ry + disc + 4 + labelH;
+  const topY = safeTop + Math.max(WHEEL_GUTTER, (available - blockH) / 2);
   const cx = width / 2;
-  const cy = topY + WHEEL_GUTTER + disc / 2 + ry;
+  const cy = topY + disc / 2 + ry;
   const items = Array.from({ length: n }, (_, i) => {
     const a = (-90 + (360 * i) / n) * (Math.PI / 180);
     return { x: rx * Math.cos(a), y: ry * Math.sin(a) };

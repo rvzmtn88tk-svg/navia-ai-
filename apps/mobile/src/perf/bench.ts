@@ -14,6 +14,9 @@ export const benchHooks: {
   setLayer?: (layer: MapLayer) => void;
   restyle?: () => void;
   openAssistant?: () => void;
+  /** Home screen: the air-targets map. */
+  openTargets?: () => void;
+  closeTargets?: () => void;
   /** Co-pilot screen: send a question / set the text being typed. */
   assistantAsk?: (q: string) => void;
   assistantType?: (text: string) => void;
@@ -35,6 +38,12 @@ export async function runBench(layerBefore: MapLayer): Promise<void> {
   running = true;
   fpsLog.length = 0;
   fpsStart(); await wait(1500); await fpsEnd("idle: standard map, nothing moving");
+  // The wheel once before anything else (a clean home map), then again after the targets map below.
+  fpsStart(); benchHooks.openWheel?.(); await wait(700); await fpsEnd("first: category wheel open");
+  await wait(500);
+  fpsStart(); benchHooks.closeWheel?.(); await wait(450); await fpsEnd("first: category wheel close");
+  await wait(1500);
+  const home = await benchHome();
   for (let k = 0; k < 4; k++) {
     fpsStart(); benchHooks.openWheel?.(); await wait(700); await fpsEnd("category wheel: open (animation 420 ms)");
     await wait(500);
@@ -57,13 +66,42 @@ export async function runBench(layerBefore: MapLayer): Promise<void> {
   const assistant = await benchAssistant();
   const tts = await benchTts();
   const { width, height } = Dimensions.get("window");
-  const report = { at: new Date().toISOString(), platform: Platform.OS, version: Platform.Version, model: (Platform.constants as { systemName?: string; interfaceIdiom?: string }).interfaceIdiom, window: `${width}x${height}`, results: [...fpsLog], navigator, tts, assistant };
+  const report = { at: new Date().toISOString(), platform: Platform.OS, version: Platform.Version, model: (Platform.constants as { systemName?: string; interfaceIdiom?: string }).interfaceIdiom, window: `${width}x${height}`, results: [...fpsLog], home, navigator, tts, assistant };
   try {
     const kv = (require("expo-sqlite/kv-store") as { default: { setItemAsync(k: string, v: string): Promise<void> } }).default;
     await kv.setItemAsync("navia.bench.v1", JSON.stringify(report));
   } catch { /* storage unavailable */ }
   console.log("[bench]", JSON.stringify(report));
   running = false;
+}
+
+type HomeRun = { renders: number; avgRenderMs: number; p95RenderMs: number; maxRenderMs: number; jsBusyPct: number; maxStallMs: number; stallsOver100: number; fps: number | null; maxFrameMs: number | null };
+
+/** The home screen as it is used: idle with live GPS, then the targets map, then turning the map with targets on it. */
+async function benchHome(): Promise<Record<string, HomeRun>> {
+  const { renderLog, jsLagStart } = require("./perf") as typeof import("./perf");
+  const out: Record<string, HomeRun> = {};
+  const measure = async (name: string, ms: number, during?: () => void) => {
+    renderLog.length = 0;
+    const lag = jsLagStart();
+    fpsStart();
+    during?.();
+    await wait(ms);
+    const f = await fpsEnd(`home: ${name}`);
+    const l = lag();
+    const r = renderLog.filter((x) => x.id === "home").map((x) => x.ms).sort((a, b) => a - b);
+    out[name] = { renders: r.length, avgRenderMs: r.reduce((a, b) => a + b, 0) / Math.max(1, r.length), p95RenderMs: r[Math.floor(0.95 * (r.length - 1))] ?? 0, maxRenderMs: r[r.length - 1] ?? 0, jsBusyPct: l.busyPct, maxStallMs: l.maxStallMs, stallsOver100: l.stallsOver100, fps: f?.fps ?? null, maxFrameMs: f?.maxGapMs ?? null };
+  };
+  // Every step starts once the map has settled (tiles loaded), so one step's loading does not leak into the next.
+  await wait(4000);
+  await measure("idle 6 s (live GPS)", 6000);
+  await measure("open targets map (fly-out + card)", 3000, () => benchHooks.openTargets?.());
+  await wait(5000);
+  await measure("targets map idle 6 s", 6000);
+  await measure("targets map: turning 3 s", 3200, () => benchHooks.orbit?.(3000, 0, 5));
+  benchHooks.closeTargets?.();
+  await wait(8000);
+  return out;
 }
 
 /** Layers 2–5 on the phone: every question answered 20 times from a live snapshot. */

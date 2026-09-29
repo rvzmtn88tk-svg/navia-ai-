@@ -92,8 +92,6 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
     destination, places = [], selectedPlaceId, onPlacePress, onBasemapPoiPress, padding = { top: 0, bottom: 0 }, onMapError, onMapReady, speedMps, searchCircle, view3d = false, onFrame, headingMode = "device", haze,
     targets = NO_TARGETS, targetTracks, selectedTargetId, onTargetPress,
   } = props;
-  // Course arrows are screen-fixed views: they turn against the map's rotation.
-  const [mapBearing, setMapBearing] = useState(0);
   const showsTargets = targets.length > 0;
   const view3dRef = useRef(view3d);
   view3dRef.current = view3d;
@@ -208,6 +206,24 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
     type: "FeatureCollection" as const,
     features: targets.filter((t) => t.uncertaintyKm != null && t.uncertaintyKm > 0).map((t) => ({ ...circleFeature(t, t.uncertaintyKm! * 1000), properties: { stale: t.stale ? 1 : 0 } })),
   }), [targets]);
+  // Targets are drawn by the map itself (GPU): a circle, a course notch that
+  // turns with the map, the uncertainty area and the reported path — dozens of
+  // native marker views made the targets map run at 15–20 fps.
+  const targetPoints = useMemo(() => ({
+    type: "FeatureCollection" as const,
+    features: targets.map((t) => ({
+      type: "Feature" as const,
+      id: t.id,
+      properties: { id: t.id, tone: t.stale ? "stale" : t.kind === "uav" || t.kind === "recon" ? "drone" : "missile", heading: t.headingDeg ?? 0, hasCourse: t.headingDeg != null ? 1 : 0, selected: t.id === selectedTargetId ? 1 : 0 },
+      geometry: { type: "Point" as const, coordinates: [t.lon, t.lat] },
+    })),
+  }), [targets, selectedTargetId]);
+  const targetColor = useMemo(() => ["match", ["get", "tone"], "stale", c.textMuted, "missile", c.brandOrange, c.critical] as const, [c.textMuted, c.brandOrange, c.critical]);
+  const onTargetShapePress = useCallback((e: { features?: GeoJSON.Feature[] }) => {
+    const id = e.features?.[0]?.properties?.id;
+    const hit = targets.find((t) => t.id === id);
+    if (hit) onTargetPress?.(hit);
+  }, [targets, onTargetPress]);
   const targetPaths = useMemo(() => ({
     type: "FeatureCollection" as const,
     features: targets.map((t) => targetTracks?.[t.id] ?? []).filter((p) => p.length > 1).map((p) => lineFeature(p)),
@@ -263,7 +279,6 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
           liveZoom.current = feature.properties.zoomLevel;
           const h = feature.properties.heading ?? 0;
           if (Math.abs(h - bearing.current) > 0.5) { bearing.current = h; onBearingChange?.(h); }
-          if (showsTargets && Math.abs(h - mapBearing) > 0.5) setMapBearing(h);
         }}
         onDidFinishLoadingMap={() => { perfEnd("map: open → first map"); perfEnd("map: style switch"); onMapReady?.(); }}
         onPress={(f) => { void onMapPress(f); }}
@@ -322,11 +337,22 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
             <MapLibreGL.LineLayer id="navia-target-path-line" style={{ lineColor: c.critical, lineWidth: 2, lineOpacity: 0.7, lineDasharray: [1.5, 1.5], lineCap: "round" }} />
           </MapLibreGL.ShapeSource>
         )}
-        {targets.slice(0, 120).map((t) => (
-          <MapLibreGL.MarkerView key={t.id} id={`target-${t.id}`} coordinate={[t.lon, t.lat]} anchor={{ x: 0.5, y: 0.5 }} allowOverlap>
-            <TargetMarker target={t} selected={t.id === selectedTargetId} mapBearing={mapBearing} onPress={onTargetPress} />
-          </MapLibreGL.MarkerView>
-        ))}
+        {showsTargets && <MapLibreGL.Images images={TARGET_IMAGES} />}
+        {showsTargets && (
+          <MapLibreGL.ShapeSource id="navia-targets" shape={targetPoints} onPress={onTargetShapePress} hitbox={{ width: 44, height: 44 }}>
+            <MapLibreGL.CircleLayer id="navia-target-dot" style={{
+              circleRadius: ["case", ["==", ["get", "selected"], 1], 13, 9],
+              circleColor: targetColor as unknown as string,
+              circleOpacity: ["case", ["==", ["get", "tone"], "stale"], 0.75, 1],
+              circleStrokeColor: c.surface, circleStrokeWidth: 2,
+            }} />
+            <MapLibreGL.CircleLayer id="navia-target-core" aboveLayerID="navia-target-dot" style={{ circleRadius: ["case", ["==", ["get", "selected"], 1], 4, 3], circleColor: c.onMarker }} />
+            <MapLibreGL.SymbolLayer id="navia-target-course" aboveLayerID="navia-target-core" filter={["==", ["get", "hasCourse"], 1]} style={{
+              iconImage: "targetCourse", iconRotate: ["get", "heading"], iconRotationAlignment: "map", iconAllowOverlap: true, iconIgnorePlacement: true,
+              iconSize: ["case", ["==", ["get", "selected"], 1], 1.3, 1], iconColor: targetColor as unknown as string,
+            }} />
+          </MapLibreGL.ShapeSource>
+        )}
 
         {destination && (
           <MapLibreGL.MarkerView id="navia-destination" coordinate={[destination.lon, destination.lat]} anchor={{ x: 0.5, y: 1 }} allowOverlap>
@@ -343,7 +369,7 @@ export const NaviaMap = React.memo(forwardRef<NaviaMapHandle, Props>(function Na
   );
 }));
 
-function PlaceMarker({ place, selected, onPress }: { place: NearbyPlace; selected: boolean; onPress?: (place: NearbyPlace) => void }): JSX.Element {
+const PlaceMarker = React.memo(function PlaceMarker({ place, selected, onPress }: { place: NearbyPlace; selected: boolean; onPress?: (place: NearbyPlace) => void }): JSX.Element {
   const c = useColors();
   const meta = CATEGORY_META[place.category];
   const size = selected ? 40 : 30;
@@ -353,29 +379,11 @@ function PlaceMarker({ place, selected, onPress }: { place: NearbyPlace; selecte
       <Icon name={meta.icon} size={selected ? 22 : 16} color={c.onMarker} />
     </Touchable>
   );
-}
+});
 
 const NO_TARGETS: AirTarget[] = [];
-
-/** A target: the place-marker shape in the alert colour, a notch pointing along the presumed course. */
-function TargetMarker({ target, selected, mapBearing, onPress }: { target: AirTarget; selected: boolean; mapBearing: number; onPress?: (t: AirTarget) => void }): JSX.Element {
-  const c = useColors();
-  const size = selected ? 34 : 22;
-  const color = target.stale ? c.textMuted : target.kind === "uav" || target.kind === "recon" ? c.critical : c.brandOrange;
-  const box = size + 16;
-  return (
-    <Touchable haptic accessibilityRole="button" accessibilityLabel={target.note || target.kind} onPress={() => onPress?.(target)} style={{ width: box, height: box, alignItems: "center", justifyContent: "center" }}>
-      {target.headingDeg != null && (
-        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: "center", transform: [{ rotate: `${target.headingDeg - mapBearing}deg` }] }]}>
-          <View style={[styles.courseNotch, { borderBottomColor: color }]} />
-        </View>
-      )}
-      <View style={[styles.placeMarker, { width: size, height: size, borderRadius: size / 2, backgroundColor: color, borderColor: c.surface, opacity: target.stale ? 0.75 : 1 }, elevation(2, c)]}>
-        <Icon name="alert" size={selected ? 20 : 14} color={c.onMarker} />
-      </View>
-    </Touchable>
-  );
-}
+/** The course notch, tinted per target by the map (SDF image). */
+const TARGET_IMAGES = { targetCourse: { source: require("../../assets/target-course.png") as number, sdf: true } };
 
 function circleFeature(center: LatLon, radiusM: number) {
   const ring = Array.from({ length: 73 }, (_, i) => destinationPoint(center, (i * 5) % 360, radiusM)).map((p) => [p.lon, p.lat]);
@@ -410,6 +418,5 @@ function lineFeature(points: LatLon[]) {
 
 const styles = StyleSheet.create({
   placeMarker: { alignItems: "center", justifyContent: "center", borderWidth: 2 },
-  courseNotch: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 9, borderLeftColor: "transparent", borderRightColor: "transparent" },
   destination: { alignItems: "center", justifyContent: "flex-end" },
 });

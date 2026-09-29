@@ -104,7 +104,7 @@ async function main(): Promise<void> {
   });
 
   const rows: string[] = [];
-  let offMeaningful = 0;
+  let offMeaningful = 0, offHonest = 0, offCrisis = 0;
   const run = async (label: string, q: string, sit: string, before: Navigator, after: Navigator, offTopic: boolean) => {
     const s = sits.get(sit)!.snapshot;
     const b = before.ask(q, s);
@@ -115,9 +115,14 @@ async function main(): Promise<void> {
     const ms = Date.now() - t0;
     const viaModel = latencies.length > n;
     const meaningful = a.engine === "llm" && !REFUSAL.test(a.text);
+    // Not the model, but still a right answer: an honest "no such live data" and the calm crisis answer.
+    const honest = !meaningful && a.intent === "noData";
+    const crisis = !meaningful && a.intent === "emotion";
     if (offTopic && meaningful) offMeaningful++;
+    if (offTopic && honest) offHonest++;
+    if (offTopic && crisis) offCrisis++;
     const cell = (t: string) => t.replace(/\n/g, " ⏎ ").replace(/\|/g, "/");
-    rows.push(`| ${label} | ${sits.get(sit)!.name} | ${cell(q)} | ${b.intent} | ${cell(b.text)} | ${a.intent} · ${a.engine}${lastError ? ` (${lastError})` : ""} | ${cell(a.text)} | ${viaModel ? ms : "—"} | ${offTopic ? (meaningful ? "так" : "ні") : ""} |`);
+    rows.push(`| ${label} | ${sits.get(sit)!.name} | ${cell(q)} | ${b.intent} | ${cell(b.text)} | ${a.intent} · ${a.engine}${lastError ? ` (${lastError})` : ""} | ${cell(a.text)} | ${viaModel ? ms : "—"} | ${offTopic ? (meaningful ? "так" : honest ? "чесно: даних немає" : crisis ? "кризова відповідь" : "ні") : ""} |`);
     console.log(`${label} ${a.engine} ${a.intent} ${viaModel ? `${ms} ms` : "local"} — ${a.text.slice(0, 90).replace(/\n/g, " ")}`);
   };
 
@@ -138,7 +143,7 @@ async function main(): Promise<void> {
       const cost = avg((u) => (u.inputTokens * PRICE.input + u.outputTokens * PRICE.output + u.cacheReadTokens * PRICE.cacheRead) / 1e6);
       return `Tokens per question (average of ${usages.length}): input ${Math.round(avg((u) => u.inputTokens))}, cache read ${Math.round(avg((u) => u.cacheReadTokens))}, output ${Math.round(avg((u) => u.outputTokens))} → ≈ $${cost.toFixed(4)} per question at list prices ($${(cost * 1000).toFixed(2)} per 1000).`;
     })(),
-    `Off-topic answered meaningfully (automatic first pass): ${offMeaningful}/${OFF_TOPIC.length} = ${Math.round((offMeaningful / OFF_TOPIC.length) * 100)}% (goal ≥ 90%).`,
+    `Off-topic answered meaningfully by the model (automatic first pass): ${offMeaningful}/${OFF_TOPIC.length} = ${Math.round((offMeaningful / OFF_TOPIC.length) * 100)}%; plus honest "no such data" ${offHonest} and crisis answers ${offCrisis}: ${offMeaningful + offHonest + offCrisis}/${OFF_TOPIC.length} = ${Math.round(((offMeaningful + offHonest + offCrisis) / OFF_TOPIC.length) * 100)}% (goal ≥ 90%; a person reads the answers to confirm).`,
   ];
   writeFileSync(process.env.NAVIA_EVAL_OUT ?? join(__dirname, "..", "test", "reports", "llm-eval.md"), [
     "# Language model acceptance — 12 control + 34 off-topic questions",

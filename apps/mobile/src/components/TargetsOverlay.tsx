@@ -6,7 +6,7 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, Easing, Linking, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { TARGETS_SOURCE_URL, targetsLine, type AirTarget, type TargetsView } from "../providers/AirTargetsProvider";
+import { TARGETS_SOURCE_URL, distanceToTarget, targetsLine, type AirTarget, type TargetsView } from "../providers/AirTargetsProvider";
 export { targetsLine, type TargetsView };
 import { directionWords } from "../ai/copilotBrain";
 import { useT, type StringKey, type Translate } from "../i18n";
@@ -14,8 +14,10 @@ import { Icon } from "./Icon";
 import { IconButton, Text, Touchable, useColors } from "./ui";
 import { elevation, iconSize, radius, space } from "../theme/tokens";
 
-export function TargetsOverlay({ open, view, selected, onSelect, onClose }: {
+export function TargetsOverlay({ open, view, selected, onSelect, onClose, position }: {
   open: boolean;
+  /** Where the person is (null = unknown): for the distance to a tapped target. */
+  position: { lat: number; lon: number } | null;
   view: TargetsView;
   selected: AirTarget | null;
   onSelect: (t: AirTarget | null) => void;
@@ -54,20 +56,25 @@ export function TargetsOverlay({ open, view, selected, onSelect, onClose }: {
             <Text variant="bodyStrong" style={styles.flex}>{t(`targets.kind.${selected.kind}` as StringKey)}{selected.count && selected.count > 1 ? ` × ${selected.count}` : ""}</Text>
             <IconButton icon="close" tone="plain" size={36} label={t("common.close")} onPress={() => onSelect(null)} />
           </View>
-          <TargetDetail target={selected} t={t} lang={lang} />
+          <TargetDetail target={selected} position={position} t={t} lang={lang} />
         </View>
       )}
     </Animated.View>
   );
 }
 
-function TargetDetail({ target, t, lang }: { target: AirTarget; t: Translate; lang: "uk" | "en" }): JSX.Element {
+function TargetDetail({ target, position, t, lang }: { target: AirTarget; position: { lat: number; lon: number } | null; t: Translate; lang: "uk" | "en" }): JSX.Element {
+  const away = position ? distanceToTarget(position, target) : null;
+  const distText = away
+    ? away.km <= 2 ? t("targets.detail.distanceNear", { dist: `${away.km} ${lang === "uk" ? "км" : "km"}` }) : t("targets.detail.distance", { dist: `${away.km} ${lang === "uk" ? "км" : "km"}`, dir: directionWords(away.bearingDeg, lang) })
+    : t("targets.detail.noPosition");
   const place = [target.locality, target.region].filter(Boolean).join(", ") || "—";
   const course = target.headingDeg != null ? directionWords(target.headingDeg, lang).replace(/^на |^to the /, "") : null;
   const mins = Math.max(0, Math.round((Date.now() - target.updatedAt) / 60_000));
   const ago = mins < 1 ? t("targets.ago.now") : t("targets.ago.min", { n: mins });
   return (
     <View style={styles.lines}>
+      <Text variant="bodyStrong" color={away ? "primary" : "secondary"}>{distText}</Text>
       <Text variant="callout">{course ? t("targets.detail.where", { place, course }) : t("targets.detail.whereNoCourse", { place })}</Text>
       <Text variant="callout" color="secondary">{target.quality === "area" ? t("targets.detail.area") : t("targets.detail.accuracy", { km: target.uncertaintyKm ?? "?", reports: target.reports })}</Text>
       <Text variant="callout" color="secondary">{t("targets.detail.updated", { ago })}</Text>

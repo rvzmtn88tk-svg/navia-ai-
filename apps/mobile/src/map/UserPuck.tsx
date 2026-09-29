@@ -1,7 +1,14 @@
 // The user's position on the map: the NAVIA logo pointing along the heading,
-// on a white disc, over a soft accuracy halo and a slow pulse. Position and
-// heading are interpolated between GPS fixes so the logo glides instead of
-// jumping; heading turns along the shortest arc.
+// on a white disc, over a soft accuracy halo and a still glow ring. Position
+// glides between GPS fixes so the logo does not jump.
+//
+// Speed: every change here re-sends the layer to the map, and the map
+// redraws the whole screen. A JS-driven pulse (20 updates/s), heading at the
+// compass rate (≈30/s, jittering in the hand) and gliding over GPS noise kept
+// the map redrawing ~50 times a second while nothing moved — measured on an
+// iPhone 17 Pro as 10–17 fps over the country-wide targets map and under the
+// category wheel. Now: no pulse, heading at most 10/s and only on a 2° turn,
+// no glide for moves under 3 m.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import MapLibreGL from "@maplibre/maplibre-react-native";
 import { useColors } from "../components/ui";
@@ -11,8 +18,12 @@ import { feedCourse, lastHeading, recordHeadingLatency, subscribeHeading, type H
 export type PuckQuality = "good" | "degraded" | "lost";
 
 const GLIDE_MS = 900;
-const FRAME_MS = 33; // ~30 fps is smooth for a marker and light on the bridge
-const PULSE_MS = 2400;
+const FRAME_MS = 50; // 20 updates/s: smooth enough for a marker gliding for 0.9 s
+/** GPS noise while standing still: moves under this snap without gliding. */
+const GLIDE_MIN_M = 3;
+/** Heading: a turn smaller than this is compass jitter, and at most one update per HEADING_MS. */
+const HEADING_MIN_DEG = 2;
+const HEADING_MS = 100;
 
 function shortestAngleDelta(from: number, to: number): number {
   return ((to - from + 540) % 360) - 180;
@@ -29,7 +40,7 @@ export function useGlide(target: UserPosition): UserPosition {
     const start = Date.now();
     // A jump over ~200 m is a relocation, not motion: snap instead of sliding.
     const jumpM = Math.hypot((target.lat - from.current.lat) * 111_320, (target.lon - from.current.lon) * 111_320 * Math.cos(target.lat * Math.PI / 180));
-    if (jumpM > 200) { shown.current = target; setCurrent(target); return; }
+    if (jumpM > 200 || jumpM < GLIDE_MIN_M) { shown.current = target; setCurrent(target); return; }
     const timer = setInterval(() => {
       const k = Math.min(1, (Date.now() - start) / GLIDE_MS);
       const e = 1 - Math.pow(1 - k, 2);
@@ -60,7 +71,16 @@ function useMarkerHeading(courseDeg: number | null, speedMps: number | null, liv
   useEffect(() => {
     if (!live) { setReading(null); return undefined; }
     setReading(lastHeading());
-    return subscribeHeading((r) => { pendingAt.current = r.at; setReading(r); });
+    let last: HeadingReading | null = lastHeading();
+    let lastAt = 0;
+    return subscribeHeading((r) => {
+      const now = Date.now();
+      const small = last?.deg != null && r.deg != null && Math.abs(shortestAngleDelta(last.deg, r.deg)) < HEADING_MIN_DEG;
+      // A change of availability (null ↔ value) always goes through.
+      if (last && (last.deg == null) === (r.deg == null) && (small || now - lastAt < HEADING_MS)) return;
+      last = r; lastAt = now;
+      pendingAt.current = r.at; setReading(r);
+    });
   }, [live]);
   useEffect(() => { if (live) feedCourse(courseDeg, speedMps); }, [courseDeg, speedMps, live]);
   const deg = live ? reading?.deg ?? courseDeg : courseDeg;
@@ -69,16 +89,6 @@ function useMarkerHeading(courseDeg: number | null, speedMps: number | null, liv
     if (pendingAt.current != null) { recordHeadingLatency(Date.now() - pendingAt.current, deg); pendingAt.current = null; }
   }, [reading]); // eslint-disable-line react-hooks/exhaustive-deps
   return deg;
-}
-
-function usePulse(): number {
-  const [phase, setPhase] = useState(0);
-  useEffect(() => {
-    const start = Date.now();
-    const timer = setInterval(() => setPhase(((Date.now() - start) % PULSE_MS) / PULSE_MS), 50);
-    return () => clearInterval(timer);
-  }, []);
-  return phase;
 }
 
 /** `billboard`: in 3D the disc and arrow face the screen (not laid flat on
@@ -94,7 +104,6 @@ export const UserPuck = React.memo(function UserPuck({ position, quality, billbo
   const c = useColors();
   const heading = useMarkerHeading(position.headingDeg, speedMps, headingMode === "device");
   const shown = { ...useGlide(position), headingDeg: heading };
-  const pulse = usePulse();
   const tone = quality === "good" ? c.accent : quality === "degraded" ? c.warning : c.critical;
   const shape = useMemo(() => ({
     type: "Feature" as const,
@@ -118,7 +127,7 @@ export const UserPuck = React.memo(function UserPuck({ position, quality, billbo
           circlePitchAlignment: "map",
         }} />
         <MapLibreGL.CircleLayer id="navia-user-pulse" style={{
-          circleRadius: 22 + pulse * 18, circleColor: tone, circleOpacity: 0.28 * (1 - pulse), circlePitchAlignment: "map",
+          circleRadius: 30, circleColor: tone, circleOpacity: 0.14, circlePitchAlignment: "map",
         }} />
         <MapLibreGL.CircleLayer id="navia-user-disc" style={{
           circleRadius: 20, circleColor: c.surface, circleStrokeColor: tone, circleStrokeWidth: 2.5, circlePitchAlignment: billboard ? "viewport" : "map",

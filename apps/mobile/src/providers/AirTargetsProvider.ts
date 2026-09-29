@@ -110,6 +110,24 @@ export function parseTargets(json: unknown, now: number): AirTargetsSnapshot {
   return { serverTime, targets };
 }
 
+/**
+ * Rounded distance from the person to a target and the side it is on — as
+ * approximate as the source: whole km, to 5 km past 50 km (the position may
+ * be off by several km anyway).
+ */
+export function distanceToTarget(from: { lat: number; lon: number }, t: { lat: number; lon: number }): { km: number; bearingDeg: number } {
+  const R = 6371;
+  const rad = Math.PI / 180;
+  const dLat = (t.lat - from.lat) * rad, dLon = (t.lon - from.lon) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(from.lat * rad) * Math.cos(t.lat * rad) * Math.sin(dLon / 2) ** 2;
+  const exact = 2 * R * Math.asin(Math.sqrt(a));
+  const y = Math.sin(dLon) * Math.cos(t.lat * rad);
+  const x = Math.cos(from.lat * rad) * Math.sin(t.lat * rad) - Math.sin(from.lat * rad) * Math.cos(t.lat * rad) * Math.cos(dLon);
+  const bearingDeg = ((Math.atan2(y, x) / rad) + 360) % 360;
+  const km = exact < 1 ? 1 : exact < 50 ? Math.round(exact) : Math.round(exact / 5) * 5;
+  return { km, bearingDeg };
+}
+
 export type TrackPoint = { lat: number; lon: number; at: number };
 export type Tracks = Record<string, TrackPoint[]>;
 

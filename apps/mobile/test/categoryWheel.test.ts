@@ -38,8 +38,10 @@ for (const [name, w, h, top, bottom] of SCREENS) {
     }
     // A true circle, not an oval, on every phone but the 320-pt SE.
     if (w >= 360) assert.equal(g.ry, g.rx, "true circle");
-    // Where there is room (every phone but the 320-pt SE) the ring opens under the button, not over the search bar.
-    if (h >= 667) assert.ok(g.cy - g.ry - g.disc / 2 >= topY, "ring under the button row");
+    // Centred on the screen (owner's decision 29.09.2026): the ring with its labels sits in the middle of the safe area.
+    const blockTop = g.cy - g.ry - g.disc / 2, blockBottom = g.cy + g.ry + g.disc / 2 + 4 + g.labelH;
+    const middle = (top + (h - bottom - 16)) / 2;
+    assert.ok(Math.abs((blockTop + blockBottom) / 2 - middle) <= 1 || blockTop - top <= WHEEL_GUTTER + 0.5, `centred: block ${blockTop.toFixed(0)}..${blockBottom.toFixed(0)}, middle ${middle.toFixed(0)}`);
     // The close button in the middle stays clear of every item.
     const hub = { left: g.cx - 26, right: g.cx + 26, top: g.cy - 26, bottom: g.cy + 26 };
     for (const it of items) assert.ok(!overlaps(it.disc, hub) && !overlaps(it.label, hub), "centre button clear");

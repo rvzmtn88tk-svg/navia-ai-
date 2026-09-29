@@ -116,6 +116,8 @@ const ADVICE = new RegExp([
   "(чи|або) можна", "можно ли", "(що|шо|что) (таке|такое|означає|значит)", "(чим|чем) (відрізняється|отличается)", "навіщо|зачем|нащо",
   "порадь|посоветуй|підкажи як|подскажи как|розкажи|расскажи|напиши|поясни|объясни|переклади|переведи",
   "анекдот|жарт|шутк|вірш|стих|пісн|песн|музик|рецепт",
+  // The car itself: warning lights, engine, battery, tyres — general knowledge, not the trip.
+  "check engine|чек енджин|лампочк|перегрі|перегре|двигун|мотор|акумулятор|аккумулятор|колес|шин[аиуо]|пробив|масл[оа]|антифриз|тосол|гальм|тормоз|стартер|генератор",
   "(що|шо|что) (має|повинно|должно) бути|(що|что) (взяти|брать|взять)",
   "\\bhow (do|to|can|should)\\b|\\bwhat (is|should i do if)\\b|\\btell me\\b|\\bwrite\\b|\\bexplain\\b",
 ].join("|"), "i");
@@ -143,9 +145,12 @@ export async function askSmart(nav: Navigator, question: string, snapshot: Snaps
   const remote = await understandRemote(question, snapshot, nav.previousAnswer());
   if (!remote || remote.intent === "unknown") return { ...nav.ask(question, snapshot), engine: "rules" };
   const reply = nav.ask(question, snapshot, remote.intent);
-  if (GENERIC.has(remote.intent) && remote.answer) {
+  // Fear, loneliness, tiredness outside an alert: the model's own words (a
+  // real conversation); during an alert the handler's shelter answer stays.
+  const ownWords = GENERIC.has(remote.intent) || (remote.intent === "emotion" && snapshot.alert?.active !== true);
+  if (ownWords && remote.answer) {
     const { checkGrounded } = require("./grounding") as typeof import("./grounding");
-    if (checkGrounded(remote.answer, snapshot).ok) {
+    if (checkGrounded(remote.answer, snapshot, { general: remote.intent !== "noData" }).ok) {
       const { text, speech } = generate({ lines: [remote.answer], actions: [], tone: reply.tone, used: [] });
       return { ...reply, text, speech, engine: "llm" };
     }

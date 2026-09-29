@@ -1,7 +1,7 @@
 // Map-first home: full-screen map with the NAVIA position puck, search on
 // top, category chips, floating map controls and a draggable bottom sheet with
 // GPS health, the local air-alert status, the co-pilot and saved places.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Animated, Linking, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -14,6 +14,7 @@ import { usePlacesStore, placeId, type PlaceRef } from "../store/placesStore";
 import { CATEGORY_META, CHIP_CATEGORIES, placesFor, type ChipCategory } from "../places/categories";
 import { CategoryWheelButton, CategoryWheelOverlay } from "../components/CategoryWheel";
 import { benchHooks, benchMode, runBench } from "../perf/bench";
+import { recordRender } from "../perf/perf";
 import type { NearbyPlace, NearbyPlaceCategory } from "../providers/NearbyPlacesProvider";
 import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
 import type { GeolocatedAirAlert } from "../providers/GeolocatedAirAlertProvider";
@@ -41,6 +42,23 @@ import { elevation, iconSize, radius, space, type ThemeColors } from "../theme/t
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 
+// The home screen re-renders on every GPS fix: these parts re-render only
+// when their own data changes (measured on the phone: 31–42 ms per render
+// with everything re-rendering).
+const MemoAlertStatus = React.memo(AlertStatus);
+const MemoSafetyPanel = React.memo(SafetyPanel);
+const MemoStatusBeacons = React.memo(StatusBeacons);
+const MemoWheelButton = React.memo(CategoryWheelButton);
+const MemoWheelOverlay = React.memo(CategoryWheelOverlay);
+const MemoTargetsOverlay = React.memo(TargetsOverlay);
+
+/** A callback that never changes identity but always calls the latest code. */
+function useEvent<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
+
 type SelectedPlace = PlaceRef & { category?: NearbyPlaceCategory; hours?: string; source?: string; distanceM?: number; kindLabel?: string };
 
 const SEARCH_H = 52;
@@ -53,6 +71,9 @@ const UKRAINE_LON_SPAN = 18.1;
 const TARGETS_OVERLAY_H = 300;
 
 export function HomeScreen({ navigation, route }: Props): JSX.Element {
+  // Render time of the whole screen (the benchmark reads it; React's Profiler is off in release builds).
+  const renderStart = (globalThis as { performance?: { now(): number } }).performance?.now() ?? Date.now();
+  useLayoutEffect(() => { recordRender("home", "commit", ((globalThis as { performance?: { now(): number } }).performance?.now() ?? Date.now()) - renderStart); });
   const c = useColors();
   const { t, lang } = useT();
   const insets = useSafeAreaInsets();
@@ -82,7 +103,6 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   const targetsError = useAirTargetsStore((s) => s.error);
   useAirTargetsPolling(true, targetsOpen ? MAP_POLL_MS : ROW_POLL_MS);
   const targetsView = useMemo<TargetsView>(() => ({ status: targetsStatus, targets: targetsSnapshot?.targets ?? [], serverTime: targetsSnapshot?.serverTime ?? null, error: targetsError }), [targetsStatus, targetsSnapshot, targetsError]);
-  const [question, setQuestion] = useState("");
   const [styleRetry, setStyleRetry] = useState(0);
   const sheetVisible = useRef(new Animated.Value(PEEK_H + insets.bottom)).current;
   const style = useMapStyle(mapLayer, isDark, styleRetry);
@@ -96,6 +116,8 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     benchHooks.setLayer = setMapLayer;
     benchHooks.restyle = () => setStyleRetry((n) => n + 1);
     benchHooks.orbit = (ms, pitch, z) => { setCameraMode("free"); map.current?.orbit(ms, pitch, z); };
+    benchHooks.openTargets = () => openTargetsRef.current?.(true);
+    benchHooks.closeTargets = () => openTargetsRef.current?.(false);
     const id = setTimeout(() => void runBench(mapLayer), 9000);
     return () => clearTimeout(id);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -222,9 +244,11 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     }
   }
 
+  const openTargetsRef = useRef<((next: boolean) => void) | null>(null);
+  openTargetsRef.current = openTargets;
+
   function askCopilot(text?: string, voice?: boolean) {
-    const initialQuestion = (text ?? question).trim();
-    setQuestion("");
+    const initialQuestion = (text ?? "").trim();
     navigation.navigate("Assistant", { initialQuestion: initialQuestion || undefined, voice });
   }
 
@@ -233,6 +257,20 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
     setCategory(null);
     setSnap("peek");
   }
+
+  const onSelectCategory = useEvent(selectCategory);
+  const onOpenSafety = useEvent(openSafety);
+  const onCloseTargets = useEvent(() => openTargets(false));
+  const onUserGesture = useCallback(() => setCameraMode("free"), []);
+  const onMapError = useCallback(() => setStyleRetry((n) => n + 1), []);
+  const onPressBeacon = useCallback(() => setSnap("half"), []);
+  const onSafetyRoute = useEvent((p: NearbyPlace) => { setSafetyOpen(false); startRoute({ id: p.id, label: p.name, lat: p.location.lat, lon: p.location.lon }, "walk"); });
+  const onAsk = useEvent((text: string, voice?: boolean) => askCopilot(text, voice));
+  const onAllowGps = useEvent(() => void live.requestPermission());
+  const onRefreshLive = useEvent(() => void live.refresh());
+  const onCloseLayers = useCallback(() => setLayersOpen(false), []);
+  const onPickLayer = useEvent((layer: MapLayer) => { setMapLayer(layer); setLayersOpen(false); });
+  const searchCircle = useMemo(() => (categoryEntry?.radiusM != null && here ? { center: here, radiusM: categoryEntry.radiusM } : null), [categoryEntry?.radiusM, here]);
 
   const fullTop = insets.top + space.xs + SEARCH_H + space.xs;
   const controlsBottom = Animated.add(sheetVisible, space.md);
@@ -249,21 +287,21 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           user={user}
           quality={live.health === "stable" ? "good" : live.health === "unstable" ? "degraded" : "lost"}
           cameraMode={cameraMode}
-          onUserGesture={() => setCameraMode("free")}
+          onUserGesture={onUserGesture}
           onBearingChange={setBearing}
           places={targetsOpen ? NO_PLACES : categoryPlaces}
           targets={targetsOpen ? targetsView.targets : undefined}
           targetTracks={targetTracks}
           selectedTargetId={target?.id ?? null}
           onTargetPress={setTarget}
-          searchCircle={categoryEntry?.radiusM != null && fix ? { center: { lat: fix.lat, lon: fix.lon }, radiusM: categoryEntry.radiusM } : null}
+          searchCircle={searchCircle}
           speedMps={fix?.speedMps ?? null}
           selectedPlaceId={selected?.id}
           onPlacePress={openPlace}
           onBasemapPoiPress={openPlace}
           destination={selected && !selected.category ? selected : null}
           padding={cameraPadding}
-          onMapError={() => setStyleRetry((n) => n + 1)}
+          onMapError={onMapError}
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.mapState, { backgroundColor: c.surfaceMuted }]}>
@@ -282,9 +320,9 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           </Touchable>
           <IconButton icon="user" label={t("home.openSettings")} onPress={() => navigation.navigate("Settings")} size={SEARCH_H} />
         </View>
-        <CategoryWheelButton categories={CHIP_CATEGORIES} selected={category} onSelect={selectCategory} />
-        <StatusBeacons gpsStatus={live.gpsStatus} health={live.health} alert={alert} style={styles.beacons}
-          onPressGps={() => setSnap("half")} onPressAlert={() => setSnap("half")} />
+        <MemoWheelButton categories={CHIP_CATEGORIES} selected={category} onSelect={onSelectCategory} />
+        <MemoStatusBeacons gpsStatus={live.gpsStatus} health={live.health} alert={alert} style={styles.beacons}
+          onPressGps={onPressBeacon} onPressAlert={onPressBeacon} />
         {Math.abs(bearing) > 1 && (
           <View style={styles.compassRow} pointerEvents="box-none">
             <Touchable accessibilityRole="button" accessibilityLabel="N" onPress={() => map.current?.resetNorth()}
@@ -339,10 +377,10 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           ) : (
             <>
               <GpsCard gpsStatus={live.gpsStatus} health={live.health} accuracyM={fix?.accuracyM ?? null} fixAt={fix?.timestamp ?? null} t={t} lang={lang}
-                onAllow={() => void live.requestPermission()} onRefresh={() => void live.refresh()} />
-              <AlertStatus alert={alert} threat={threat} loading={live.alertState === "loading"} />
+                onAllow={onAllowGps} onRefresh={onRefreshLive} />
+              <MemoAlertStatus alert={alert} threat={threat} loading={live.alertState === "loading"} />
               <ListRow icon="alert" iconTint={c.critical} title={t("targets.row")} subtitle={targetsLine(targetsView, t, lang).text} onPress={() => openTargets(true)} />
-              <CopilotCard question={question} onChange={setQuestion} onSend={() => askCopilot()} onVoice={() => askCopilot("", true)} onPrompt={(q) => askCopilot(q)} t={t} />
+              <CopilotCard onAsk={onAsk} t={t} />
               {custom.slice(0, 5).map((p) => <ListRow key={p.id} icon="star" title={p.label} subtitle={p.subtitle} onPress={() => { setSelected(p); setSnap("half"); focusOn(p, 16); }} />)}
               {recents.length > 0 && <SectionLabel style={styles.sectionGap}>{t("recent.title")}</SectionLabel>}
               {recents.slice(0, 5).map((p, i) => <View key={p.id}>
@@ -362,14 +400,14 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
         </ScrollView>
       </BottomSheet>
 
-      <SafetyPanel open={safetyOpen} onOpenChange={openSafety} alert={alert} threat={threat} alertLoading={live.alertState === "loading"}
+      <MemoSafetyPanel open={safetyOpen} onOpenChange={onOpenSafety} alert={alert} threat={threat} alertLoading={live.alertState === "loading"}
         shelters={shelters} resilience={resilience}
         sheltersLoading={live.byCategory.shelter?.state !== "ready" && live.byCategory.shelter?.state !== "error"}
-        position={fix ? { lat: fix.lat, lon: fix.lon } : null}
-        onRoute={(p) => { setSafetyOpen(false); startRoute({ id: p.id, label: p.name, lat: p.location.lat, lon: p.location.lon }, "walk"); }} />
-      <CategoryWheelOverlay categories={CHIP_CATEGORIES} selected={category} onSelect={selectCategory} />
-      <TargetsOverlay open={targetsOpen} view={targetsView} selected={target} onSelect={setTarget} onClose={() => openTargets(false)} />
-      <LayersModal open={layersOpen} value={mapLayer} onClose={() => setLayersOpen(false)} onPick={(layer) => { setMapLayer(layer); setLayersOpen(false); }} t={t} c={c} />
+        position={here}
+        onRoute={onSafetyRoute} />
+      <MemoWheelOverlay categories={CHIP_CATEGORIES} selected={category} onSelect={onSelectCategory} />
+      <MemoTargetsOverlay open={targetsOpen} view={targetsView} selected={target} onSelect={setTarget} onClose={onCloseTargets} position={here} />
+      <LayersModal open={layersOpen} value={mapLayer} onClose={onCloseLayers} onPick={onPickLayer} t={t} c={c} />
     </View>
   );
 }
@@ -471,7 +509,7 @@ function placeSourceLabel(p: NearbyPlace, t: Translate): string {
   return `${who} · ${t(`place.origin.${p.origin}` as Parameters<Translate>[0])}`;
 }
 
-function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefresh }: {
+const GpsCard = React.memo(function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefresh }: {
   gpsStatus: GpsStatus; health: GnssHealth; accuracyM: number | null; fixAt: number | null; t: Translate; lang: "uk" | "en"; onAllow: () => void; onRefresh: () => void;
 }): JSX.Element {
   const c = useColors();
@@ -496,12 +534,18 @@ function GpsCard({ gpsStatus, health, accuracyM, fixAt, t, lang, onAllow, onRefr
       {gpsStatus === "permission" && <Text variant="bodyStrong" color="accent" onPress={() => void Linking.openSettings()}>{t("gps.openSettings")}</Text>}
     </Card>
   );
-}
+});
 
 // The co-pilot speaks first: the most important thing right now (alert with
 // the nearest shelter, GPS trouble, or "all calm") with action buttons, then
 // a field to ask anything.
-function CopilotCard({ question, onChange, onSend, onVoice, onPrompt, t }: { question: string; onChange: (v: string) => void; onSend: () => void; onVoice: () => void; onPrompt: (q: string) => void; t: Translate }): JSX.Element {
+/** Keeps its own text: typing does not re-render the home screen. */
+const CopilotCard = React.memo(function CopilotCard({ onAsk, t }: { onAsk: (text: string, voice?: boolean) => void; t: Translate }): JSX.Element {
+  const [question, setQuestion] = useState("");
+  const onChange = setQuestion;
+  const onSend = () => { const q = question; setQuestion(""); onAsk(q); };
+  const onVoice = () => onAsk("", true);
+  const onPrompt = (q: string) => onAsk(q);
   const c = useColors();
   const world = useCopilotWorld();
   const run = useCopilotActions(onPrompt);
@@ -535,7 +579,7 @@ function CopilotCard({ question, onChange, onSend, onVoice, onPrompt, t }: { que
       </ScrollView>
     </Card>
   );
-}
+});
 
 function SavedTile({ icon, label, place, onPress }: { icon: IconName; label: string; place: PlaceRef | null; onPress: () => void }): JSX.Element {
   const c = useColors();
@@ -550,7 +594,7 @@ function SavedTile({ icon, label, place, onPress }: { icon: IconName; label: str
   );
 }
 
-function LayersModal({ open, value, onClose, onPick, t, c }: { open: boolean; value: MapLayer; onClose: () => void; onPick: (l: MapLayer) => void; t: Translate; c: ThemeColors }): JSX.Element {
+const LayersModal = React.memo(function LayersModal({ open, value, onClose, onPick, t, c }: { open: boolean; value: MapLayer; onClose: () => void; onPick: (l: MapLayer) => void; t: Translate; c: ThemeColors }): JSX.Element {
   const options: { layer: MapLayer; icon: IconName; label: Parameters<Translate>[0] }[] = [
     { layer: "standard", icon: "layers", label: "layers.standard" },
     { layer: "satellite", icon: "globe", label: "layers.satellite" },
@@ -582,7 +626,7 @@ function LayersModal({ open, value, onClose, onPick, t, c }: { open: boolean; va
       </Pressable>
     </Modal>
   );
-}
+});
 
 function toneColor(c: ThemeColors, tone: "success" | "warning" | "critical" | "neutral"): string {
   return tone === "success" ? c.success : tone === "warning" ? c.warning : tone === "critical" ? c.critical : c.textSecondary;

@@ -27,7 +27,15 @@ const NUM = /±?\d+(?:,\d+)?\s(?:км|м|с|хв|год|%)(?![а-яіїє])/g;
 /** Unicode-aware (JS \b does not work with Cyrillic). */
 export const GENDERED = /(?<![\p{L}])(я|NAVIA)\s+(\S+\s)?(\p{L}*(ла|лася|лась|ів|ив|ав|ув|ів|ився|ався|увся)|готова|впевнена|рада|готовий|впевнений|радий)(?![\p{L}])/iu;
 
-export function checkGrounded(text: string, s: Snapshot): { ok: boolean; reason: string } {
+/** A sentence about the person's own situation (where numbers must come from the snapshot). */
+const ABOUT_YOU = /((^|[^\p{L}])(вас|вам|ваш\p{L}*|ви|тобі|твій|твоя|you|your)([^\p{L}]|$)|лишил|залишил|найближч)/iu;
+
+/**
+ * `general`: an everyday answer from general knowledge ("на тросі — не
+ * швидше 50 км/год"). Its numbers are general, not facts about the trip;
+ * only numbers in sentences about the person's situation are checked.
+ */
+export function checkGrounded(text: string, s: Snapshot, opts: { general?: boolean } = {}): { ok: boolean; reason: string } {
   if (!text.trim()) return { ok: false, reason: "порожня відповідь" };
   if (s.gnss.mode === "navigator" && /gps у нормі|позиція достовірна/i.test(text)) return { ok: false, reason: "каже «GPS у нормі», а сигнал втрачено" };
   if (s.gnss.mode === "normal" && /сигнал gps втрачено|gps немає/i.test(text)) return { ok: false, reason: "каже «GPS втрачено», а він у нормі" };
@@ -36,7 +44,8 @@ export function checkGrounded(text: string, s: Snapshot): { ok: boolean; reason:
   if (s.online && /інтернету немає/i.test(text)) return { ok: false, reason: "каже «інтернету немає», а він є" };
   if (GENDERED.test(text) && !/була тривога/.test(text)) return { ok: false, reason: "NAVIA про себе в жіночому/чоловічому роді" };
   const ok = allowedFacts(s);
-  for (const m of text.matchAll(NUM)) {
+  const checked = opts.general ? text.split(/(?<=[.!?])\s+/).filter((sentence) => ABOUT_YOU.test(sentence)).join(" ") : text;
+  for (const m of checked.matchAll(NUM)) {
     const token = m[0].replace(/\s/g, " ");
     if (!ok.has(token) && !ok.has(token.replace(/^±/, ""))) return { ok: false, reason: `число «${token}» не з даних` };
   }

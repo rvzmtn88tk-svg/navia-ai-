@@ -17,12 +17,23 @@ interface Env {
   LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
 }
 
+/** The key itself, even when a whole pasted `curl … x-api-key: sk-ant-…` line was stored as the secret. */
+function apiKey(raw: string | undefined): string {
+  const v = (raw ?? "").trim();
+  return v.match(/sk-ant-[A-Za-z0-9_-]+/)?.[0] ?? v;
+}
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!env.ANTHROPIC_API_KEY });
+    if (request.method === "GET" && url.pathname === "/health") {
+      // The key's shape only (never its value): tells a bad paste from a revoked key.
+      const k = apiKey(env.ANTHROPIC_API_KEY);
+      const keyShape = k ? { startsLikeKey: k.startsWith("sk-ant-"), length: k.length, hasSpaceOrQuote: /[\s"']/.test(k) } : null;
+      return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!k, keyShape });
+    }
     if (request.method !== "POST" || url.pathname !== "/v1/understand") return json({ error: "not found" }, 404);
     if (!env.APP_TOKEN || request.headers.get("x-navia-app") !== env.APP_TOKEN) return json({ error: "forbidden" }, 403);
     const device = (request.headers.get("x-navia-device") ?? "").slice(0, 64) || request.headers.get("cf-connecting-ip") || "anon";
@@ -33,7 +44,7 @@ export default {
     if (!question) return json({ error: "question is required" }, 400);
     const t0 = Date.now();
     try {
-      const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+      const client = new Anthropic({ apiKey: apiKey(env.ANTHROPIC_API_KEY) });
       const r = await understand(client, question, body.facts, env.NAVIA_UNDERSTAND_MODEL);
       return json({ ...r, model: env.NAVIA_UNDERSTAND_MODEL, latencyMs: Date.now() - t0 });
     } catch (err) {

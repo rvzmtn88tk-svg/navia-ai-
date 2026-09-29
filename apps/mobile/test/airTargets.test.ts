@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mergeTracks, parseTargets, targetsLine, type TargetsView } from "../src/providers/AirTargetsProvider";
+import { distanceToTarget, mergeTracks, parseTargets, targetsLine, type TargetsView } from "../src/providers/AirTargetsProvider";
 import { uk, type StringKey } from "../src/i18n/strings";
 
 const raw = JSON.parse(readFileSync(join(__dirname, "fixtures", "neptun-threats-2026-09-29.json"), "utf8")) as { serverTime: string; threats: Record<string, unknown>[] };
@@ -69,4 +69,14 @@ test("the path is only what the source reported: a point per real move", () => {
   tracks = mergeTracks(tracks, [{ ...a, lat: a.lat - 0.05, lon: a.lon - 0.06, updatedAt: a.updatedAt + 90_000 }]);
   assert.equal(tracks[a.id]!.length, 2);
   assert.deepEqual(Object.keys(mergeTracks(tracks, [])), [], "a track the source dropped is dropped");
+});
+
+test("distance from me to a tapped target: rounded like the source's own accuracy, with the side", () => {
+  const kyiv = { lat: 50.4501, lon: 30.5234 };
+  const kotelva = { lat: 50.266507099690905, lon: 35.140450314231174 }; // trk_00226917 from the real snapshot
+  const d = distanceToTarget(kyiv, kotelva);
+  assert.equal(d.km, 330, "≈ 329 km, rounded to 5 km past 50 km");
+  assert.ok(d.bearingDeg > 90 && d.bearingDeg < 100, `east of Kyiv, got ${d.bearingDeg}`);
+  assert.equal(distanceToTarget(kyiv, { lat: 50.52, lon: 30.52 }).km, 8);
+  assert.equal(distanceToTarget(kyiv, kyiv).km, 1, "never 0 — the target's position is not that exact");
 });
