@@ -1,6 +1,6 @@
 # Hold-out phrasings
 
-Recognised: 38 of 52 (73.1 %)
+Recognised: 39 of 52 (75.0 %)
 
 | Question | Expected | Got | OK |
 |---|---|---|---|
@@ -30,7 +30,7 @@ Recognised: 38 of 52 (73.1 %)
 | що буде якщо я пропущу з'їзд | reroute | reroute | ✓ |
 | підкажи адресу, де я зараз стою | whereAmI | whereAmI | ✓ |
 | я вообще где нахожусь | whereAmI | whereAmI | ✓ |
-| який це район? | whereAmI | clarify | ✗ |
+| який це район? | whereAmI | whereAmI | ✓ |
 | де тут можна перечекати обстріл | shelter | alert | ✗ |
 | найближче бомбосховище пішки | shelter | shelter | ✓ |
 | куди бігти якщо зараз прилетить | shelter | shelter | ✓ |

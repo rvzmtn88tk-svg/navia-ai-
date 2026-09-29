@@ -13,6 +13,7 @@ export const UNDERSTAND_MODEL = (typeof process !== "undefined" && process.env?.
 export const UNDERSTAND_INTENTS = [
   "repeat", "explain", "emergency", "signalLost", "gpsStatus", "confidence", "onRoute", "reroute", "routeNext", "eta", "routeWhy",
   "whereAmI", "shelter", "shelterWhy", "alert", "status", "place", "offline", "emotion", "noData", "smalltalk", "general", "unknown",
+  "speed", "dataSource", "frustration",
 ] as const;
 export type UnderstandIntent = (typeof UNDERSTAND_INTENTS)[number];
 
@@ -30,7 +31,8 @@ onRoute — чи правильно їду; reroute — звернув не ту
 eta — скільки лишилось, коли приїдемо; routeWhy — чому саме цей маршрут, чи найкоротший;
 whereAmI — де я, яка вулиця; shelter — укриття, куди ховатися; shelterWhy — чи це справді найближче укриття;
 alert — повітряна тривога, обстріл; status — загальна обстановка; place — АЗС, аптека, банкомат, магазин, їжа, вода, лікарня, зарядка, пункт незламності;
-offline — немає інтернету, що працює без мережі; emotion — страх, паніка, людині погано від нервів;
+offline — немає інтернету, що працює без мережі; emotion — страх, паніка, розгубленість, «допоможи», людині погано від нервів;
+speed — з якою швидкістю їду, чи перевищую; dataSource — реальні дані чи демо, чи дані актуальні; frustration — роздратування на NAVIA («тупий», «навіщо ти потрібен»);
 noData — пробки, погода, камери, поліція, ціни, новини в реальному часі (таких даних у NAVIA немає); smalltalk — привітання, подяка, «хто ти»;
 general — будь-яке інше питання чи прохання, на яке можна корисно відповісти загальними знаннями чи порадою (що робити, якщо закінчується пальне; як заспокоїти дитину в укритті; що взяти в тривожну валізку; як доїхати до іншого міста в загальних рисах; жарт, вірш, розмова); unknown — лише коли питання незрозуміле зовсім.
 

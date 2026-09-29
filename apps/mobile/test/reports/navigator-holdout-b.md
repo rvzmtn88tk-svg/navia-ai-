@@ -29,7 +29,7 @@ Recognised: 26 of 41 (63.4 %)
 | куди йти під час сирени | shelter/alert | alert | ✓ |
 | зараз повітряна небезпека? | alert | alert | ✓ |
 | загроза балістики є? | alert | alert | ✓ |
-| поясни коротко як у нас все | status | unknown | ✗ |
+| поясни коротко як у нас все | status | routeWhy | ✗ |
 | що важливого зараз | status | unknown | ✗ |
 | давай ще раз те саме | repeat | repeat | ✓ |
 | не почув що ти сказав | repeat | repeat | ✓ |

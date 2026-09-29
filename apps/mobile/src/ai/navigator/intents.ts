@@ -35,6 +35,9 @@ export type NavigatorIntent =
   | "place"           // other place categories (fuel, pharmacy, resilience point…)
   | "noData"          // traffic, weather, cameras… — data NAVIA does not have
   | "smalltalk"       // "як справи", "дякую", "ок"
+  | "speed"           // how fast am I going / am I speeding
+  | "dataSource"      // real data or demo, is it up to date
+  | "frustration"     // "ти тупий", "навіщо ти потрібен" — short, to the point
   | "classic"         // describe / navigate to / landmarks / help — the classic co-pilot
   | "unknown";
 
@@ -51,35 +54,38 @@ const CUES: Partial<Record<NavigatorIntent, Cue[]>> = {
   ],
   routeWhy: [
     ...cue(8, "чому ця дорог", "почему эта дорог", "чому цією дорог", "почему этой дорог", "почему по этой", "чому по цій", "чого ти мене повів", "почему ты меня ведешь", "почему ты меня повел", "чому ти мене ведеш", "навіщо ця дорог", "зачем эта дорог", "why this route", "why this way", "why this road", "чому маршрут", "почему маршрут", "чому туди ведеш", "почему туда ведешь", "чому через", "почему через"),
-    ...cue(6, "найкоротш", "кратчайш", "найшвидш", "быстрейш", "самый быстрый", "самый короткий", "shortest", "fastest", "інший маршрут", "другой маршрут", "альтернатив", "объезд", "об'їзд", "обїзд"),
+    ...cue(6, "найкоротш", "кратчайш", "найшвидш", "быстрейш", "самый быстрый", "самый короткий", "shortest", "fastest", "інший маршрут", "другой маршрут", "альтернатив", "объезд", "об'їзд", "обїзд", "об'їзн", "обїзн", "объездн"),
+    ...cue(8, "коротш", "коротк шлях", "короткий путь", "платн", "найкращ", "лучший маршрут", "кращий маршрут", "маршрут найкращ", "маршрут лучш", "швидше через", "быстрее через", "via the bypass", "toll", "better route", "shorter"),
   ],
   shelterWhy: cue(9, "точно найближч", "точно ближайш", "точно самое близк", "ближчого нема", "ближчого немає", "ближче нема", "ближе нет", "ближе нету", "а ближче", "а ближе", "is it the nearest", "closer shelter", "nearer shelter", "інші укриття", "другие укрытия", "ще укриття", "еще укрытия"),
   emotion: [
-    ...cue(9, "страшно", "мені страшно", "мне страшно", "боюсь", "боюся", "я боюс", "панік", "паник", "паніку", "нервую", "нервничаю", "трусять", "трясутся", "трусит", "трясет", "плачу", "не можу заспокоїт", "не могу успокоит", "scared", "afraid", "panic", "terrified", "жах який", "ужас какой", "все погано", "все плохо", "мені погано від страху"),
+    ...cue(9, "страшно", "мені страшно", "мне страшно", "боюсь", "боюся", "я боюс", "панік", "паник", "паніку", "нервую", "нервничаю", "трусять", "трясутся", "трусит", "трясет", "плачу", "не можу заспокоїт", "не могу успокоит", "scared", "afraid", "panic", "terrified", "жах який", "ужас какой", "все погано", "все плохо", "мені погано від страху", "розгубив", "розгубил", "растерял", "не знаю що робити", "не знаю шо робити", "не знаю что делать", "заспокой", "успокой", "calm me", "i don't know what to do", "i dont know what to do"),
     ...cue(4, "тривожно", "тревожно", "моторошно", "жутко", "лячно", "стрьомно", "стремно"),
   ],
   offline: [
-    ...cue(8, "без інтернет", "без интернет", "нема інтернет", "немає інтернет", "нет интернет", "інтернет зник", "интернет пропал", "інтернету нема", "интернета нет", "інтернет пропав", "интернет исчез", "без мережі", "без сети", "мережі нема", "сети нет", "немає мережі", "нет связи", "нема зв'язку", "немає зв'язку", "зв'язку нема", "связи нет", "no internet", "offline", "офлайн", "оффлайн", "без мобільн", "без мобильн", "мобільний інтернет", "мобильный интернет", "wi fi пропа", "wifi пропа", "вайфай пропа", "wi fi зник", "wifi зник"),
+    ...cue(8, "без інтернет", "без интернет", "нема інтернет", "немає інтернет", "нет интернет", "інтернет зник", "интернет пропал", "інтернету нема", "интернета нет", "інтернет пропав", "интернет исчез", "без мережі", "без сети", "мережі нема", "сети нет", "немає мережі", "нет связи", "нема зв'язку", "немає зв'язку", "зв'язку нема", "связи нет", "no internet", "offline", "офлайн", "оффлайн", "без мобільн", "без мобильн", "мобільний інтернет", "мобильный интернет", "wi fi пропа", "wifi пропа", "вайфай пропа", "wi fi зник", "wifi зник", "без зв'язку", "без звязку", "без связи", "інтернет є", "интернет есть", "є інтернет", "есть интернет", "ти онлайн", "ты онлайн", "ти зараз онлайн", "ты сейчас онлайн", "онлайн", "online"),
     ...cue(3, "інтернет", "интернет", "internet", "мережа", "мережі", "зв'язок", "связь", "wifi", "wi fi", "вайфай"),
   ],
   repeat: [...exact(7, "повтори", "повтор", "ще раз", "еще раз", "не розчув", "не расслишал", "не почув", "не услишал", "say again", "repeat")],
-  explain: cue(6, "чому ти", "почему ты", "чого ти", "чего ты", "why did you", "why do you", "звідки ти знаєш", "откуда ты знаешь", "звідки знаєш", "откуда знаешь", "how do you know", "на основі чого", "на основе чего", "звідки дані", "откуда данные", "чому так", "почему так", "поясни відповід", "объясни ответ", "поясни чому", "объясни почему", "звідки інформац", "откуда информац", "з чого ти взяв", "с чего ты взял"),
+  explain: cue(6, "чому ти", "почему ты", "чого ти", "чего ты", "why did you", "why do you", "звідки ти знаєш", "откуда ты знаешь", "звідки знаєш", "откуда знаешь", "how do you know", "на основі чого", "на основе чего", "звідки дані", "откуда данные", "чому так", "почему так", "поясни відповід", "объясни ответ", "поясни чому", "объясни почему", "звідки інформац", "откуда информац", "з чого ти взяв", "с чего ты взял", "можеш помил", "можешь ошиб", "ти помиляєш", "ты ошибаешь", "розумієш що я", "понимаешь что я", "розумієш мене", "понимаешь меня", "що це значить", "що це означає", "что это значит", "что это означает", "поясни детальн", "поясни докладн", "объясни подробн", "детальніше", "подробнее", "what does that mean", "explain more"),
   signalLost: cue(6, "без gps", "без сигнал", "без джипиес", "без жпс", "без спутник", "без супутник", "реб", "рэб", "глуш", "заглуш", "jamming", "jammed", "no gps", "no signal", "lost signal", "signal lost", "gps lost", "спуф", "spoof", "підмін", "подмен", "не ловит", "не ловить"),
   gpsStatus: [
-    ...cue(8, "статус gps", "стан gps", "статус gnss", "стан сигналу", "состояние gps", "gps ok", "is gps ok", "gps нормальн", "gps працює", "gps работает"),
+    ...cue(8, "який сигнал", "какой сигнал", "який зараз сигнал", "какой сейчас сигнал", "що з сигналом", "шо з сигналом", "что с сигналом", "там з сигнал", "там с сигнал", "з точністю", "с точностью", "сигнал поган", "сигнал плох", "поганий сигнал", "плохой сигнал", "сигнал слаб", "слабкий сигнал", "слабый сигнал", "статус gps", "стан gps", "статус gnss", "стан сигналу", "состояние gps", "gps ok", "is gps ok", "gps нормальн", "gps працює", "gps работает"),
     ...cue(3, "gps", "джипиес", "джіпіес", "жпс", "gnss", "глонас", "точніст", "точност", "accuracy", "геолокац", "геопозиц"),
     ...cue(2, "сигнал", "signal", "спутник", "супутник", "satellit"),
     ...cue(5, "дергает", "дергаєт", "дёргает", "смикаєт", "скаче", "скачет", "прыгает", "стрибає", "jumps", "jumping", "jittery"),
   ],
   routeNext: [
+    ...cue(8, "на яку вулицю", "на какую улицу", "яка наступна вулиц", "какая следующая улиц", "onto which street"),
     ...cue(6, "to the turn", "до повороту", "до поворота", "до наступного повороту", "до следующего поворота"),
-    ...cue(5, "що далі", "шо далі", "что дальше", "шо дальше", "что дальше будет", "куди далі", "куда дальше", "далі куди", "дальше куда", "what next", "whats next", "next turn", "наступний поворот", "следующий поворот", "наступн маневр", "следующ маневр", "де поворот", "где поворот", "коли поворот", "когда поворот", "через скільки поворот", "через сколько поворот", "скільки до повороту", "сколько до поворота", "куди повертат", "куда поворачив", "куди звертат", "куда сворачив", "куди їхати", "куда ехать", "куди йти", "куда идти", "куди зараз", "куда сейчас", "де звертат", "где сворачив", "куди мені", "куда мне"),
+    ...cue(5, "що далі", "шо далі", "что дальше", "шо дальше", "что дальше будет", "куди далі", "куда дальше", "куд далі", "куд дальше", "далі куди", "дальше куда", "what next", "whats next", "next turn", "наступний поворот", "следующий поворот", "наступн маневр", "следующ маневр", "де поворот", "где поворот", "коли поворот", "когда поворот", "через скільки поворот", "через сколько поворот", "скільки до повороту", "сколько до поворота", "куди повертат", "куда поворачив", "куди звертат", "куда сворачив", "куди їхати", "куда ехать", "куди йти", "куда идти", "куди зараз", "куда сейчас", "де звертат", "где сворачив", "куди мені", "куда мне"),
     ...cue(3, "поворот", "повернут", "повертат", "поворачив", "звернут", "свернут", "звертат", "сворачив", "маневр", "развязк", "розвязк", "turn", "exit", "налево", "направо", "ліворуч", "праворуч", "прямо"),
     ...cue(1, "далі", "дальше", "next"),
     ...cue(2, "куди", "куда", "where to"),
   ],
   eta: [
     ...cue(5, "коли приїд", "когда приед", "коли будем", "когда будем", "скільки їхати", "сколько ехать", "скільки йти", "сколько идти", "скільки залиш", "сколько остал", "далеко ще", "далеко еще", "ще далеко", "еще далеко", "how long", "how far", "скоро приїд", "скоро приед", "довго ще", "долго еще", "скільки км", "сколько км", "скільки кілометр", "сколько километр", "скільки часу", "сколько времени", "коли доїд", "когда доед", "о котрій", "во сколько", "скільки лишил", "скоко остал", "скок остал", "скока еще", "скока ещё", "скоко еще", "скільки ще їхати", "сколько еще ехать", "долго ли", "далеко ли", "пилить", "пилити", "тащиться", "тащитися", "чапати", "чапать", "тягнутися", "доберемо", "доберемся"),
+    ...cue(8, "скільки часу в дороз", "сколько времени в пути", "час у дорозі", "время в пути", "якщо їхати так", "если ехать так"),
     ...cue(3, "приїд", "приед", "доїд", "доед", "arrive", "arrival", "eta", "далеко", "залишил", "осталос", "хвилин", "минут", "кілометр", "километр"),
   ],
   onRoute: [
@@ -89,6 +95,7 @@ const CUES: Partial<Record<NavigatorIntent, Cue[]>> = {
   ],
   reroute: cue(6, "пропуст поворот", "пропущ поворот", "пропущу", "пропущ", "звернути не туди", "свернуть не туда", "съеду", "з'їду", "зїду", "не туди", "не туда", "збився", "сбился", "зіб'юсь", "собьюсь", "звернув не", "свернул не", "не там звернув", "не там свернул", "пропустив поворот", "пропустил поворот", "проїхав поворот", "проехал поворот", "перебуд", "перестро", "перерах", "пересчит", "новий маршрут", "новый маршрут", "з'їхав з маршрут", "съехал с маршрут", "зійшов з маршрут", "сошел с маршрут", "off route", "wrong turn", "wrong way", "missed the turn", "miss the turn", "missed my turn", "missed a turn", "проехал поворот", "проїхав поворот", "проскочив поворот", "проскочил поворот", "reroute", "recalculat", "відхилив", "отклонил", "збитися", "сбиться", "злетів з маршрут", "слетел с маршрут"),
   whereAmI: [
+    ...cue(8, "який це район", "какой это район", "що за район", "что за район", "в якому я район", "в каком я район", "який район", "какой район", "від центр", "от центр", "which district", "what district"),
     ...cue(6, "якій я вулиц", "какой я улиц", "на якій я", "на какой я", "що це за місце", "что это за место"),
     ...cue(6, "де я", "где я", "where am i", "де ми", "где мы", "моє місце", "мое место", "моя позиц", "my location", "де знаходж", "где нахож", "на якій вулиці", "на какой улице", "що це за вулиц", "что за улиц", "мої координат", "мои координат", "заблук", "заблуд", "загубив", "потерялся", "i am lost", "im lost", "де зараз", "где сейчас"),
     ...cue(2, "позиц", "координат", "location", "місцезнаход", "местонахож"),
@@ -103,10 +110,21 @@ const CUES: Partial<Record<NavigatorIntent, Cue[]>> = {
     ...cue(3, "ракет", "шахед", "дрон", "бпла", "обстріл", "обстрел", "вибух", "взрыв", "missile", "drone", "баліст", "баллист", "прильот", "прилет", "бомб"),
   ],
   status: [
+    ...cue(8, "справи з поїздк", "дела с поездк", "в цілому справи", "в целом дела", "щось критичн", "что-то критич", "что то критич", "что нибудь критич", "під контролем", "под контролем", "все під контрол", "all under control", "anything critical"),
     ...cue(5, "статус", "обстановк", "ситуац", "що відбуваєт", "что происход", "що коїться", "что творится", "як ми", "как мы", "все гаразд", "все ок", "все нормально", "усе добре", "status", "situation", "whats going on", "what s going on", "how are we", "звіт", "отчет", "доповідь", "доклад", "огляд", "обзор", "що там", "что там", "шо там"),
-    ...cue(3, "взагалі", "вообще", "загалом", "в целом", "происход", "відбуваєт"),
+    ...cue(3, "загалом", "в целом", "происход", "відбуваєт"),
   ],
-  noData: [...exact(6, "корок", "курс", "черг", "дтп", "камер", "news", "rain", "snow", "joke", "music"), ...cue(6, "перекри", "пробк", "затор", "трафік", "трафик", "traffic", "погод", "дощ", "дожд", "сніг", "снег", "ожеледиц", "гололед", "туман", "weather", "rain", "snow", "температур", "радар", "speed camera", "штраф", "ціна бензин", "цена бензин", "ціни на пальне", "цены на топливо", "аварі", "авари", "accident", "ремонт дорог", "roadworks", "перекрит", "перекрыт", "блокпост", "checkpoint", "очеред", "новин", "новост", "news", "футбол", "анекдот", "жарт", "шутк", "joke", "пісн", "песн", "music", "музик", "рецепт", "гороскоп", "виграв", "выиграл")],
+  noData: [...exact(6, "корок", "курс", "черг", "дтп", "камер", "news", "rain", "snow", "joke", "music"), ...cue(6, "перекри", "пробк", "затор", "трафік", "трафик", "traffic", "погод", "дощ", "дожд", "сніг", "снег", "ожеледиц", "гололед", "туман", "weather", "rain", "snow", "температур", "радар", "speed camera", "штраф", "ціна бензин", "цена бензин", "ціни на пальне", "цены на топливо", "аварі", "авари", "accident", "ремонт дорог", "roadworks", "перекрит", "перекрыт", "блокпост", "checkpoint", "очеред", "новин", "новост", "news", "футбол", "анекдот", "жарт", "шутк", "joke", "пісн", "песн", "music", "музик", "рецепт", "гороскоп", "виграв", "выиграл", "видиміст", "видимост", "visibility", "вітер", "ветер", "wind", "комендантськ", "комендантск", "curfew"),
+    ...cue(8, "скільки коштує", "сколько стоит", "ціна на", "цена на", "ціни на", "цены на", "how much is", "price of", "prices")],
+  speed: [
+    ...cue(8, "з якою швидкіст", "с какой скорост", "яка швидкіст", "какая скорост", "яка в мене швидкіст", "какая у меня скорост", "моя швидкіст", "моя скорост", "перевищу", "превыша", "how fast", "my speed", "speed limit", "обмеження швидкост", "ограничение скорост", "швидкість зараз", "скорость сейчас", "скільки км/год", "сколько км/ч", "з якою їду", "с какой еду"),
+    ...cue(4, "швидкіст", "скорост", "speed"),
+  ],
+  dataSource: [
+    ...cue(8, "демо режим", "демо-режим", "демо чи", "демо или", "чи демо", "или демо", "реальні дані", "реальные данные", "справжні дані", "настоящие данные", "дані актуальн", "данные актуальн", "актуальні дані", "актуальные данные", "застарілі", "устаревш", "demo mode", "real data", "is this real", "навчальн режим", "тестов режим", "тестовый режим"),
+    ...cue(4, "демо", "demo", "актуальн"),
+  ],
+  frustration: cue(8, "тупий", "тупой", "тупа", "дурний", "дурной", "нічого не вмієш", "ничего не умеешь", "нічого не можеш", "ничего не можешь", "корисний", "полезный", "навіщо ти", "зачем ты", "нащо ти", "елементарн", "элементарн", "бесполезн", "марний", "никчемн", "нікчемн", "useless", "stupid", "dumb", "бісиш", "бесишь", "дратуєш", "раздражаешь"),
   smalltalk: [...cue(5, "як справи", "как дела", "спасибі", "спасибо", "дякую", "зрозумів", "понял", "привіт", "привет", "здрастуй", "здравству", "добрий день", "добрый день", "thanks", "thank you", "hello"), ...exact(5, "як справи", "как дела", "як ти", "как ты", "how are you", "ти хто", "ты кто", "who are you", "дякую", "спасибі", "спасибо", "thanks", "thank you", "добре", "хорошо", "зрозумів", "понял", "окей", "ok", "ок", "ясно", "мерси", "привіт", "привет", "hello", "hi", "здрастуй", "здравству", "добрий день", "добрый день", "доброго ранку", "доброе утро", "добрий вечір", "добрый вечер"), ...cue(6, "тобі років", "тебе лет", "скільки тобі", "сколько тебе", "how old are you", "як тебе звати", "как тебя зовут", "ти бот", "ты бот", "ти робот", "ты робот", "what is your name", "whats your name")],
 };
 
@@ -171,7 +189,7 @@ const IF = list("якщо", "если", "раптом", "вдруг", "if", "wha
 const LOST_ROUTE = list("маршрут", "дорог", "шлях", "путь", "пути", "route", "way", "заблук", "заблуд", "зіб", "собью", "собьюс", "збиюс");
 
 const KIND_CUES: [kind: PlaceKind, canonical: string, stems: string[]][] = [
-  ["resilience", "пункт незламності", list("незламн", "несокруш", "обігрів", "обогрев", "зарядити телефон", "зарядить телефон", "де світло", "где свет", "resilience", "warming")],
+  ["resilience", "пункт незламності", list("незламн", "несокруш", "обігрів", "обогрев", "зарядити телефон", "зарядить телефон", "зарядка для телефон", "зарядку для телефон", "зарядка телефон", "phone charg", "де світло", "где свет", "resilience", "warming")],
   ["charger", "зарядна станція", list("електрозаряд", "электрозаряд", "зарядна станц", "зарядная станц", "charging", "зарядка для авто", "charge the car", "charge my car", "charge the ev", "зарядити авто", "зарядить машину", "зарядити машину", "зарядить авто")],
   ["fuel", "АЗС", list("заправ", "азс", "пальн", "бензин", "дизел", "fuel", "petrol", "gas station", "топлив")],
   ["pharmacy", "аптека", list("аптек", "ліки", "лекарств", "pharmacy", "drugstore", "chemist")],
@@ -193,8 +211,17 @@ export function placeKindOf(question: string): { kind: PlaceKind; canonical: str
   return best ? { kind: best.kind, canonical: best.canonical } : null;
 }
 
+/** understand() and classifyRaw() score the same question: the last result is reused (a copy — callers may edit it). */
+let lastScores: { q: string; out: Partial<Record<NavigatorIntent, number>> } | null = null;
 /** Scores for every intent (exported for the tests). */
 export function scores(question: string): Partial<Record<NavigatorIntent, number>> {
+  if (lastScores?.q === question) return { ...lastScores.out };
+  const out = computeScores(question);
+  lastScores = { q: question, out: { ...out } };
+  return out;
+}
+
+function computeScores(question: string): Partial<Record<NavigatorIntent, number>> {
   const words = fold(question).split(" ").filter(Boolean);
   const out: Partial<Record<NavigatorIntent, number>> = {};
   for (const [intent, cues] of Object.entries(CUES) as [NavigatorIntent, Cue[]][]) {
@@ -238,6 +265,18 @@ export function scores(question: string): Partial<Record<NavigatorIntent, number
   // "Why" + guiding / route / road = why this route, not "why did you answer so".
   if (hasAny(list("чому", "почему", "чого", "чего", "навіщо", "зачем", "why")) && strictHit(words, list("веде", "ведеш", "повів", "повел", "маршрут", "дорог", "шлях", "route", "road", "way"))) out.routeWhy = (out.routeWhy ?? 0) + 8;
   if ((out.routeWhy ?? 0) >= 8) delete out.explain;
+  // "Чому ти такий тупий" is irritation, not "why did you answer so".
+  if ((out.frustration ?? 0) >= 8) { delete out.explain; delete out.status; }
+  // A bridge ahead ("міст", not "місто"): road events NAVIA has no data on.
+  if (words.some((w) => /^(мист|мосту?|мости|bridge)$/.test(w))) out.noData = (out.noData ?? 0) + 6;
+  // A lone "що взагалі?" is about the overall situation; next to a real question it is a filler.
+  if (!Object.entries(out).some(([k, v]) => k !== "status" && (v ?? 0) >= 2) && hasAny(list("взагалі", "вообще"))) out.status = (out.status ?? 0) + 3;
+  // "Почому / почём" (how much) — whole words only: "почему" is "why".
+  if (words.some((w) => /^(почому|почем|почем)$/.test(w))) out.noData = (out.noData ?? 0) + 8;
+  // "Допоможи мені" with nothing else asked: the calm crisis answer (not with "допоможи знайти аптеку").
+  if (hasAny(list("допоможи мені", "допоможіть мені", "допоможи нам", "помоги мне", "помогите мне", "help me")) && !Object.entries(out).some(([k, v]) => k !== "emotion" && (v ?? 0) >= 3) && !placeKindOf(question)) out.emotion = (out.emotion ?? 0) + 8;
+  // Speed + "is it safe / on time": still about the speed.
+  if ((out.speed ?? 0) >= 8) delete out.status;
   return out;
 }
 
@@ -275,8 +314,16 @@ export function exampleBank(): Bank {
   return bank;
 }
 
+let lastSimilar: { q: string; r: { intent: NavigatorIntent; score: number } | null } | null = null;
 /** Most similar intent by example (0.6 × best + 0.4 × mean of the 3 best per intent). */
 export function similarIntent(question: string): { intent: NavigatorIntent; score: number } | null {
+  if (lastSimilar?.q === question) return lastSimilar.r;
+  const r = computeSimilar(question);
+  lastSimilar = { q: question, r };
+  return r;
+}
+
+function computeSimilar(question: string): { intent: NavigatorIntent; score: number } | null {
   const q = trigrams(question);
   const nq = norm(q);
   if (!nq) return null;
@@ -300,7 +347,7 @@ export function similarIntent(question: string): { intent: NavigatorIntent; scor
 }
 
 // Ties: the more urgent / more specific first.
-const ORDER: NavigatorIntent[] = ["repeat", "explain", "emotion", "shelterWhy", "signalLost", "shelter", "alert", "offline", "routeWhy", "reroute", "onRoute", "confidence", "routeNext", "eta", "whereAmI", "gpsStatus", "noData", "status", "smalltalk"];
+const ORDER: NavigatorIntent[] = ["repeat", "explain", "emotion", "shelterWhy", "signalLost", "shelter", "alert", "offline", "routeWhy", "reroute", "onRoute", "confidence", "routeNext", "eta", "whereAmI", "gpsStatus", "speed", "dataSource", "noData", "status", "frustration", "smalltalk"];
 
 /** Below this confidence the navigator asks back instead of guessing (programme 2.2, step 3). */
 export const CLARIFY_BELOW = 0.55;
@@ -317,7 +364,7 @@ export type Understanding = {
   normalized?: string;
 };
 
-const ASKABLE: NavigatorIntent[] = ["explain", "signalLost", "gpsStatus", "confidence", "routeNext", "eta", "onRoute", "reroute", "routeWhy", "whereAmI", "shelter", "shelterWhy", "alert", "status", "offline", "emotion", "noData", "place"];
+const ASKABLE: NavigatorIntent[] = ["explain", "signalLost", "gpsStatus", "confidence", "routeNext", "eta", "onRoute", "reroute", "routeWhy", "whereAmI", "shelter", "shelterWhy", "alert", "status", "offline", "emotion", "noData", "place", "speed", "dataSource"];
 
 /** Layer 2: normalise → classify → confidence → clarify when unsure. */
 export function understand(original: string): Understanding {
@@ -337,7 +384,7 @@ export function understand(original: string): Understanding {
     const byKind = guess === "place" || guess === "classic" || guess === "smalltalk" ? 0.8 : 0;
     confidence = Math.max(rule, bySim, byKind);
     // Another meaning scores as high: less sure.
-    const rival = Object.entries(sc).filter(([k, x]) => k !== guess && (x ?? 0) >= Math.max(3, v)).length;
+    const rival = Object.entries(sc).filter(([k, x]) => k !== guess && !(guess === "place" && (k === "eta" || k === "routeNext")) && (x ?? 0) >= Math.max(3, v)).length;
     if (rival > 0) confidence *= 0.8;
   }
   // Candidates for asking back: the best rule scores and the most similar example.
@@ -377,6 +424,9 @@ function classifyRaw(question: string): NavigatorIntent {
   // Places other than shelters (fuel, pharmacy, resilience point, …).
   const kind = detectKind(question) ?? placeKindOf(question)?.kind ?? null;
   if (kind && kind !== "shelter" && bestScore < 5) return "place";
+  // "Далеко до АЗС?", "скільки йти до пункту незламності" — the place answer has the distance.
+  if (kind && kind !== "shelter" && (best === "eta" || best === "routeNext") && bestScore < 8) return "place";
+  // A bare call for help ("допоможи мені", "помоги пожалуйста"): the calm crisis answer.
   // Strong rule evidence wins; otherwise the example bank decides when it is
   // clearly similar; weak rule evidence is the last resort.
   const sim = similarIntent(question);

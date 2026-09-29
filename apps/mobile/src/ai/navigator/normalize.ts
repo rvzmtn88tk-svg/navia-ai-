@@ -85,10 +85,26 @@ function closest(w: string): string | null {
 
 export type Normalized = { text: string; fixes: { from: string; to: string; how: "layout" | "typo" }[] };
 
+/** Speech recognition splits a word in two ("укрит тя", "сигна лом"): join when a half is not a word and the whole is. */
+function joinSplit(tokens: string[], fixes: Normalized["fixes"]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const a = tokens[i]!, b = tokens[i + 1];
+    if (b && /^[\p{L}']+$/u.test(a) && /^[\p{L}'?!.,]+$/u.test(b)) {
+      const tail = b.match(/[?!.,]+$/)?.[0] ?? "";
+      const whole = fold(a + b.slice(0, b.length - tail.length));
+      // The cheap test first: the joined word must be a vocabulary word.
+      if (whole.length >= 6 && VOCAB.has(whole) && !(known(fold(a)) && known(fold(b)))) { fixes.push({ from: `${a} ${b}`, to: whole, how: "typo" }); out.push(whole + tail); i++; continue; }
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 export function normalizeQuestion(question: string): Normalized {
   const fixes: Normalized["fixes"] = [];
   // Raw tokens first: a wrong-layout word keeps its , . ; [ ] ' (they are letters there).
-  const tokens = question.toLocaleLowerCase("uk-UA").split(/\s+/).filter(Boolean);
+  const tokens = joinSplit(question.toLocaleLowerCase("uk-UA").split(/\s+/).filter(Boolean), fixes);
   const out: string[] = [];
   for (const raw of tokens) {
     const f = fold(raw);

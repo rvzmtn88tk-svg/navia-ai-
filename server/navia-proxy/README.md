@@ -44,6 +44,8 @@ measured number after the first run.
 
 Cloudflare Workers free plan: 100,000 requests a day.
 
+Deployed: https://navia-proxy.navia-ua.workers.dev (the owner's Cloudflare account, 2026-09-29).
+
 ## Deploy (once, about 10 minutes)
 
 What the owner needs:

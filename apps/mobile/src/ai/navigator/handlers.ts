@@ -337,7 +337,7 @@ const INTENT_WORDS: Record<NavigatorIntent, string> = {
   onRoute: "чи правильно їдете", reroute: "відхилення від маршруту", routeNext: "наступний маневр", eta: "скільки лишилось",
   whereAmI: "де ви", shelter: "укриття", alert: "тривога", status: "загальна обстановка", place: "місця поруч",
   noData: "дані, яких NAVIA не має", smalltalk: "розмова", classic: "загальне питання", unknown: "нерозпізнане питання",
-  general: "загальне питання (мовна модель)", confidence: "точність позиції", routeWhy: "чому цей маршрут", shelterWhy: "чи найближче укриття", emotion: "страх, паніка", offline: "робота без інтернету", clarify: "уточнення",
+  general: "загальне питання (мовна модель)", speed: "швидкість", dataSource: "реальні дані чи демо", frustration: "невдоволення відповіддю", confidence: "точність позиції", routeWhy: "чому цей маршрут", shelterWhy: "чи найближче укриття", emotion: "страх, паніка", offline: "робота без інтернету", clarify: "уточнення",
 };
 
 /** A snapshot field in words, with its value at the time of the answer. */
@@ -399,10 +399,12 @@ registerHandler("explain", (s, ctx) => {
 function noDataTopic(q: string): { uk: string; en: string; why: string } {
   const f = q.toLocaleLowerCase("uk-UA");
   if (/пробк|затор|траф|traffic|корок/.test(f)) return { uk: "пробки", en: "traffic", why: "NAVIA не отримує даних про трафік — навігатор працює без онлайн-сервісів трафіку, щоб не залежати від зв'язку під час тривоги" };
-  if (/погод|дощ|дожд|сніг|снег|ожелед|гололед|туман|weather|rain|snow|температур/.test(f)) return { uk: "погоду", en: "the weather", why: "прогнозу погоди в NAVIA немає" };
+  if (/погод|дощ|дожд|сніг|снег|ожелед|гололед|туман|видим|вітер|ветер|weather|rain|snow|wind|visib|температур/.test(f)) return { uk: "погоду й видимість", en: "the weather and visibility", why: "прогнозу погоди й даних про видимість у NAVIA немає" };
+  if (/комендант|curfew/.test(f)) return { uk: "комендантську годину", en: "the curfew", why: "її час у вашому місті NAVIA не знає — перевірте в оголошеннях місцевої влади" };
+  if (/(^|\s)(міст|мосту?|мості|bridge)(\s|\?|$)/.test(f)) return { uk: "стан мосту", en: "the bridge", why: "даних про перекриття мостів і доріг у реальному часі NAVIA не має" };
   if (/камер|радар|штраф|speed/.test(f)) return { uk: "камери й штрафи", en: "cameras and fines", why: "бази камер і радарів у NAVIA немає" };
   if (/дтп|авар|accident|ремонт|roadwork|перекр|блокпост|checkpoint/.test(f)) return { uk: "ДТП, ремонти й перекриття", en: "accidents, roadworks and closures", why: "даних про події на дорогах у реальному часі NAVIA не має" };
-  if (/бензин|пальн|топлив|курс|цін|цен/.test(f)) return { uk: "ціни й курси", en: "prices and rates", why: "цін і курсів у NAVIA немає" };
+  if (/бензин|пальн|топлив|курс|цін|цен|кошту|стоит|(^|\s)почому(\s|\?|$)|(^|\s)почём?(\s|\?|$)|price/.test(f)) return { uk: "ціни й курси", en: "prices and rates", why: "цін і курсів у NAVIA немає" };
   return { uk: "це", en: "that", why: "NAVIA — навігатор і штурман для дороги; новин, розваг чи довідки на загальні теми в ньому немає" };
 }
 
@@ -520,6 +522,49 @@ registerHandler("emotion", (s) => {
   return { lines, actions, tone: s.alert?.active ? "critical" : "warning", used };
 });
 
+// ——— speed: the real value from the motion data; the limit is not known ———
+
+registerHandler("speed", (s) => {
+  const v = s.motion.speedKmh;
+  if (v == null) return { lines: [L(s, "Швидкість зараз невідома: даних руху немає.", "Your speed is unknown right now: no motion data.")], actions: [], tone: "calm", used: ["motion.speedKmh"], missing: ["motion.speedKmh"], honest: true };
+  const estimate = s.gnss.mode === "navigator" ? L(s, " (оцінка без GPS)", " (estimated without GPS)") : "";
+  return {
+    lines: [
+      L(s, `Швидкість зараз — ${v} км/год${estimate}.`, `Speed now: ${v} km/h${estimate}.`),
+      L(s, "Обмеження швидкості на цій ділянці NAVIA не знає — орієнтуйтеся на знаки.", "NAVIA doesn't know the speed limit here — follow the signs."),
+    ],
+    actions: [], tone: "calm", used: ["motion.speedKmh", "gnss.mode"], missing: ["speedLimit"],
+  };
+});
+
+// ——— real data or demo, and how fresh it is ———
+
+registerHandler("dataSource", (s) => {
+  const lines: string[] = [];
+  const used = ["fields.isDemoMode", "position.source", "gnss.sinceFixS", "online"];
+  if (s.fields.isDemoMode) lines.push(L(s, "Зараз демо-режим: позиція й маршрут навчальні, не ваші реальні.", "Demo mode is on: the position and route are for practice, not your real ones."));
+  else {
+    const src = s.position.source === "GNSS" ? L(s, "супутники", "satellites") : s.position.source === "FUSED" ? L(s, "супутники й датчики телефона", "satellites and the phone's sensors") : s.position.source === "DEAD_RECKONING" ? L(s, "рахунок шляху без GPS", "dead reckoning without GPS") : s.position.source === "MANUAL" ? L(s, "точка, вказана вручну", "a point set by hand") : null;
+    const age = s.gnss.sinceFixS != null ? L(s, `, останній сигнал ${ago(s, s.gnss.sinceFixS)}`, `, last fix ${ago(s, s.gnss.sinceFixS)}`) : "";
+    lines.push(src ? L(s, `Дані реальні: позиція — ${src}${age}.`, `The data is real: position from ${src}${age}.`) : L(s, "Реальної позиції зараз немає.", "There is no real position right now."));
+  }
+  if (s.fields.nearbyShelters.some((x) => x.source === "demo")) lines.push(L(s, "Частина укриттів — демонстраційні, не з відкритих даних.", "Some shelters are demo ones, not from open data."));
+  lines.push(s.online ? L(s, "Інтернет є, дані про тривоги оновлюються.", "Online: alert data is updating.") : L(s, "Інтернету немає: тривоги не оновлюються, карта й укриття — збережені на телефоні.", "Offline: alerts are not updating; map and shelters are the ones saved on the phone."));
+  return { lines, actions: [], tone: "calm", used };
+});
+
+// ——— irritation: no excuses, one useful line ———
+
+registerHandler("frustration", (s) => {
+  const lines = [L(s, "Скажіть коротко, що потрібно, — відповім по суті.", "Say briefly what you need and you'll get a straight answer.")];
+  const used: string[] = [];
+  const shelter = nearestShelter(s);
+  if (s.alert?.active && shelter) { lines.push(L(s, `Зараз головне: тривога, укриття — ${shelter.name}, ${dist(s, shelter.distanceM)}.`, `Most important now: air alert, shelter ${shelter.name}, ${dist(s, shelter.distanceM)}.`)); used.push("alert.active", "places.shelter"); }
+  else if (s.route && !s.route.offRoute) { const n = nextLine(s, true); if (n) { lines.push(n); used.push("route.next"); } }
+  else { const g = gpsLine(s); lines.push(g.line); used.push(...g.used); }
+  return { lines, actions: [ask(L(s, "Куди далі?", "What's next?")), ask(L(s, "Де укриття?", "Where's a shelter?"))], tone: "calm", used };
+});
+
 // ——— no internet (И) ———
 
 registerHandler("offline", (s) => {
@@ -542,6 +587,7 @@ const TOPIC: Partial<Record<NavigatorIntent, [string, string]>> = {
   shelter: ["найближче укриття", "the nearest shelter"], shelterWhy: ["чи це найближче укриття", "whether it's the nearest shelter"], alert: ["тривогу", "the air alert"],
   status: ["загальну обстановку", "the overall situation"], offline: ["роботу без інтернету", "working without internet"], emotion: ["що робити, коли страшно", "what to do when scared"],
   noData: ["дані, яких у NAVIA немає", "data NAVIA doesn't have"], place: ["місця поруч", "places nearby"],
+  speed: ["вашу швидкість", "your speed"], dataSource: ["чи дані реальні", "whether the data is real"],
 };
 
 registerHandler("clarify", (s, ctx) => {
