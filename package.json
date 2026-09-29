@@ -9,8 +9,10 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "tsx --test packages/*/test/**/*.test.ts",
-    "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p packages/core/tsconfig.test.json"
+    "test": "tsx --test packages/*/test/**/*.test.ts apps/ai-backend/test/*.test.ts",
+    "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p packages/core/tsconfig.test.json && tsc --noEmit -p apps/ai-backend/tsconfig.json",
+    "ai:backend": "npm start -w @navia/ai-backend",
+    "eval:ai": "tsx apps/ai-backend/eval/run-live-eval.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.15",

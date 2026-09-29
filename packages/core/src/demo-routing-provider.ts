@@ -12,6 +12,8 @@
 import type { LatLon, RouteStep } from "./types";
 import { haversineMeters, initialBearing, angleDeltaDeg } from "./geodesy";
 import type { Route, RouteRequest, RoutingProvider, MapMatchResult } from "./route-engine";
+import { requestedPreferenceKeys } from "./route-engine";
+import { RouteGeometryIndex } from "./route-geometry";
 
 export type DemoRoadNode = {
   id: string;
@@ -165,33 +167,133 @@ function edgesToRoute(graph: DemoRoadGraph, edges: DemoRoadEdge[], id: string): 
   };
 }
 
+/** Points farther than this from every graph node are attached by splitting the nearest edge. */
+const SNAP_TO_NODE_M = 30;
+
+/**
+ * Attach an off-node point to the graph: project it onto the nearest edge,
+ * split that edge at the projection, and return the (possibly new) node id
+ * plus how far the real point is from the road. Mirrors what a real routing
+ * engine does when it snaps a location to the nearest road edge.
+ */
+function attachPoint(graph: DemoRoadGraph, p: LatLon, tag: string): { graph: DemoRoadGraph; nodeId: string; offsetM: number } {
+  const node = nearestNode(graph, p);
+  const nodeDist = haversineMeters(node.position, p);
+  if (nodeDist <= SNAP_TO_NODE_M) return { graph, nodeId: node.id, offsetM: nodeDist };
+
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  let best: { edge: DemoRoadEdge; projected: LatLon; offsetM: number; alongM: number; lenM: number } | null = null;
+  for (const edge of graph.edges) {
+    const a = nodeById.get(edge.fromId)!.position, b = nodeById.get(edge.toId)!.position;
+    const idx = new RouteGeometryIndex([a, b]);
+    const proj = idx.project(p);
+    if (proj && (!best || proj.offsetM < best.offsetM)) {
+      best = { edge, projected: proj.projected, offsetM: proj.offsetM, alongM: proj.alongM, lenM: idx.lengthM };
+    }
+  }
+  if (!best || best.offsetM >= nodeDist) return { graph, nodeId: node.id, offsetM: nodeDist };
+  if (best.alongM < SNAP_TO_NODE_M) return { graph, nodeId: best.edge.fromId, offsetM: haversineMeters(nodeById.get(best.edge.fromId)!.position, p) };
+  if (best.lenM - best.alongM < SNAP_TO_NODE_M) return { graph, nodeId: best.edge.toId, offsetM: haversineMeters(nodeById.get(best.edge.toId)!.position, p) };
+
+  const splitId = `split:${tag}`;
+  const e = best.edge;
+  return {
+    nodeId: splitId,
+    offsetM: best.offsetM,
+    graph: {
+      nodes: [...graph.nodes, { id: splitId, position: best.projected }],
+      edges: [
+        ...graph.edges.filter((x) => x.id !== e.id),
+        { ...e, id: `${e.id}#a`, toId: splitId },
+        { ...e, id: `${e.id}#b`, fromId: splitId },
+      ],
+    },
+  };
+}
+
 export class DemoRoutingProvider implements RoutingProvider {
   constructor(private graph: DemoRoadGraph) {}
 
   async route(request: RouteRequest): Promise<Route> {
-    const fromNode = nearestNode(this.graph, request.origin);
-    const toNode = nearestNode(this.graph, request.destination);
-    const path = shortestPath(this.graph, fromNode.id, toNode.id);
-    if (!path || path.length === 0) {
-      throw new Error(`DemoRoutingProvider: no route found between ${fromNode.id} and ${toNode.id}`);
+    const waypoints = request.waypoints ?? [];
+    const unsupported = requestedPreferenceKeys(request.preferences);
+    if (waypoints.length === 0) {
+      const route = await this.routeBetween(this.graph, request.origin, request.destination, "o", "d");
+      return unsupported.length > 0 ? { ...route, appliedPreferences: [], unsupportedPreferences: unsupported } : route;
     }
-    return edgesToRoute(this.graph, path, `demo-route-${fromNode.id}-${toNode.id}`);
+
+    // Multi-leg: origin -> wp1 -> ... -> destination. Each waypoint is
+    // attached to the graph at its nearest edge; the short access spur from
+    // the road to the waypoint itself is driven there and back, so the
+    // route genuinely passes through the stop.
+    const legs: Route[] = [];
+    const points = [request.origin, ...waypoints, request.destination];
+    for (let i = 0; i < points.length - 1; i++) {
+      const leg = await this.routeBetween(this.graph, points[i]!, points[i + 1]!, `p${i}`, `p${i + 1}`, i > 0, i + 1 < points.length - 1);
+      legs.push(leg);
+    }
+    // Every intermediate leg ends at a stop, so its "arrive" is kept.
+    return concatenateLegs(legs, `demo-route-multi-${legs.map((l) => l.id).join("+")}`, true, {
+      waypointCount: waypoints.length,
+      appliedPreferences: [],
+      unsupportedPreferences: unsupported,
+    });
+  }
+
+  private async routeBetween(
+    baseGraph: DemoRoadGraph, from: LatLon, to: LatLon, fromTag: string, toTag: string,
+    fromIsStop = false, toIsStop = false,
+  ): Promise<Route> {
+    let graph = baseGraph;
+    const origin = attachPoint(graph, from, fromTag);
+    graph = origin.graph;
+    const dest = attachPoint(graph, to, toTag);
+    graph = dest.graph;
+    if (origin.nodeId === dest.nodeId) {
+      throw new Error(`DemoRoutingProvider: origin and destination snap to the same point (${origin.nodeId})`);
+    }
+    const path = shortestPath(graph, origin.nodeId, dest.nodeId);
+    if (!path || path.length === 0) {
+      throw new Error(`DemoRoutingProvider: no route found between ${origin.nodeId} and ${dest.nodeId}`);
+    }
+    const route = edgesToRoute(graph, path, `demo-route-${origin.nodeId}-${dest.nodeId}`);
+    // Out-and-back access spurs for stops that sit off the road network.
+    const spur = (p: LatLon, offsetM: number): Route | null =>
+      offsetM > SNAP_TO_NODE_M ? accessSpur(p, offsetM) : null;
+    const pre = fromIsStop ? spur(from, origin.offsetM) : null;
+    const post = toIsStop ? spur(to, dest.offsetM) : null;
+    if (!pre && !post) return route;
+    const parts: Route[] = [];
+    if (pre) parts.push(reverseSpur(pre, route.geometry[0]!));
+    parts.push(route);
+    if (post) parts.push(forwardSpur(post, route.geometry[route.geometry.length - 1]!));
+    // The road route's own zero-length "arrive" at the spur junction is not a real arrival.
+    return concatenateLegs(parts, route.id, false, {});
   }
 
   async searchAlternatives(request: RouteRequest): Promise<Route[]> {
     const primary = await this.route(request);
-    const fromNode = nearestNode(this.graph, request.origin);
-    const toNode = nearestNode(this.graph, request.destination);
-    const firstEdgeId = primary.steps[0]?.roadSegmentId ?? undefined;
+    // Like Valhalla, alternatives are only offered for plain A->B requests.
+    if ((request.waypoints?.length ?? 0) > 0) return [primary];
+    // Attach origin/destination exactly as route() does, so the alternative
+    // starts where the car is (not at the previous graph node behind it).
+    let graph = this.graph;
+    const o = attachPoint(graph, request.origin, "o");
+    graph = o.graph;
+    const d = attachPoint(graph, request.destination, "d");
+    graph = d.graph;
+    const path = shortestPath(graph, o.nodeId, d.nodeId);
+    const firstEdgeId = path?.[0]?.id;
     // Real alternative-search strategy: exclude the first edge of the
     // shortest path and re-run Dijkstra; if the graph offers a genuinely
     // different way through, this finds it. If not, there is no honest
     // alternative to offer, so only the primary route is returned.
-    const altPath = firstEdgeId ? shortestPath(this.graph, fromNode.id, toNode.id, firstEdgeId) : null;
+    const altPath = firstEdgeId ? shortestPath(graph, o.nodeId, d.nodeId, firstEdgeId) : null;
     if (!altPath || altPath.length === 0) return [primary];
-    const alt = edgesToRoute(this.graph, altPath, `demo-route-alt-${fromNode.id}-${toNode.id}`);
+    const alt = edgesToRoute(graph, altPath, `demo-route-alt-${o.nodeId}-${d.nodeId}`);
     if (alt.distanceM === primary.distanceM) return [primary];
-    return [primary, alt];
+    const unsupported = requestedPreferenceKeys(request.preferences);
+    return [primary, unsupported.length > 0 ? { ...alt, appliedPreferences: [], unsupportedPreferences: unsupported } : alt];
   }
 
   async match(points: LatLon[]): Promise<MapMatchResult> {
@@ -208,4 +310,59 @@ export class DemoRoutingProvider implements RoutingProvider {
     }
     return { matchedPoints, roadSegmentIds };
   }
+}
+
+const ACCESS_ROAD_NAME = "під'їзд (demo)";
+
+function accessSpur(stop: LatLon, offsetM: number): Route {
+  return {
+    id: "spur", steps: [], geometry: [stop], distanceM: offsetM,
+    durationS: offsetM / 8.3, source: "demo",
+  };
+}
+
+/** Road point -> stop (the car turns off the route and drives to the stop). */
+function forwardSpur(spur: Route, roadPoint: LatLon): Route {
+  const stop = spur.geometry[0]!;
+  return {
+    ...spur,
+    geometry: [roadPoint, stop],
+    steps: [
+      { id: "spur-in", roadName: ACCESS_ROAD_NAME, maneuver: "right", distanceM: spur.distanceM, durationS: spur.durationS, location: roadPoint },
+      { id: "spur-stop", roadName: ACCESS_ROAD_NAME, maneuver: "arrive", distanceM: 0, durationS: 0, location: stop },
+    ],
+  };
+}
+
+/** Stop -> road point (the car leaves the stop and rejoins the route). */
+function reverseSpur(spur: Route, roadPoint: LatLon): Route {
+  const stop = spur.geometry[0]!;
+  return {
+    ...spur,
+    geometry: [stop, roadPoint],
+    steps: [
+      { id: "spur-out", roadName: ACCESS_ROAD_NAME, maneuver: "depart", distanceM: spur.distanceM, durationS: spur.durationS, location: stop },
+    ],
+  };
+}
+
+/** Join consecutive legs into one Route; intermediate zero-length "arrive" steps are dropped unless they mark stops. */
+function concatenateLegs(legs: Route[], id: string, keepIntermediateArrivals: boolean, extra: Partial<Route>): Route {
+  const geometry: LatLon[] = [];
+  const steps: RouteStep[] = [];
+  let distanceM = 0, durationS = 0;
+  legs.forEach((leg, li) => {
+    const isLast = li === legs.length - 1;
+    for (const p of leg.geometry) {
+      const prev = geometry[geometry.length - 1];
+      if (!prev || prev.lat !== p.lat || prev.lon !== p.lon) geometry.push(p);
+    }
+    for (const step of leg.steps) {
+      if (!isLast && !keepIntermediateArrivals && step.maneuver === "arrive" && step.distanceM === 0) continue;
+      steps.push({ ...step, id: `step-${steps.length}` });
+    }
+    distanceM += leg.distanceM;
+    durationS += leg.durationS;
+  });
+  return { id, steps, geometry, distanceM, durationS, source: "demo", ...extra };
 }

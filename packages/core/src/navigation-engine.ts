@@ -25,7 +25,7 @@ import { GNSSMonitor } from "./gnss-monitor";
 import { deadReckon } from "./dead-reckoning";
 import { calculateConfidence } from "./confidence";
 import { SensorFusionEngine } from "./sensor-fusion";
-import type { Route, RoutingProvider } from "./route-engine";
+import type { Route, RoutingProvider, RoutePreferences } from "./route-engine";
 import { RouteProgressEngine, distanceFromRouteCorridorM } from "./route-engine";
 import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
@@ -96,14 +96,26 @@ export class NavigationEngine {
    * honestly (no silent demo fallback — spec section 40/user's explicit
    * "don't switch to DemoRoutingProvider and call it real") if the
    * provider fails (e.g. Valhalla endpoint unreachable). */
-  async requestRoute(origin: LatLon, destination: LatLon): Promise<Route> {
-    const route = await this.routingProvider.route({ origin, destination });
+  async requestRoute(
+    origin: LatLon,
+    destination: LatLon,
+    options: { waypoints?: LatLon[]; preferences?: RoutePreferences } = {},
+  ): Promise<Route> {
+    const route = await this.routingProvider.route({ origin, destination, ...options });
+    this.applyRoute(route);
+    return route;
+  }
+
+  getRoutingProvider(): RoutingProvider { return this.routingProvider; }
+
+  /** Adopt an already-computed route (a reroute with a new stop, a chosen
+   * alternative, new road preferences) as the active one. */
+  applyRoute(route: Route): void {
     this.route = route;
     this.offRouteDetector.reset();
-    this.telemetry.log("ROUTE_UPDATE", { distanceM: route.distanceM, source: route.source }, Date.now());
+    this.telemetry.log("ROUTE_UPDATE", { distanceM: route.distanceM, source: route.source, waypoints: route.waypointCount ?? 0 }, Date.now());
     this.stateMachine.tick(baseSmInput({ routeRequested: true }));
     this.stateMachine.tick(baseSmInput({ routeReady: true }));
-    return route;
   }
 
   clearRoute(): void {

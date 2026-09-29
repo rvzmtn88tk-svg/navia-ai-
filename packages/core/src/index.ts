@@ -27,3 +27,8 @@ export * from "./e2e-simulation";
 export * from "./navigation-engine";
 export * from "./demo-data";
 export * from "./map-matcher";
+export * from "./route-geometry";
+export * from "./place-search";
+export * from "./traffic";
+export * from "./trip-planner";
+export * from "./copilot";

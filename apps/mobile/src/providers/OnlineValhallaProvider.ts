@@ -10,7 +10,8 @@
 //
 // Per the user's explicit instruction: on failure this THROWS — it never
 // silently falls back to DemoRoutingProvider and calls the result real.
-import type { LatLon, RouteStep, RoutingProvider, RouteRequest, Route, MapMatchResult } from "@navia/core";
+import type { LatLon, RouteStep, RoutingProvider, RouteRequest, Route, MapMatchResult, RoutePreferences, RoutePreferenceKey } from "@navia/core";
+import { requestedPreferenceKeys } from "@navia/core";
 import { config } from "../config";
 
 // --- Google/Valhalla encoded-polyline decoding, precision 1e6 (Valhalla's default) ---
@@ -81,6 +82,21 @@ type ValhallaResponse = {
   error?: string; error_code?: number;
 };
 
+// Valhalla `auto` costing options (https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#automobile-and-bus-costing-options).
+// use_* are 0..1 preference weights; 0 means "avoid as much as possible"
+// (still usable when there is no other way), exclude_unpaved is a hard filter.
+const SUPPORTED_PREFERENCES: RoutePreferenceKey[] = ["avoidHighways", "avoidTolls", "avoidUnpaved", "avoidFerries"];
+
+function valhallaAutoCosting(prefs: RoutePreferences | undefined): Record<string, number | boolean> | null {
+  if (!prefs) return null;
+  const opts: Record<string, number | boolean> = {};
+  if (prefs.avoidHighways) opts.use_highways = 0;
+  if (prefs.avoidTolls) opts.use_tolls = 0;
+  if (prefs.avoidFerries) opts.use_ferry = 0;
+  if (prefs.avoidUnpaved) { opts.exclude_unpaved = true; opts.use_tracks = 0; }
+  return Object.keys(opts).length > 0 ? opts : null;
+}
+
 export class OnlineValhallaProvider implements RoutingProvider {
   constructor(private baseUrl: string | null = config.valhallaUrl) {}
 
@@ -96,14 +112,21 @@ export class OnlineValhallaProvider implements RoutingProvider {
 
   private async callRoute(request: RouteRequest, alternates: number): Promise<ValhallaResponse> {
     const base = this.requireBaseUrl();
+    const waypoints = request.waypoints ?? [];
+    const costingOptions = valhallaAutoCosting(request.preferences);
     const body = {
       locations: [
-        { lat: request.origin.lat, lon: request.origin.lon },
-        { lat: request.destination.lat, lon: request.destination.lon },
+        { lat: request.origin.lat, lon: request.origin.lon, type: "break" },
+        // Intermediate stops are "break" locations: the driver actually stops
+        // there, so Valhalla returns one leg per stop.
+        ...waypoints.map((w) => ({ lat: w.lat, lon: w.lon, type: "break" })),
+        { lat: request.destination.lat, lon: request.destination.lon, type: "break" },
       ],
       costing: "auto",
+      ...(costingOptions ? { costing_options: { auto: costingOptions } } : {}),
       units: "kilometers",
-      ...(alternates > 0 ? { alternates } : {}),
+      // Valhalla only computes alternates for two-location requests.
+      ...(alternates > 0 && waypoints.length === 0 ? { alternates } : {}),
     };
 
     let response: Response;
@@ -127,16 +150,30 @@ export class OnlineValhallaProvider implements RoutingProvider {
     return json;
   }
 
-  private legToRoute(leg: ValhallaLeg, tripSummary: { length: number; time: number }, id: string): Route {
-    const geometry = decodePolyline6(leg.shape);
-    const steps: RouteStep[] = leg.maneuvers.map((m, i) => ({
-      id: `step-${i}`,
-      roadName: m.street_names?.[0] ?? "",
-      maneuver: mapManeuverType(m.type),
-      distanceM: m.length * 1000,
-      durationS: m.time,
-      location: geometry[m.begin_shape_index] ?? geometry[0] ?? { lat: 0, lon: 0 },
-    }));
+  /** Concatenate every leg of a (possibly multi-stop) trip into one Route. */
+  private tripToRoute(legs: ValhallaLeg[], tripSummary: { length: number; time: number }, id: string, request: RouteRequest): Route {
+    const geometry: LatLon[] = [];
+    const steps: RouteStep[] = [];
+    legs.forEach((leg, li) => {
+      const legGeometry = decodePolyline6(leg.shape);
+      const offset = geometry.length > 0 ? geometry.length - 1 : 0;
+      geometry.push(...(geometry.length > 0 ? legGeometry.slice(1) : legGeometry));
+      for (const m of leg.maneuvers) {
+        const maneuver = mapManeuverType(m.type);
+        // Drop each intermediate leg's own "depart" (the car is already moving);
+        // keep its "arrive" so the stop is announced.
+        if (li > 0 && maneuver === "depart") continue;
+        steps.push({
+          id: `step-${steps.length}`,
+          roadName: m.street_names?.[0] ?? "",
+          maneuver,
+          distanceM: m.length * 1000,
+          durationS: m.time,
+          location: geometry[offset + m.begin_shape_index] ?? geometry[0] ?? request.origin,
+        });
+      }
+    });
+    const requested = requestedPreferenceKeys(request.preferences);
     return {
       id,
       steps,
@@ -144,25 +181,25 @@ export class OnlineValhallaProvider implements RoutingProvider {
       distanceM: tripSummary.length * 1000,
       durationS: tripSummary.time,
       source: "online-valhalla",
+      appliedPreferences: requested.filter((k) => SUPPORTED_PREFERENCES.includes(k)),
+      unsupportedPreferences: requested.filter((k) => !SUPPORTED_PREFERENCES.includes(k)),
+      waypointCount: request.waypoints?.length ?? 0,
     };
   }
 
   async route(request: RouteRequest): Promise<Route> {
     const json = await this.callRoute(request, 0);
     if (!json.trip) throw new Error("OnlineValhallaProvider: response had no trip");
-    // A single-leg trip is the common case for a two-point request.
-    const leg = json.trip.legs[0];
-    if (!leg) throw new Error("OnlineValhallaProvider: response trip had no legs");
-    return this.legToRoute(leg, json.trip.summary, `valhalla-${Date.now()}`);
+    if (json.trip.legs.length === 0) throw new Error("OnlineValhallaProvider: response trip had no legs");
+    return this.tripToRoute(json.trip.legs, json.trip.summary, `valhalla-${Date.now()}`, request);
   }
 
   async searchAlternatives(request: RouteRequest): Promise<Route[]> {
     const json = await this.callRoute(request, 2);
     const routes: Route[] = [];
-    if (json.trip?.legs[0]) routes.push(this.legToRoute(json.trip.legs[0], json.trip.summary, "valhalla-primary"));
+    if (json.trip && json.trip.legs.length > 0) routes.push(this.tripToRoute(json.trip.legs, json.trip.summary, `valhalla-primary-${Date.now()}`, request));
     for (const [i, alt] of (json.alternates ?? []).entries()) {
-      const leg = alt.trip.legs[0];
-      if (leg) routes.push(this.legToRoute(leg, alt.trip.summary, `valhalla-alt-${i}`));
+      if (alt.trip.legs.length > 0) routes.push(this.tripToRoute(alt.trip.legs, alt.trip.summary, `valhalla-alt-${i}-${Date.now()}`, request));
     }
     return routes;
   }

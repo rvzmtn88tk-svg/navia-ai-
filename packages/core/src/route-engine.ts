@@ -20,9 +20,28 @@
 import type { LatLon, RouteStep } from "./types";
 import { haversineMeters } from "./geodesy";
 
+/**
+ * Road-type avoidance a user can ask for ("avoid bad roads", "no tolls").
+ * These map onto routing-engine costing options; a provider that cannot
+ * honour one must report it in `Route.unsupportedPreferences` rather than
+ * silently ignoring it.
+ */
+export type RoutePreferences = {
+  avoidHighways?: boolean;
+  avoidTolls?: boolean;
+  /** Unpaved roads and tracks — the closest honest proxy for "bad roads" OSM data supports. */
+  avoidUnpaved?: boolean;
+  avoidFerries?: boolean;
+};
+
+export type RoutePreferenceKey = keyof RoutePreferences;
+
 export type RouteRequest = {
   origin: LatLon;
   destination: LatLon;
+  /** Intermediate stops, visited in order between origin and destination. */
+  waypoints?: LatLon[];
+  preferences?: RoutePreferences;
 };
 
 export type Route = {
@@ -34,7 +53,18 @@ export type Route = {
   durationS: number;
   /** Which provider produced this route, so the UI/AI can be honest about it. */
   source: "demo" | "online-valhalla" | "offline-valhalla";
+  /** Preferences the provider actually applied to this route. */
+  appliedPreferences?: RoutePreferenceKey[];
+  /** Preferences that were requested but this provider cannot honour. */
+  unsupportedPreferences?: RoutePreferenceKey[];
+  /** Number of intermediate waypoints this route passes through. */
+  waypointCount?: number;
 };
+
+export function requestedPreferenceKeys(prefs: RoutePreferences | undefined): RoutePreferenceKey[] {
+  if (!prefs) return [];
+  return (Object.keys(prefs) as RoutePreferenceKey[]).filter((k) => prefs[k] === true).sort();
+}
 
 export type MapMatchResult = {
   matchedPoints: LatLon[];
