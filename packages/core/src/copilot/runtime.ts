@@ -2,7 +2,7 @@
 // tool executor and the agent loop share.
 
 import type { LatLon, NavigationState } from "../types";
-import type { Route, RoutingProvider } from "../route-engine";
+import type { Route } from "../route-engine";
 import type { POI } from "../landmark-engine";
 import type { GeocoderProvider } from "../geocoder";
 import type { PlaceSearchProvider } from "../place-search";

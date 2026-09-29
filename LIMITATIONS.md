@@ -224,7 +224,12 @@ Not verified here, and why:
 - **"Bad roads"** maps to avoiding unpaved roads/tracks (the only road
   quality signal in OSM routing); the demo router supports none of the
   preferences and says so.
-- **Speech-to-text still not wired** (see above); the co-pilot is reachable
-  by the demo buttons and a text field until an STT module is added.
+- **Speech-to-text is now wired** (`expo-speech-recognition`, uk-UA, config
+  plugin + Info.plist strings in `app.json`) but has only been compiled and
+  bundled, never run on a device. The iOS JS bundle (`expo export`) and the
+  generated iOS project (`expo prebuild`, with temporary placeholder icons)
+  were verified in the sandbox; `pod install`/Xcode/iPhone were not.
+- `apps/mobile/assets/` (icon, splash, adaptive icon) referenced by
+  `app.json` is not in the repository; `expo prebuild` fails without it.
 - Saved home/work and AI consent are session-only (no persistent storage
   yet), like recent destinations.

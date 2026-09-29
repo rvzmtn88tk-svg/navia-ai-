@@ -142,6 +142,14 @@ independent tools run in parallel and all results return in one message.
 | model refuses | "Я не можу допомогти з цим запитом." |
 | model loops on tools | budget exhausted → forced to answer with what it has |
 
+## Voice
+
+The 🎤 button runs on-device speech recognition (`expo-speech-recognition`,
+uk-UA) for one utterance; the transcript goes to `NaviaCopilot.ask()` and the
+answer is spoken with `expo-speech`. Pending actions can be confirmed by
+voice ("так") or with the Yes/No card. A text field is available for a
+passenger. iOS setup: see `docs/HANDOFF_IOS.md`.
+
 ## Running
 
 ```bash

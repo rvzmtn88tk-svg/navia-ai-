@@ -41,7 +41,7 @@ export function MapLibreRouteView({ styleUrl, routeGeometry, currentPosition, he
   };
 
   return (
-    <MapLibreGL.MapView style={{ flex: 1 }} styleURL={styleUrl} logoEnabled={false}>
+    <MapLibreGL.MapView style={{ flex: 1 }} mapStyle={styleUrl} logoEnabled={false}>
       {currentPosition && (
         <MapLibreGL.Camera
           zoomLevel={16}
@@ -60,7 +60,9 @@ export function MapLibreRouteView({ styleUrl, routeGeometry, currentPosition, he
         </MapLibreGL.ShapeSource>
       )}
       {currentPosition && (
-        <MapLibreGL.PointAnnotation id="navia-you" coordinate={[currentPosition.lon, currentPosition.lat]} />
+        <MapLibreGL.PointAnnotation id="navia-you" coordinate={[currentPosition.lon, currentPosition.lat]}>
+          <View style={styles.youDot} />
+        </MapLibreGL.PointAnnotation>
       )}
     </MapLibreGL.MapView>
   );
@@ -70,4 +72,5 @@ const styles = StyleSheet.create({
   errorContainer: { flex: 1, backgroundColor: "#1a0f0f", alignItems: "center", justifyContent: "center", padding: 24 },
   errorTitle: { color: "#f87171", fontSize: 16, fontWeight: "600", marginBottom: 8 },
   errorBody: { color: "#d4a5a5", fontSize: 13, textAlign: "center" },
+  youDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#2dd4bf", borderWidth: 3, borderColor: "#fff" },
 });

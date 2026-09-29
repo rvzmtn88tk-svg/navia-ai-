@@ -66,6 +66,11 @@ Real GNSS and motion testing must be done on a physical device, not a
 simulator — `expo-location`/`expo-sensors` report fabricated values on
 simulators/emulators.
 
+## iOS device build with the AI co-pilot
+
+See `docs/HANDOFF_IOS.md` (merge steps, `.env`, backend, `expo prebuild`,
+`expo run:ios --device`, required Info.plist keys).
+
 ## apps/ai-backend (AI co-pilot backend)
 
 ```bash

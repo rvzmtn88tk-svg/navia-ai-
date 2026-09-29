@@ -10,16 +10,16 @@
 // the driver can confirm by voice or tap — tapping executes directly, with
 // no extra LLM round-trip.
 //
-// The mic button attempts REAL speech recognition: ExpoSpeechVoiceProvider.
-// startListening still throws a documented not-implemented error (no STT
-// module is wired up yet), so pressing it shows that limitation rather than
-// faking recognition. Until STT is wired, the text field lets a passenger
-// (or a tester) type the same questions. Canned-phrase buttons are Demo-
-// Mode-only, per the user's instruction.
-import React, { useState } from "react";
+// The mic button runs real on-device speech recognition (uk-UA,
+// expo-speech-recognition): tap, speak one question, the transcript goes to
+// the co-pilot and the answer is spoken back. Tap again while listening to
+// stop. The text field lets a passenger (or a tester) type the same
+// questions. Canned-phrase buttons are Demo-Mode-only, per the user's
+// instruction.
+import React, { useRef, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, Alert } from "react-native";
 import type { CopilotReply } from "@navia/core";
-import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
+import { ExpoSpeechVoiceProvider, type ListeningHandle } from "../providers/ExpoSpeechVoiceProvider";
 import { activeCopilot } from "../engine/naviaController";
 
 const DEMO_INTENTS = [
@@ -41,6 +41,8 @@ export function VoicePanel({ isDemoMode, onRouteChanged }: { isDemoMode: boolean
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [reply, setReply] = useState<CopilotReply | null>(null);
+  const [listening, setListening] = useState(false);
+  const listeningHandle = useRef<ListeningHandle | null>(null);
 
   async function deliver(r: CopilotReply) {
     setReply(r);
@@ -78,10 +80,19 @@ export function VoicePanel({ isDemoMode, onRouteChanged }: { isDemoMode: boolean
     }
   }
 
-  function onMicPress() {
+  async function onMicPress() {
+    if (listening) {
+      listeningHandle.current?.stop();
+      return;
+    }
+    setListening(true);
     try {
-      voice.startListening((text) => void ask(text));
+      listeningHandle.current = await voice.startListening(
+        (text) => { setListening(false); setDraft(text); void ask(text); },
+        (message) => { setListening(false); void voice.speak(message).catch(() => {}); },
+      );
     } catch (err) {
+      setListening(false);
       Alert.alert("Голосове розпізнавання", (err as Error).message);
     }
   }
@@ -109,6 +120,7 @@ export function VoicePanel({ isDemoMode, onRouteChanged }: { isDemoMode: boolean
           </View>
         </View>
       )}
+      {listening && <Text style={styles.busy}>Слухаю…</Text>}
       {busy && <Text style={styles.busy}>{busy}</Text>}
       <View style={styles.inputRow}>
         <TextInput
@@ -124,7 +136,7 @@ export function VoicePanel({ isDemoMode, onRouteChanged }: { isDemoMode: boolean
         <Pressable style={styles.repeatButton} onPress={() => void voice.speak(lastAnswer || "Ще нічого не було сказано.").catch(() => {})}>
           <Text style={styles.repeatText}>↻</Text>
         </Pressable>
-        <Pressable style={styles.micButton} onPress={onMicPress} disabled={busy != null}>
+        <Pressable style={[styles.micButton, listening && styles.micListening]} onPress={() => void onMicPress()} disabled={busy != null}>
           <Text style={styles.micButtonText}>🎤</Text>
         </Pressable>
       </View>
@@ -160,6 +172,7 @@ const styles = StyleSheet.create({
   repeatText: { color: "#8892a6", fontSize: 20 },
   micButton: { backgroundColor: "#2dd4bf", width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
   micButtonText: { fontSize: 24 },
+  micListening: { backgroundColor: "#f87171" },
   demoIntents: { alignItems: "flex-end", gap: 6, marginTop: 8 },
   intentButton: { backgroundColor: "#2a1f55", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
   intentButtonText: { color: "#c4b5fd", fontSize: 11 },

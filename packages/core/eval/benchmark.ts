@@ -20,7 +20,6 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { LatLon } from "../src/types";
 import type { POI, LandmarkCategory } from "../src/landmark-engine";
 import { haversineMeters, initialBearing, angleDeltaDeg } from "../src/geodesy";
 import { RouteGeometryIndex } from "../src/route-geometry";

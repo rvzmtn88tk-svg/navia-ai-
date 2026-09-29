@@ -32,9 +32,10 @@ export interface PlaceSearchProvider {
 
 /** Lowercase, strip apostrophes/punctuation/whitespace — so "McDonald's" matches "mcdonalds". */
 export function normalizePlaceName(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFKD")
+  let lower = s.toLowerCase();
+  // String.prototype.normalize can be missing on JS engines built without Intl.
+  try { lower = lower.normalize("NFKD"); } catch { /* keep as is */ }
+  return lower
     .replace(/[̀-ͯ]/g, "")
     .replace(/[’'`"«»().,\-\s_]/g, "");
 }
