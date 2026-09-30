@@ -80,3 +80,13 @@ The "GPS failed → describe → re-localize → continue" loop has neither a re
 НЕ ПРОВЕРЕНО: на телефоне в машине (DEVICE-VERIFIED — нет); светофоры/знаки/мосты — в данных тайлов их нет
   (честно «unsupported»); дорожный граф вокруг машины (B2) — не начат.
 ```
+
+## Bug 2026-09-30: no position on the map away from home
+
+- **Symptom (owner):** 5 km from home, on mobile data: no position dot, the locate button did nothing; at home it works.
+- **Evidence:** no NAVIA crash logs on the phone (devicectl systemCrashLogs, only 23–24.09); on-phone network self-test at home: all 11 services OK; location log at home: fixes ±9–19 m, all trusted.
+- **Root cause:** the home map drew the position only from navigation-grade fixes (engine-trusted: accuracy < ~55 m, age < 3 s). At home the iPhone has the owner's Wi-Fi (±10–30 m); elsewhere — indoors, between buildings, no known Wi-Fi — it reports ~±65 m or worse for a while, and every such fix was dropped. Not a network problem: leaving home = leaving the home Wi-Fi.
+- **Reproduction:** `apps/mobile/test/approxFix.test.ts` — 20 fixes of ±65 m 5 km away → `trustedPosition` stays null.
+- **Fix:** a plausible untrusted fix (≤ 1.5 km, fresh, no impossible jump) is drawn with its real error circle; nearby places, shelters and the alert load around it; a trip can start from it ("Почати звідси (±N м)"). Navigation still uses trusted fixes only.
+- **Regression tests:** approxFix.test.ts 3/3; npm test 439/439.
+- **Device:** installed on the iPhone 30.09 (IMPLEMENTED, NOT DEVICE-VERIFIED outdoors). `Documents/location-log.json` now records accuracy/age/trusted of recent fixes (no coordinates) for the next outdoor check.
