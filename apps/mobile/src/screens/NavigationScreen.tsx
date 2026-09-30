@@ -44,6 +44,7 @@ import { easing, elevation, iconSize, motion, radius, space, type ThemeColors } 
 import { isNetworkError } from "../providers/netError";
 import { startBackgroundLocation, stopBackgroundLocation } from "../background/backgroundLocation";
 import { plausibleApproxFix, shownFix } from "../engine/approxFix";
+import { turnPromptsAllowed } from "../voice/voiceGate";
 import { startTripRecording, type TripSession } from "../trips/tripLog";
 
 /** The "allow Always" hint is shown once per app run, not on every trip. */
@@ -349,7 +350,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   // Turn prompts share the queue: a newer prompt replaces a stale one waiting.
   const speakText = useCallback((text: string) => { void say(text, PRIORITY.guidance, { lang, gender: voiceGender }, "turn"); }, [lang, voiceGender]);
   useEffect(() => {
-    if (phase !== "navigating" || !nextStep) return;
+    // Off the route: the old route's turns are wrong now; the new route (reroute) brings its own prompts.
+    if (!turnPromptsAllowed(phase, state.offRoute) || !nextStep) return;
     if (positionReliable) {
       const text = announcer.next(nextStep as StepLike, state.nextStepDistanceM ?? null, mode, lang, nextCue);
       if (text) speakText(text);
@@ -361,7 +363,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       cautiousSpoken.current = nextStep.id;
       speakText(cautiousPhrase(nextStep as StepLike, lang, nextCue));
     }
-  }, [phase, nextStep?.id, state.nextStepDistanceM, positionReliable, estimated, uncertaintyM, mode, lang, speakText, nextCue]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, state.offRoute, nextStep?.id, state.nextStepDistanceM, positionReliable, estimated, uncertaintyM, mode, lang, speakText, nextCue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cautiousSpoken = useRef<string | null>(null);
   // Proactive navigator (layer 4): GNSS unstable / lost / back, air alert

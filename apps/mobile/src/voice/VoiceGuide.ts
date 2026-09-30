@@ -60,13 +60,19 @@ async function ensureAudioMode(): Promise<void> {
 
 export type SpeakOptions = { lang: Lang; gender: VoiceGender; interrupt?: boolean; /** How long the neural voice may take to arrive (ms). */ cloudWaitMs?: number };
 
+/** Bumped by stopSpeaking(): a phrase still being prepared (voice download) is then dropped, not played late. */
+let generation = 0;
+
 export async function speak(text: string, { lang, gender, interrupt = true, cloudWaitMs = 1500 }: SpeakOptions): Promise<void> {
+  const gen = generation;
   await ensureAudioMode();
   if (interrupt) { Speech.stop(); stopCloudSpeech(); }
   const t0 = Date.now();
   const started = () => { lastTtsStartMs = Date.now() - t0; const w = startWaiters.splice(0); for (const f of w) f(lastTtsStartMs); };
   const file = await cloudSpeechFile(text, lang, gender, cloudWaitMs);
+  if (gen !== generation) return;
   if (file && await playSpeechFile(file, started)) return;
+  if (gen !== generation) return;
   // The iPhone's own voice (the best installed quality). There is no male
   // Ukrainian voice on iOS: then the natural female voice speaks — a
   // pitch-lowered one only sounded robotic.
@@ -130,7 +136,10 @@ export function clearSpeechQueue(): void {
   queue.clear();
 }
 
+/** Silence now: the current phrase, everything waiting, and anything still being prepared. */
 export function stopSpeaking(): void {
+  generation++;
+  queue.clear();
   Speech.stop();
   stopCloudSpeech();
 }
