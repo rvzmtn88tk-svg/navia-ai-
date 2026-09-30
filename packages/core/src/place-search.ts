@@ -83,6 +83,27 @@ export class LocalPlaceSearchProvider implements PlaceSearchProvider {
   }
 }
 
+/** Tries each provider in turn: the first that answers wins (a failing source never empties search). */
+export class FallbackPlaceSearchProvider implements PlaceSearchProvider {
+  constructor(private providers: PlaceSearchProvider[]) {
+    if (providers.length === 0) throw new Error("FallbackPlaceSearchProvider: no providers");
+  }
+  get source(): PlaceSearchSource { return this.providers[0]!.source; }
+  searchAlongPolyline(polyline: LatLon[], bufferM: number, filter: PlaceFilter, limit?: number): Promise<POI[]> {
+    return this.first((p) => p.searchAlongPolyline(polyline, bufferM, filter, limit));
+  }
+  searchAround(center: LatLon, radiusM: number, filter: PlaceFilter, limit?: number): Promise<POI[]> {
+    return this.first((p) => p.searchAround(center, radiusM, filter, limit));
+  }
+  private async first(ask: (p: PlaceSearchProvider) => Promise<POI[]>): Promise<POI[]> {
+    let last: unknown = null;
+    for (const p of this.providers) {
+      try { return await ask(p); } catch (e) { last = e; }
+    }
+    throw last instanceof Error ? last : new Error("all place sources failed");
+  }
+}
+
 // --- OSM Overpass (online) ---
 
 /** OSM tag selectors per category. Categories with no sensible OSM search tag are omitted. */

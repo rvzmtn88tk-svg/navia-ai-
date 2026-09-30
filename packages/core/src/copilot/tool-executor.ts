@@ -19,6 +19,7 @@ import { orderStopsAlongRoute, type TripStop } from "../trip-planner";
 import { CONFIRMATION_REQUIRED_TOOLS, SEARCHABLE_CATEGORIES, TOOL_POLICY, type CopilotToolName } from "./tool-definitions";
 import type { CopilotRuntime, CopilotSession, EntityRegistry, PlaceEntity } from "./runtime";
 import { validatePreference } from "./preferences";
+import { distinguish, locateByDescription, searchRadiusM, type DescribedObject, type LocateCandidate } from "../landmark-localizer";
 
 export type ToolContext = {
   runtime: CopilotRuntime;
@@ -593,6 +594,9 @@ async function findDestination(input: Record<string, unknown>, ctx: ToolContext)
 async function checkLandmark(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
   const rc = buildRouteContext(ctx.runtime);
   if (!rc) return err("no_active_route", "There is no active route with a known position.");
+  // "Ahead of the estimate" means nothing when the estimate itself is uncertain.
+  const mode = ctx.runtime.getNavigation().state.positionMode;
+  if (mode === "DEAD_RECKONING" || mode === "MANUAL") return err("position_uncertain_use_locate", "GPS is not placing the car: use locate_by_description with what the driver sees instead.");
   const filter = filterArg(input);
   if (!filter.nameVariants) return err("bad_request", "Give name_variants.");
   const places = ctx.runtime.places();
@@ -629,6 +633,172 @@ async function checkLandmark(input: Record<string, unknown>, ctx: ToolContext): 
     };
   }
   return { content: { result: result.kind, ...(result.kind === "ambiguous" ? { candidates: result.candidateCount } : {}) }, isError: false };
+}
+
+// ---------- localization by what the driver sees ----------
+
+const LANDMARK_FIX_ACCURACY_M = 40;
+
+/** The engine's estimate and its uncertainty, for searching where the car can be. */
+function estimateFor(ctx: ToolContext): { location: LatLon; sigmaM: number; source: string } | null {
+  const { state } = ctx.runtime.getNavigation();
+  const p = state.position?.position ?? state.trustedPosition?.position ?? null;
+  if (!p) return null;
+  const onGnss = state.positionMode === "GNSS" || (!state.positionMode && state.gnss === "NORMAL");
+  const sigmaM = state.positionUncertaintyM ?? (onGnss ? p.accuracyM ?? 30 : 500);
+  return { location: { lat: p.lat, lon: p.lon }, sigmaM: Math.max(sigmaM, onGnss ? 50 : 150), source: onGnss ? "gnss" : state.positionMode === "MANUAL" ? "manual" : "dead_reckoning" };
+}
+
+function describeCandidate(c: LocateCandidate): string {
+  const seen = c.matched.map((m) => `${m.name ?? m.category}${m.object > 0 ? ` (${m.distanceM} m away)` : ""}`).join(" + ");
+  return seen;
+}
+
+async function locateTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
+  const objects = Array.isArray(input.objects) ? (input.objects as DescribedObject[]).slice(0, 3) : [];
+  if (objects.length === 0) return err("bad_request", "Give at least one object.");
+  const est = estimateFor(ctx);
+  if (!est) return err("no_position_estimate", "NAVIA has no position estimate at all (no GPS fix yet and no manual start).");
+  if (!ctx.runtime.mapFeatures) return err("map_data_unavailable", "No map data source is available on this device.");
+  const { route } = ctx.runtime.getNavigation();
+  const radius = searchRadiusM(est.sigmaM);
+  let data: { features: import("../landmark-localizer").MapFeature[]; junctions: LatLon[] };
+  try {
+    data = await ctx.runtime.mapFeatures(est.location, Math.min(3000, radius * 1.5));
+  } catch (e) {
+    return err("map_data_unavailable", `Map data could not be loaded: ${(e as Error).message}`);
+  }
+  let r = locateByDescription({ objects, estimate: { location: est.location, sigmaM: est.sigmaM }, route: route?.geometry ?? null, features: data.features, junctions: data.junctions });
+  // Trip memory: an answer to "which one?" narrows the earlier candidates — the
+  // new description has to fit a place the previous one also fitted.
+  const prev = ctx.session.lastLocate;
+  let combined = false;
+  if (prev && prev.status === "ambiguous" && ctx.runtime.now().getTime() - prev.at < 180_000 && r.candidates.length > 0) {
+    const consistent = r.candidates.filter((c) => prev.candidates.some((p) => haversineMeters(p.location, c.location) <= 200));
+    if (consistent.length > 0 && consistent.length < Math.max(2, r.candidates.length) || (consistent.length === 1 && r.status !== "unique")) {
+      const renamed = consistent.map((c, i) => ({ ...c, id: `l${i + 1}` }));
+      r = { ...r, status: renamed.length === 1 && renamed[0]!.contradictions.length === 0 ? "unique" : "ambiguous", candidates: renamed, hint: renamed.length > 1 ? distinguish(renamed) : null };
+      combined = true;
+    }
+  }
+  ctx.session.lastLocate = { at: ctx.runtime.now().getTime(), status: r.status, candidates: r.candidates.map((c) => ({ id: c.id, location: c.location, farFromEstimate: c.farFromEstimate, label: describeCandidate(c) })) };
+  // The answer → action map is spelled out, so the driver's reply ("Харківська",
+  // "справа") leads straight to confirm_position instead of another search.
+  const then = (id: string) => `confirm_position ${id} driver_confirmed=true`;
+  const hint = r.hint == null ? null
+    : r.hint.kind === "side" ? { ask_about: "side_of_road", options: r.hint.options.map((o) => ({ ...o, if_driver_says_this: then(o.candidate) })) }
+    : r.hint.kind === "name" ? { ask_about: "which_name", options: r.hint.options.map((o) => ({ ...o, if_driver_says_this: then(o.candidate) })) }
+    : { ask_about: "is_there_nearby", category: r.hint.category, if_yes: r.hint.present_at.length === 1 ? then(r.hint.present_at[0]!) : "locate_by_description again with that object added", if_no: r.hint.absent_at.length === 1 ? then(r.hint.absent_at[0]!) : "locate_by_description again" };
+  const next = r.status === "unique"
+    ? (r.candidates[0]!.farFromEstimate ? `ask the driver to confirm, then confirm_position ${r.candidates[0]!.id} driver_confirmed=true` : `confirm_position ${r.candidates[0]!.id} now (the driver is next to what they described), then give the next maneuver`)
+    : r.status === "ambiguous" ? "ask the distinguishing_hint question; do not confirm yet"
+    : r.status === "none" ? "say it is not found nearby on the map; ask for another visible thing (shop or fuel sign, bus stop, metro, street name); do not guess"
+    : "the map has no such objects; ask about a shop, stop, metro or street name";
+  return {
+    content: {
+      status: r.status,
+      searched_radius_m: r.searchedRadiusM,
+      position_estimate: { source: est.source, uncertainty_m: Math.round(est.sigmaM) },
+      candidates: r.candidates.map((c) => ({
+        id: c.id,
+        seen: describeCandidate(c),
+        distance_from_estimate_m: Math.round(c.distanceFromEstimateM / 10) * 10,
+        on_route: c.onRoute,
+        ...(c.side ? { side_of_road: c.side } : {}),
+        ...(c.farFromEstimate ? { far_from_estimate: true } : {}),
+        ...(c.missing.length ? { not_found: c.missing.map((i) => objects[i]?.name_variants?.[0] ?? objects[i]?.category ?? "object") } : {}),
+        ...(c.contradictions.length ? { contradictions: c.contradictions } : {}),
+        nearby: c.nearby.slice(0, 5).map((n) => (n.name ? `${n.name} (${n.category})` : n.category)),
+      })),
+      ...(hint ? { distinguishing_hint: hint } : {}),
+      ...(r.unsupported.length ? { unsupported: r.unsupported, unsupported_note: "the map data has no such objects; ask about something else" } : {}),
+      data_source: "OpenStreetMap map data",
+      ...(combined ? { combined_with_previous_description: true } : {}),
+      next_step: next,
+    },
+    isError: false,
+  };
+}
+
+/** Next maneuvers as seen from `position` on the active route. */
+function guidanceFrom(ctx: ToolContext, position: LatLon): Record<string, unknown> | null {
+  const { route, state } = ctx.runtime.getNavigation();
+  if (!route || route.geometry.length < 2) return null;
+  const { index, timeline } = indexFor(route);
+  const alongNowM = index.project(position)?.alongM ?? 0;
+  const rc: RouteContext = {
+    route, index, timeline, position, alongNowM, secondsNow: timeline.secondsAt(alongNowM),
+    remainingM: Math.max(0, index.lengthM - alongNowM), remainingS: Math.max(0, timeline.secondsAt(index.lengthM) - timeline.secondsAt(alongNowM)), band: state.confidenceBand,
+  };
+  const { current, offsetInFirstM } = stepsAhead(rc);
+  const next = current[1] ?? null;
+  if (!next) return { next_maneuver: "arrive", distance_m: Math.round(rc.remainingM / 10) * 10 };
+  return {
+    next_maneuver: next.maneuver,
+    next_maneuver_road: next.roadName || "unnamed road",
+    distance_m: Math.round(Math.max(0, current[0]!.distanceM - offsetInFirstM) / 10) * 10,
+    distance_quality: `about ±${LANDMARK_FIX_ACCURACY_M} m (landmark fix)`,
+    remaining_km: km(rc.remainingM),
+  };
+}
+
+function confirmPositionTool(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  const id = typeof input.candidate_id === "string" ? input.candidate_id : "";
+  const last = ctx.session.lastLocate;
+  const cand = last?.candidates.find((c) => c.id === id);
+  if (!last || !cand) return err("unknown_candidate", "No such candidate: call locate_by_description first and use one of its ids.");
+  const confirmed = input.driver_confirmed === true;
+  if (last.status !== "unique" && !confirmed) return err("not_unique", "Several places match: ask the distinguishing question first; confirm only the place the driver then confirms.");
+  if (cand.farFromEstimate && !confirmed) return err("far_from_estimate", "This place is far from where NAVIA estimates the car: ask the driver to confirm it first.");
+  if (!ctx.runtime.applyLandmarkFix) return err("not_supported", "This navigation mode cannot take a landmark position.");
+  const r = ctx.runtime.applyLandmarkFix(cand.location, LANDMARK_FIX_ACCURACY_M);
+  if (!r.applied) {
+    const why = r.reason === "gnss_is_trusted" ? "GPS is healthy and wins over a landmark; nothing changed."
+      : r.reason === "off_route" ? `The place is ${r.offRouteM} m off the route: the driver has left the route; a new route from there is needed.`
+      : r.reason === "no_route" ? "There is no active route." : "The navigator cannot take this position.";
+    return err(r.reason ?? "not_applied", why);
+  }
+  ctx.session.recordAction({
+    at: ctx.runtime.now().getTime(), tool: "confirm_position", summary: `position set at ${cand.label}`,
+    undo: { tool: "undo_position_fix", input: {}, summary: "return to the previous position estimate" },
+  });
+  return { content: { status: "done", position: `next to ${cand.label}`, accuracy_m: LANDMARK_FIX_ACCURACY_M, ...(guidanceFrom(ctx, cand.location) ?? {}) }, isError: false };
+}
+
+function undoPositionFixTool(ctx: ToolContext): ToolOutcome {
+  if (!ctx.runtime.undoLandmarkFix || !ctx.runtime.undoLandmarkFix()) return { content: { status: "nothing_to_undo" }, isError: false };
+  return { content: { status: "undone", note: "back to the previous estimate; ask what the driver sees to locate again" }, isError: false, spoken: "Добре, повернуто попередню позицію." };
+}
+
+function safetyInfoTool(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  if (!ctx.runtime.safetyInfo) return err("safety_data_unavailable", "No air-alert or shelter data on this device.");
+  const info = ctx.runtime.safetyInfo();
+  const est = estimateFor(ctx);
+  const limit = numArg(input, "limit", 1, 5) ?? 3;
+  const now = ctx.runtime.now().getTime();
+  const shelters = est
+    ? info.shelters.map((s) => ({ s, d: haversineMeters(est.location, s.location) })).sort((a, b) => a.d - b.d).slice(0, limit)
+    : [];
+  const approximate = !!est && est.sigmaM > 60;
+  return {
+    content: {
+      alert: info.alert ? {
+        status: info.alert.active == null ? "unknown" : info.alert.active ? "active" : "none",
+        area: info.alert.area,
+        ...(info.alert.since ? { since_min: Math.max(0, Math.round((now - info.alert.since) / 60_000)) } : {}),
+        source: info.alert.source,
+        ...(info.alert.checkedAt ? { checked_min_ago: Math.max(0, Math.round((now - info.alert.checkedAt) / 60_000)) } : {}),
+      } : "unavailable",
+      shelters: shelters.map(({ s, d }) => {
+        const e = ctx.registry.registerPlace(`shelter:${s.id}`, { label: s.name, location: s.location, category: "shelter" });
+        return { id: e.id, name: s.name, kind: s.kind, distance_m: Math.round(d / 10) * 10, source: s.source };
+      }),
+      ...(est ? { position: { source: est.source, uncertainty_m: Math.round(est.sigmaM) }, ...(approximate ? { distance_note: `distances are from an estimate ±${Math.round(est.sigmaM)} m — say "about"` } : {}) } : { position: "unknown — no distances" }),
+      ...(info.shelters.length === 0 ? { shelters_note: "no shelter data loaded for this area" } : {}),
+      rule: "informational: never call a shelter or route safe",
+    },
+    isError: false,
+  };
 }
 
 /** Categories that make recognisable visual landmarks from a car. */
@@ -1165,6 +1335,10 @@ async function dispatchRead(name: CopilotToolName, input: Record<string, unknown
       case "find_destination": return await findDestination(input, ctx);
       case "check_landmark": return await checkLandmark(input, ctx);
       case "get_landmarks_ahead": return await landmarksAhead(input, ctx);
+      case "locate_by_description": return await locateTool(input, ctx);
+      case "confirm_position": return confirmPositionTool(input, ctx);
+      case "undo_position_fix": return undoPositionFixTool(ctx);
+      case "get_safety_info": return safetyInfoTool(input, ctx);
       case "remove_stop": return await removeStop(input, ctx);
       case "set_route_preferences": return await setRoutePreferences(input, ctx);
       case "cancel_pending_action": {

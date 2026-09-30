@@ -104,6 +104,11 @@ const NEUTER: [RegExp, string][] = [
   [/^(знайш(ов|ла|ло))(?=[\s,.!?:—-]|$)/iu, "Знайдено"], [/^(додав|додала|додало)(?=[\s,.!?:—-]|$)/iu, "Додано"], [/^(прибрав|прибрала|прибрало)(?=[\s,.!?:—-]|$)/iu, "Прибрано"],
   [/^(зберіг|зберегла|зберегло)(?=[\s,.!?:—-]|$)/iu, "Збережено"], [/^(встановив|встановила|встановило)(?=[\s,.!?:—-]|$)/iu, "Встановлено"], [/^(скасував|скасувала|скасувало)(?=[\s,.!?:—-]|$)/iu, "Скасовано"],
   [/^(змінив|змінила|змінило)(?=[\s,.!?:—-]|$)/iu, "Змінено"], [/^(перевірив|перевірила|перевірило)(?=[\s,.!?:—-]|$)/iu, "Перевірено"], [/^(зрозумів|зрозуміла|зрозуміло)(?=[\s,.!?:—-]|$)/iu, "Зрозуміло"],
+  // Russian replies: NAVIA is "it" there too.
+  [/^(понял|поняла)(?=[\s,.!?:—-]|$)/iu, "Понятно"], [/^(нашёл|нашел|нашла)(?=[\s,.!?:—-]|$)/iu, "Найдено"], [/^(добавил|добавила)(?=[\s,.!?:—-]|$)/iu, "Добавлено"],
+  [/^(убрал|убрала)(?=[\s,.!?:—-]|$)/iu, "Убрано"], [/^(сохранил|сохранила)(?=[\s,.!?:—-]|$)/iu, "Сохранено"], [/^(отменил|отменила)(?=[\s,.!?:—-]|$)/iu, "Отменено"],
+  [/^(изменил|изменила)(?=[\s,.!?:—-]|$)/iu, "Изменено"], [/^(проверил|проверила)(?=[\s,.!?:—-]|$)/iu, "Проверено"],
+  [/(^|,\s*)(вернулся|вернулась)(?=\s+к\s)/iu, "$1возвращаю"],
 ];
 export function neuterize(text: string): string {
   const ukrainian = /[іїєґ]/i.test(text);
@@ -145,17 +150,20 @@ const CHOICE = /(\sчи\s|\sабо\s|яку|який|яке|які|куди|ку
  * English → en, in Russian → ru, otherwise (Ukrainian, a single word, a mix) → uk.
  * The fast model otherwise drifts to Ukrainian from the Ukrainian place names.
  */
-export function replyLanguage(text: string): "uk" | "ru" | "en" {
+export function replyLanguage(text: string, previous: "uk" | "ru" | "en" | null = null): "uk" | "ru" | "en" {
   const t = text.trim();
   const words = t.split(/\s+/).filter((w) => /\p{L}/u.test(w));
-  if (words.length < 2) return "uk";
   const latin = (t.match(/[a-z]/gi) ?? []).length;
   const cyr = (t.match(/[а-яёіїєґ]/gi) ?? []).length;
-  if (latin > cyr * 2) return "en";
+  if (latin > cyr * 2 && words.length >= 2) return "en";
   if (/[іїєґ]/i.test(t)) return "uk";
-  if (/[ыэъё]/i.test(t) || /(^|\s)(что|где|как|сколько|ещё|еще|найди|найти|пути|дороге|хочу|мне|нужно|можно|давай|второе|первое|остановк|заправк\w* по дороге|пожалуйста)(\s|[.,!?]|$)/i.test(t)) return "ru";
+  if (/[ыэъё]/i.test(t) || RUSSIAN_WORDS.test(t)) return "ru";
+  // A one-word answer ("Харьковская", "справа") continues the conversation's language.
+  if (words.length < 3 && previous) return previous;
   return "uk";
 }
+/** Common Russian words that Ukrainian spells differently (no ы/э/ё needed to tell them apart). */
+const RUSSIAN_WORDS = /(^|[\s,.!?—-])(что|где|как|какая|какой|какое|какие|какую|сколько|ещё|еще|нет|вижу|видно|здесь|сейчас|куда|откуда|почему|теперь|опять|снова|сбился|потерялся|пропал|станцию|найди|найти|пути|дороге|хочу|мне|нужно|можно|давай|спасибо|хорошо|ладно|второе|первое|остановк\w*|пожалуйста|справа|слева|напротив|перекр[её]ст\w*)(?=[\s,.!?—-]|$)/iu;
 const LANGUAGE_NAME = { uk: "Ukrainian", ru: "Russian", en: "English" } as const;
 
 /** Marks NAVIA's self-check messages to the model (transcript replay recognises them). */
@@ -191,6 +199,8 @@ export function replyCorrection(text: string, trace: ToolTraceEntry[], hasPendin
 
 export class NaviaCopilot {
   readonly session = new CopilotSession();
+  /** The language of the conversation so far (short answers keep it). */
+  private replyLang: "uk" | "ru" | "en" | null = null;
   readonly registry = new EntityRegistry();
   private fallback: AIProvider;
 
@@ -199,6 +209,12 @@ export class NaviaCopilot {
   }
 
   /** The action (or plan of actions) awaiting the driver's yes/no, as one confirm-button line. */
+  /** A "where am I" dialogue is going on (the last locate_by_description was recent): the driver's next words belong to it. */
+  isLocating(nowMs = Date.now(), withinMs = 180_000): boolean {
+    const l = this.session.lastLocate;
+    return !!l && nowMs - l.at < withinMs;
+  }
+
   getPendingAction(): { tool: string; summary: string } | null {
     const ps = this.session.pendingActions;
     if (ps.length === 0) return null;
@@ -266,7 +282,7 @@ export class NaviaCopilot {
         role: "user",
         content: [
           { type: "text", text: buildTripSnapshot(this.options.runtime, this.session) },
-          ...(event ? [] : [{ type: "text" as const, text: `<reply_language>${LANGUAGE_NAME[replyLanguage(text)]}</reply_language>` }]),
+          ...(event ? [] : [{ type: "text" as const, text: `<reply_language>${LANGUAGE_NAME[this.replyLang = replyLanguage(text, this.replyLang)]}</reply_language>` }]),
           { type: "text", text },
         ],
       },

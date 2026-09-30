@@ -9,6 +9,9 @@
 //   route-geometry.ts / RoutingProvider / PlaceSearchProvider.
 
 import type { LandmarkCategory } from "../landmark-engine";
+import { LANDMARK_CATEGORIES as SEEN_CATEGORIES, UNSUPPORTED_CATEGORIES } from "../landmark-localizer";
+
+const LOCATE_CATEGORIES = [...SEEN_CATEGORIES, ...UNSUPPORTED_CATEGORIES];
 
 export type ToolDefinition = {
   name: string;
@@ -137,6 +140,57 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
       required: ["name_variants"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "locate_by_description",
+    description:
+      "Where is the driver, from what they describe seeing, when GPS is lost, unreliable or they feel lost ('I see a Fora and a junction after it', 'metro, and opposite it a Dnipro-M'). Put each thing they mention in objects (the first is what they are next to), with relations between them and the side of the road if they said it. The code searches REAL map data (OpenStreetMap) in the area where the car can be and along the route, checks the relations, and returns: unique (one place), ambiguous (several — with a hint: the one observation that separates them), none (nothing matches — ask for something else; never guess), or unsupported (the map has no data for that kind of thing). Candidates carry ids l1, l2…",
+    input_schema: {
+      type: "object",
+      properties: {
+        objects: {
+          type: "array", minItems: 1, maxItems: 3,
+          items: {
+            type: "object",
+            properties: {
+              category: { type: "string", enum: [...LOCATE_CATEGORIES], description: "What kind of thing. junction = a road junction/intersection. traffic_signals, traffic_sign, bridge, billboard are not in the map data (they come back as unsupported)." },
+              name_variants: { type: "array", items: { type: "string" }, maxItems: 6, description: "Name/brand as said plus spellings in Ukrainian, Russian and Latin ('Днипро-М', 'Дніпро-М', 'Dnipro-M'). Omit when no name was said ('some metro, don't know which')." },
+              side: { type: "string", enum: ["left", "right", "ahead", "behind"], description: "Side of the road relative to the direction of travel, only if the driver said it." },
+              relation: { type: "string", enum: ["near", "opposite", "after", "before", "at_junction"], description: "Relation to object `of`: opposite = across the road; after/before = further/earlier in the direction of travel." },
+              of: { type: "integer", minimum: 0, maximum: 2, description: "Index of the object this relation refers to (default 0)." },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["objects"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "confirm_position",
+    description:
+      "Place the navigator at a location candidate (l1…) from locate_by_description: guidance then continues from there. Only for a UNIQUE candidate, or when the driver confirmed this exact place in their CURRENT message (answered the distinguishing question, said 'yes, I'm there'). Refused otherwise — ask the hint question first. Returns the next maneuver from that point. Undo with undo_position_fix.",
+    input_schema: {
+      type: "object",
+      properties: {
+        candidate_id: { type: "string", description: "l1, l2… from the latest locate_by_description." },
+        driver_confirmed: { type: "boolean", description: "true only if the driver's CURRENT message confirms this exact place." },
+      },
+      required: ["candidate_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "undo_position_fix",
+    description: "Undo the last confirm_position ('no, I'm not there', 'that was the wrong shop'): the navigator returns to its previous estimate.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "get_safety_info",
+    description:
+      "Air-alert status for the driver's area and the nearest known shelters (official open data and OpenStreetMap), with distances from NAVIA's position estimate and how uncertain that estimate is. Shelters get place ids usable with set_destination. Informational only: never call a place or route safe.",
+    input_schema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 5, description: "How many shelters. Default 3." } }, additionalProperties: false },
   },
   {
     name: "get_landmarks_ahead",
@@ -283,7 +337,7 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
 
 export type CopilotToolName =
   | "search_along_route" | "search_near" | "get_place_details" | "get_route_overview" | "compare_routes" | "get_traffic_ahead"
-  | "find_destination" | "check_landmark" | "get_landmarks_ahead" | "add_stop" | "remove_stop" | "set_destination"
+  | "find_destination" | "check_landmark" | "get_landmarks_ahead" | "locate_by_description" | "confirm_position" | "undo_position_fix" | "get_safety_info" | "add_stop" | "remove_stop" | "set_destination"
   | "set_route_preferences" | "switch_route" | "reorder_stops" | "set_reminder" | "cancel_reminder"
   | "remember_preference" | "forget_preference" | "cancel_pending_action";
 
@@ -300,7 +354,8 @@ export type ToolPolicy = "read" | "safe_action" | "confirm";
 
 export const TOOL_POLICY: Record<CopilotToolName, ToolPolicy> = {
   search_along_route: "read", search_near: "read", get_place_details: "read", get_route_overview: "read",
-  compare_routes: "read", get_traffic_ahead: "read", find_destination: "read", check_landmark: "read", get_landmarks_ahead: "read",
+  compare_routes: "read", get_traffic_ahead: "read", find_destination: "read", check_landmark: "read", get_landmarks_ahead: "read", locate_by_description: "read", get_safety_info: "read",
+  confirm_position: "safe_action", undo_position_fix: "safe_action",
   add_stop: "confirm", set_destination: "confirm", switch_route: "confirm", reorder_stops: "confirm",
   remove_stop: "safe_action", set_route_preferences: "safe_action", set_reminder: "safe_action", cancel_reminder: "safe_action",
   remember_preference: "safe_action", forget_preference: "safe_action", cancel_pending_action: "safe_action",

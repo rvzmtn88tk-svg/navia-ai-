@@ -10,6 +10,7 @@ import type { TrafficProvider } from "../traffic";
 import { UnavailableTrafficProvider } from "../traffic";
 import type { TripPlanner } from "../trip-planner";
 import type { PreferenceStore } from "./preferences";
+import type { MapFeature } from "../landmark-localizer";
 
 export type SavedPlace = { kind: "home" | "work"; label: string; location: LatLon };
 
@@ -34,13 +35,27 @@ export interface CopilotRuntime {
   localPois(): readonly POI[];
   /** The driver's long-term preferences, when the app keeps them. */
   preferences?(): PreferenceStore | null;
+  /** Map features and road junctions around a point (locate_by_description); absent = no map data. */
+  mapFeatures?(center: LatLon, radiusM: number): Promise<{ features: MapFeature[]; junctions: LatLon[] }>;
+  /** Move the navigation estimate to a confirmed landmark (NavigationEngine.applyLandmarkFix). */
+  applyLandmarkFix?(location: LatLon, accuracyM: number): { applied: boolean; reason?: string; offRouteM?: number };
+  undoLandmarkFix?(): boolean;
+  /** Air-alert status and known shelters the app has loaded (get_safety_info); absent = no data. */
+  safetyInfo?(): SafetyInfo;
 }
+
+export type SafetyInfo = {
+  alert: { active: boolean | null; area: string; since?: number; source: string; checkedAt?: number } | null;
+  shelters: { id: string; name: string; location: LatLon; kind: string; source: string }[];
+};
 
 /** Anything that owns the active route: NavigationEngine and DemoEngine both qualify. */
 export interface CopilotNavigationHost {
   getState(): NavigationState;
   getRoute(): Route | null;
   applyRoute(route: Route): void;
+  applyLandmarkFix?(location: LatLon, accuracyM: number): { applied: boolean; reason?: string; offRouteM?: number };
+  undoLandmarkFix?(): boolean;
 }
 
 export type EngineRuntimeOptions = {
@@ -53,6 +68,8 @@ export type EngineRuntimeOptions = {
   localPois?: () => readonly POI[];
   preferences?: PreferenceStore | null;
   now?: () => Date;
+  mapFeatures?: (center: LatLon, radiusM: number) => Promise<{ features: MapFeature[]; junctions: LatLon[] }>;
+  safetyInfo?: () => SafetyInfo;
 };
 
 export class EngineCopilotRuntime implements CopilotRuntime {
@@ -80,6 +97,21 @@ export class EngineCopilotRuntime implements CopilotRuntime {
   applyRoute(route: Route): void { this.host().applyRoute(route); }
   isNetworkAvailable(): boolean { return this.host().getState().networkAvailable; }
   localPois(): readonly POI[] { return this.options.localPois?.() ?? []; }
+  mapFeatures(center: LatLon, radiusM: number): Promise<{ features: MapFeature[]; junctions: LatLon[] }> {
+    if (!this.options.mapFeatures) return Promise.reject(new Error("no map data source"));
+    return this.options.mapFeatures(center, radiusM);
+  }
+  safetyInfo(): SafetyInfo {
+    return this.options.safetyInfo?.() ?? { alert: null, shelters: [] };
+  }
+  applyLandmarkFix(location: LatLon, accuracyM: number): { applied: boolean; reason?: string; offRouteM?: number } {
+    const h = this.host();
+    return h.applyLandmarkFix ? h.applyLandmarkFix(location, accuracyM) : { applied: false, reason: "not_supported" };
+  }
+  undoLandmarkFix(): boolean {
+    const h = this.host();
+    return h.undoLandmarkFix ? h.undoLandmarkFix() : false;
+  }
   preferences(): PreferenceStore | null { return this.options.preferences ?? null; }
 }
 
@@ -205,6 +237,8 @@ export class CopilotSession {
   private reminderSeq = 0;
   history: DialogueTurn[] = [];
   lastSmartTurnAt: number | null = null;
+  /** The latest locate_by_description result (candidate ids l1… → place), for confirm_position. */
+  lastLocate: { at: number; status: string; candidates: { id: string; location: LatLon; farFromEstimate: boolean; label: string }[] } | null = null;
 
   /** First pending action (single-action compatibility). */
   get pending(): PendingAction | null { return this.pendingActions[0] ?? null; }

@@ -21,7 +21,16 @@ function clock(d: Date): string {
 function maneuverLine(step: RouteStep | null, distanceM: number | null, state: NavigationState): string {
   if (!step) return "none";
   const road = step.roadName ? ` onto ${step.roadName}` : "";
-  const sigma = state.positioning?.maneuverUncertaintyM;
+  const onDr = !state.positioning && (state.positionMode === "DEAD_RECKONING" || state.positionMode === "MANUAL");
+  const sigma = state.positioning?.maneuverUncertaintyM ?? (onDr ? state.positionUncertaintyM ?? null : null);
+  // Route dead reckoning (no resilient navigator): the error bar decides how precise to be.
+  if (onDr) {
+    if (sigma == null || sigma > 150 || distanceM == null) return `${step.maneuver}${road} (distance withheld: position uncertain, ±${sigma != null ? Math.round(sigma) : "?"} m)`;
+    // Closer than the error bar: "in 60 m" would be false precision.
+    if (distanceM <= sigma * 1.2) return `${step.maneuver}${road} (close — within the position uncertainty ±${Math.round(sigma / 10) * 10} m; no distance, ask the driver to watch for it)`;
+    if (sigma > 30) return `${step.maneuver}${road} in about ${Math.round(distanceM / 10) * 10} m (±${Math.round(sigma / 10) * 10} m)`;
+    return `${step.maneuver}${road} in ${Math.round(distanceM / 10) * 10} m`;
+  }
   // GNSS-independent positioning knows how uncertain the distance is: give it with its error bar while that is still useful.
   if (state.positioning?.guidance === "none") {
     return `${step.maneuver}${road} (distance withheld: position temporarily unavailable)`;
@@ -47,6 +56,18 @@ function positioningLine(state: NavigationState): string | null {
     `${p.gnssSuspectedSpoofing ? " suspected_spoofing=yes" : ""} uncertainty=±${Math.round(p.uncertaintyM)} m` +
     ` confidence=${p.locationConfidence} maneuver_guidance=${p.guidance}` +
     ` motion_sensors=${p.imuAvailable ? "yes" : "no"} last_trusted_fix=${ago}`;
+}
+
+/** The app's route dead reckoning (no resilient navigator): where the estimate counts from and how good it is. */
+function deadReckoningLine(state: NavigationState): string | null {
+  if (state.positionMode !== "DEAD_RECKONING" && state.positionMode !== "MANUAL") return null;
+  const a = state.deadReckoningAnchor;
+  const from = !a ? "unknown" : a.source === "landmark" ? `a landmark the driver confirmed ${a.ageS} s ago` : a.source === "manual" ? `a point the driver set ${a.ageS} s ago` : a.source === "confirmation" ? `a maneuver the driver confirmed ${a.ageS} s ago` : `the last trusted GPS fix ${a.ageS} s ago`;
+  const sigma = state.positionUncertaintyM;
+  const guidance = sigma == null ? "none" : sigma <= 30 ? "exact" : sigma <= 150 ? "approximate" : "none";
+  return `positioning: location_state=${guidance === "none" ? "UNCERTAIN" : "ESTIMATED"} source=DEAD_RECKONING (no usable GPS: along the route from ${from}, speed from motion sensors) ` +
+    `uncertainty=±${sigma != null ? Math.round(sigma) : "?"} m maneuver_guidance=${guidance}` +
+    (guidance !== "exact" ? " locate_by_description=available (ask what the driver sees)" : "");
 }
 
 /**
@@ -75,7 +96,7 @@ export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSessi
     `nav: mode=${state.mode} gnss=${state.gnss} position_confidence=${state.confidenceBand}` +
     ` internet=${state.networkAvailable ? "online" : "offline (routing/place search may be unavailable; GPS is separate)"}${state.offRoute ? " off_route=yes" : ""}`,
   );
-  const positioning = positioningLine(state);
+  const positioning = positioningLine(state) ?? deadReckoningLine(state);
   if (positioning) lines.push(positioning);
   lines.push(`speed: ${state.speedMps != null ? `${Math.round(state.speedMps * 3.6)} km/h` : "unknown"}`);
 

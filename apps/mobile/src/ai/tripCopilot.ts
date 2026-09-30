@@ -44,3 +44,19 @@ export function yesNo(text: string): "yes" | "no" | null {
   if (NO.test(t)) return "no";
   return null;
 }
+
+/** What the on-device navigator keeps even while GPS is lost: the instant emergency flow and "repeat". */
+const LOCAL_ONLY = new Set(["emergency", "repeat"]);
+
+/**
+ * While a trip runs and GPS is not what places the car (lost, dead reckoning,
+ * a manual point), talk about where we are and where to go goes to the
+ * reasoning co-pilot, which can locate the car from what the driver sees.
+ * Decided by the navigation state, never by the driver's wording.
+ */
+export function wantsLocatingCopilot(localIntent: string, nav: { routeActive: boolean; positionMode?: string | null; gnss: string }, locating: boolean): boolean {
+  if (LOCAL_ONLY.has(localIntent)) return false;
+  if (locating) return true;
+  if (!nav.routeActive) return false;
+  return nav.positionMode === "DEAD_RECKONING" || nav.positionMode === "MANUAL" || nav.gnss !== "NORMAL";
+}

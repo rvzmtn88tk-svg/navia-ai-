@@ -21,7 +21,7 @@
 import { create } from "zustand";
 import {
   NavigationEngine, DemoEngine, DeterministicDemoAIProvider, TripPlanner, NaviaCopilot, EngineCopilotRuntime, BackendLLMClient,
-  LocalPlaceSearchProvider, OverpassPlaceSearchProvider, ActiveTripCache, PreferenceStore, ProactiveEngine,
+  LocalPlaceSearchProvider, OverpassPlaceSearchProvider, FallbackPlaceSearchProvider, ActiveTripCache, PreferenceStore, ProactiveEngine,
   DEMO_KYIV_TO_BORYSPIL_GRAPH, DEMO_ORIGIN, DEMO_DESTINATION, DEMO_POIS, DEMO_ROUTE_POIS,
   type NavigationState, type Route, type LatLon, type GNSSRawSample, type SavedPlace,
 } from "@navia/core";
@@ -33,6 +33,8 @@ import type { GeolocatedAirAlert } from "../providers/GeolocatedAirAlertProvider
 import type { AirThreatSummary } from "../providers/AirThreatSummaryProvider";
 import { nextAlertEndedAt } from "./liveStatus";
 import { usePlacesStore } from "../store/placesStore";
+import { TilePlaceSearchProvider, tileLocalizationData } from "../providers/vectorTiles";
+import { useNearbyStore } from "../store/nearbyStore";
 
 const idleState: NavigationState = {
   mode: "IDLE", position: null, trustedPosition: null, gnss: "LOST",
@@ -151,6 +153,9 @@ const llm = config.aiProxyUrl
   : null;
 
 const overpass = config.overpassUrl ? new OverpassPlaceSearchProvider({ endpoint: config.overpassUrl }) : null;
+// Map tiles first (keyless CDN, the same data the map shows; reachable where the
+// public Overpass servers are not), Overpass as the fallback (opening hours, brands).
+const placeSearch = new FallbackPlaceSearchProvider([new TilePlaceSearchProvider(), ...(overpass ? [overpass] : [])]);
 const demoPlaces = new LocalPlaceSearchProvider(DEMO_PLACES, "demo");
 const geocoder = new OnlineGeocoderProvider();
 const aiEnabled = () => useNaviaStore.getState().aiContextConsent;
@@ -171,10 +176,23 @@ const realRuntime = new EngineCopilotRuntime({
   // Online OSM search only while the network is up; otherwise the co-pilot
   // reports place search as unavailable (the offline POI index plugs in
   // here as a LocalPlaceSearchProvider once scripts/data has produced it).
-  places: () => (navigationEngine.getState().networkAvailable ? overpass : null),
+  places: () => (navigationEngine.getState().networkAvailable ? placeSearch : null),
   geocoder,
   savedPlaces,
   preferences: preferenceStore,
+  // "I see a Fora and a junction": real map features around the estimate (map tiles).
+  mapFeatures: (center, radiusM) => tileLocalizationData(center, radiusM),
+  // Alert status and the shelters already loaded for the Safety panel.
+  safetyInfo: () => {
+    const alert = useNaviaStore.getState().alert;
+    const nearby = useNearbyStore.getState().byCategory;
+    const shelters = [...(nearby.shelter?.places ?? []), ...(nearby.resilience?.places ?? [])]
+      .map((p) => ({ id: p.id, name: p.name, location: p.location, kind: p.category, source: p.source }));
+    return {
+      alert: alert ? { active: alert.active, area: alert.locationLabel || alert.region, since: alert.since, source: alert.source, checkedAt: alert.updatedAt } : null,
+      shelters,
+    };
+  },
 });
 export const realCopilot = new NaviaCopilot({ runtime: realRuntime, llm, aiEnabled });
 

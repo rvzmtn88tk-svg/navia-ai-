@@ -1,0 +1,16 @@
+{
+ "source": "OpenFreeMap vector tiles, planet 20260927_080001_pt, z14",
+ "downloadedAt": "2026-09-30",
+ "license": "Map data \u00a9 OpenStreetMap contributors, ODbL 1.0; tiles OpenFreeMap",
+ "tiles": [
+  "14/9586/5527",
+  "14/9586/5528",
+  "14/9587/5527",
+  "14/9587/5528"
+ ],
+ "around": {
+  "lat": 50.4017,
+  "lon": 30.6531,
+  "name": "metro Kharkivska, Kyiv"
+ }
+}

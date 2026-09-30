@@ -5,7 +5,7 @@
 // intersecting the route with rail lines and waterways.
 import { VectorTile, type VectorTileLayer } from "@mapbox/vector-tile";
 import Pbf from "pbf";
-import { junctionsFromRoads, type LatLon, type MapFeature } from "@navia/core";
+import { RouteGeometryIndex, haversineMeters, junctionsFromRoads, matchesFilter, nameMatch, type LandmarkCategory, type LatLon, type MapFeature, type PlaceFilter, type PlaceSearchProvider, type POI } from "@navia/core";
 import { INVISIBLE_NAME, type LandmarkKind, type RawLandmark } from "../navigation/landmarks";
 import type { FetchCategory } from "./NearbyPlacesProvider";
 
@@ -300,4 +300,85 @@ export async function tileLandmarksAlong(geometry: LatLon[]): Promise<RawLandmar
   crossings(geometry, rails).forEach((c, i) => out.push({ id: `rail-${i}`, kind: "rail_crossing", name: null, location: c.at }));
   crossings(geometry, rivers).forEach((c, i) => out.push({ id: `bridge-${i}`, kind: "bridge", name: c.name ? `через річку ${c.name}` : null, location: c.at }));
   return out;
+}
+
+// ——— Place search for the co-pilot (keyless, works when Overpass is down) ———
+
+/** Map-tile POI → the co-pilot's place category. */
+export function tileCoreCategory(p: Pick<TilePoi, "cls" | "sub">): LandmarkCategory | null {
+  if (p.cls === "fuel") return p.sub === "charging_station" ? "ev_charging" : "fuel";
+  if (p.sub === "charging_station") return "ev_charging";
+  if (p.cls === "restaurant") return "restaurant";
+  if (p.cls === "cafe") return "cafe";
+  if (p.cls === "fast_food") return "fast_food";
+  if (p.cls === "parking" && p.sub !== "bicycle_parking") return "parking";
+  if (p.cls === "pharmacy" || p.sub === "chemist") return "pharmacy";
+  if (p.cls === "hospital") return "hospital";
+  if (p.sub === "supermarket") return "supermarket";
+  if (p.sub === "mall" || p.sub === "department_store") return "shopping_centre";
+  if (p.cls === "toilets") return "toilets";
+  if (p.cls === "lodging" && (p.sub === "hotel" || p.sub === "motel" || p.sub === "hostel")) return "hotel";
+  if (p.cls === "atm" || p.cls === "bank") return "atm";
+  if (p.sub === "car_wash") return "car_wash";
+  if (p.cls === "car" && p.sub === "car_repair") return "car_repair";
+  if (p.cls === "place_of_worship") return "church";
+  if (p.sub === "school") return "school";
+  return null;
+}
+
+function toPoi(p: TilePoi): POI | null {
+  const category = tileCoreCategory(p);
+  if (!category || !p.name) return null;
+  return { id: p.id, name: p.name, category, location: p.location, source: "osm-online" };
+}
+
+function poiMatches(poi: POI, filter: PlaceFilter): boolean {
+  if (filter.categories?.length && !filter.categories.includes(poi.category)) return false;
+  if (!filter.nameVariants?.length) return true;
+  // Tiles carry the Ukrainian name: compare across scripts ("OKKO" = "ОККО").
+  return matchesFilter(poi, filter) || filter.nameVariants.some((v) => nameMatch(v, poi.name) >= 0.9);
+}
+
+const TILE_SEARCH_MAX = 150;
+
+export class TilePlaceSearchProvider implements PlaceSearchProvider {
+  readonly source = "osm-online" as const;
+
+  async searchAround(center: LatLon, radiusM: number, filter: PlaceFilter, limit = 50): Promise<POI[]> {
+    const { features } = await tileLocalizationData(center, radiusM);
+    const seen = new Set<string>();
+    return features
+      .map((f) => toPoi({ id: f.id, cls: f.cls, sub: f.sub ?? "", name: f.name, location: f.location }))
+      .filter((p): p is POI => !!p && poiMatches(p, filter))
+      .filter((p) => { const k = `${p.name}@${p.location.lat.toFixed(4)},${p.location.lon.toFixed(4)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+      .map((p) => ({ p, d: haversineMeters(center, p.location) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, limit)
+      .map((x) => x.p);
+  }
+
+  async searchAlongPolyline(polyline: LatLon[], bufferM: number, filter: PlaceFilter, limit = 50): Promise<POI[]> {
+    if (polyline.length === 0) return [];
+    if (polyline.length === 1) return this.searchAround(polyline[0]!, bufferM, filter, limit);
+    const keys = new Map<string, { x: number; y: number }>();
+    for (const t of routeTiles(polyline, Number.MAX_SAFE_INTEGER)) {
+      // A wide buffer reaches into the neighbouring tiles.
+      const r = bufferM > 300 ? 1 : 0;
+      for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) keys.set(`${t.x + dx}/${t.y + dy}`, { x: t.x + dx, y: t.y + dy });
+    }
+    // Never silently search only part of a long route.
+    if (keys.size > TILE_SEARCH_MAX) throw new Error(`route too long for map-tile search (${keys.size} tiles)`);
+    const decoded = await loadTiles([...keys.values()]);
+    const index = new RouteGeometryIndex(polyline);
+    const seen = new Set<string>();
+    return decoded.flatMap((t) => t.pois)
+      .map(toPoi)
+      .filter((p): p is POI => !!p && poiMatches(p, filter))
+      .filter((p) => { const k = `${p.name}@${p.location.lat.toFixed(4)},${p.location.lon.toFixed(4)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+      .map((p) => ({ p, d: index.project(p.location)?.offsetM ?? Infinity }))
+      .filter((x) => x.d <= bufferM)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, limit)
+      .map((x) => x.p);
+  }
 }

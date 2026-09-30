@@ -2,7 +2,7 @@
 // turn, and the shape of spoken answers (no lists, no SKIP, not too long).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { capSpokenWords, replyCorrection, toSpeakable, type ToolTraceEntry } from "../src/copilot/copilot";
+import { capSpokenWords, neuterize, replyCorrection, toSpeakable, type ToolTraceEntry } from "../src/copilot/copilot";
 
 const t = (tool: string, isError = false): ToolTraceEntry => ({ tool, input: {}, isError, result: {}, ms: 1 });
 
@@ -74,4 +74,10 @@ test("NAVIA about itself in the neuter, at the start of a sentence only", async 
   assert.equal(neuterize("Водій знайшов заправку."), "Водій знайшов заправку.");
   assert.equal(neuterize("WOG справа, почти без обʼїзду, відкрита."), "WOG справа, майже без обʼїзду, відкрита.");
   assert.equal(neuterize("Заправка почти рядом."), "Заправка почти рядом.");
+});
+
+test("Russian replies speak in the neuter too", () => {
+  assert.equal(neuterize("Понял, вы у станции Харківська."), "Понятно, вы у станции Харківська.");
+  assert.equal(neuterize("Хорошо, вернулся к предыдущей позиции."), "Хорошо, возвращаю к предыдущей позиции.");
+  assert.equal(neuterize("Нашла две заправки."), "Найдено две заправки.");
 });

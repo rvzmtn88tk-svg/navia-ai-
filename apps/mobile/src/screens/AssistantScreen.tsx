@@ -18,7 +18,7 @@ import { detectIntent, detectKind, directionWords, greeting, suggestions, walkMi
 import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { askSmart, Navigator, wantsModel, type NavigatorReply } from "../ai/navigator/navigator";
 import { languageLevel, remoteLanguageAvailable } from "../ai/navigator/languageEngine";
-import { wantsTripCopilot, yesNo } from "../ai/tripCopilot";
+import { wantsLocatingCopilot, wantsTripCopilot, yesNo } from "../ai/tripCopilot";
 import { activeCopilot, useNaviaStore } from "../engine/naviaController";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { useCopilotActions } from "../ai/useCopilotActions";
@@ -128,7 +128,8 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     // tool-calling trip co-pilot (packages/core/src/copilot).
     const copilot = activeCopilot();
     const yn = copilot.getPendingAction() ? yesNo(text) : null;
-    const tripAction = yn != null || wantsTripCopilot(text, store.route != null);
+    const locating = remote && wantsLocatingCopilot(understand(text).intent, { routeActive: store.route != null, positionMode: store.state.positionMode, gnss: store.state.gnss }, copilot.isLocating?.() ?? false);
+    const tripAction = yn != null || wantsTripCopilot(text, store.route != null) || locating;
     const needsModel = tripAction || (remote && wantsModel(text, understand(text)));
     if (needsModel && remote && !store.aiConsentAsked) {
       pendingQuestion.current = { text, spoken };

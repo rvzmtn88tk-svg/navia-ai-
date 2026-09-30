@@ -229,8 +229,10 @@ type Hit = { f: MapFeature | null; loc: LatLon; nameScore: number; category: str
 function matchesObject(o: DescribedObject, f: MapFeature): number {
   const cats = featureCategories(f);
   if (o.category && o.category !== "junction" && !cats.includes(o.category as SeenCategory)) {
-    // A named brand is enough on its own ("Дніпро-М" without a category).
-    if (!(o.name_variants?.length)) return 0;
+    // A named brand whose map class is unknown still counts ("Дніпро-М" filed
+    // oddly); a feature of another known kind does not (a bus stop named after
+    // the metro station is not the metro).
+    if (!(o.name_variants?.length) || cats.length > 0) return 0;
   }
   if (o.name_variants?.length) {
     if (!f.name) return 0;
@@ -314,7 +316,9 @@ export function locateByDescription(req: LocateRequest): LocateResult {
     const side = bearing != null ? (relative(onR && onR.distanceM <= 200 ? routePoint(route!, onR.progressM) : req.estimate.location, bearing, location).across >= 0 ? "right" : "left") : null;
     const contradictions: string[] = [];
     if (anchorObj.side && (anchorObj.side === "left" || anchorObj.side === "right") && side && anchorObj.side !== side) contradictions.push(`described on the ${anchorObj.side}, map has it on the ${side}`);
-    const prior = Math.exp(-0.5 * (dEst / sigmaEff) ** 2);
+    // Heavy-tailed on purpose: the dead-reckoning σ is itself an estimate, and two
+    // places both outside it must not look "4× more likely" than each other.
+    const prior = 1 / (1 + (dEst / sigmaEff) ** 2);
     const completeness = (objects.length - missing.length) / objects.length;
     const onRoute = !!onR && onR.distanceM <= ON_ROUTE_M;
     const score = prior * (nameScore / objects.length) * completeness ** 2 * (contradictions.length ? 0.25 : 1) * (onRoute ? 1.5 : 1);
@@ -332,7 +336,9 @@ export function locateByDescription(req: LocateRequest): LocateResult {
   // Same place: close together, or the same named anchor (two entrances of one metro station).
   const same = (p: LocateCandidate, c: LocateCandidate) => {
     const d = haversineMeters(p.location, c.location);
-    return d <= SAME_PLACE_M || (MULTI_ENTRANCE.has(p.matched[0]?.category ?? "") && !!anchorName(p) && anchorName(p) === anchorName(c) && d <= SAME_NAMED_PLACE_M);
+    const pn = anchorName(p), cn = anchorName(c);
+    const sameName = !!pn && !!cn && (pn === cn || nameMatch(pn, cn) >= 0.9 || nameMatch(cn, pn) >= 0.9);
+    return d <= SAME_PLACE_M || (MULTI_ENTRANCE.has(p.matched[0]?.category ?? "") && sameName && d <= SAME_NAMED_PLACE_M);
   };
   for (const c of raw) {
     const p = places.find((x) => same(x, c));
