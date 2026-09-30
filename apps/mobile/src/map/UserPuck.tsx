@@ -114,7 +114,8 @@ export const UserPuck = React.memo(function UserPuck({ position, quality, billbo
   // Accuracy radius in metres → pixels: at zoom z one pixel covers
   // 156543·cos(lat)/2^z metres. Exponential base-2 interpolation reproduces it.
   const metresPerPixelZ0 = 156543.03 * Math.cos(shown.lat * Math.PI / 180);
-  const accuracy = Math.max(8, Math.min(shown.accuracyM ?? 15, 250));
+  // The real error circle, also for a coarse position (never drawn smaller than it is).
+  const accuracy = Math.max(8, Math.min(shown.accuracyM ?? 15, 1500));
   const radiusZ0 = accuracy / metresPerPixelZ0;
 
   return (

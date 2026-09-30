@@ -23,7 +23,9 @@ type NearbyState = {
 export const useNearbyStore = create<NearbyState>((set, get) => ({
   byCategory: {},
   load: async (category, force = false, radiusM) => {
-    const fix = useNaviaStore.getState().currentFix;
+    // Nearby places and shelters also around an approximate position (±a few hundred metres is fine for "nearest").
+    const st = useNaviaStore.getState();
+    const fix = st.currentFix ?? (st.approxFix && (st.approxFix.accuracyM ?? Infinity) <= 500 ? st.approxFix : null);
     const prev = get().byCategory[category];
     const radius = radiusM === undefined ? prev?.radiusM ?? null : radiusM;
     if (!fix) return prev?.places ?? [];

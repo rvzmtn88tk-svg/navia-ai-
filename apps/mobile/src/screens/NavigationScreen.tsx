@@ -43,6 +43,7 @@ import { PRIORITY } from "../voice/speechQueue";
 import { easing, elevation, iconSize, motion, radius, space, type ThemeColors } from "../theme/tokens";
 import { isNetworkError } from "../providers/netError";
 import { startBackgroundLocation, stopBackgroundLocation } from "../background/backgroundLocation";
+import { plausibleApproxFix, shownFix } from "../engine/approxFix";
 import { startTripRecording, type TripSession } from "../trips/tripLog";
 
 /** The "allow Always" hint is shown once per app run, not on every trip. */
@@ -180,7 +181,12 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       if (cancelled) return;
       recording?.gnss(sample);
       lastSampleAt = Date.now();
-      navigationEngine.pushGnssSample(sample, Date.now());
+      const trusted = navigationEngine.pushGnssSample(sample, Date.now());
+      // Not navigation-grade (e.g. ±65 m indoors, no known Wi-Fi): still offer it as a start point.
+      if (!trusted) {
+        const st = useNaviaStore.getState();
+        if (plausibleApproxFix(sample, shownFix(st.currentFix, st.approxFix), Date.now())) st.setApproxFix(sample);
+      }
       navigationEngine.tick(Date.now());
       const s = navigationEngine.getState();
       const origin = s.gnss === "NORMAL" ? s.trustedPosition?.position : null;
@@ -315,6 +321,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const arrived = phase === "navigating" && (state.mode === "ARRIVED" || (!!route && state.routeRemainingM < 30 && state.positionMode === "GNSS"));
   const lastFix = !isDemo ? navigationEngine.getLastTrustedFix() : null;
   const lastFixAgeMin = lastFix ? Math.round((Date.now() - lastFix.timestamp) / 60_000) : null;
+  // A fresh approximate position (the phone knows roughly where it is, just not to 55 m).
+  const approxFixNow = useNaviaStore((s) => s.approxFix);
+  const approxStart = !isDemo && approxFixNow && (approxFixNow.accuracyM ?? Infinity) <= 300 && Date.now() - approxFixNow.timestamp < 60_000 ? approxFixNow : null;
 
   // Fit the whole route once it arrives in overview, above the (measured) panel.
   const [panelH, setPanelH] = useState(300);
@@ -542,8 +551,11 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
               <View style={styles.loading}>
                 <Text variant="headline" color="warning">{t("resilient.noFixTitle")}</Text>
                 <Text variant="callout" color="secondary">{t("resilient.noFixBody")}</Text>
+                {approxStart && (
+                  <Button label={t("resilient.fromApprox", { meters: Math.round((approxStart.accuracyM ?? 0) / 5) * 5 })} icon="locateFilled" onPress={() => startFromRef.current?.({ lat: approxStart.lat, lon: approxStart.lon })} />
+                )}
                 {lastFix && lastFixAgeMin != null && lastFixAgeMin <= 10 && (
-                  <Button label={t("resilient.fromLastFix", { minutes: Math.max(1, lastFixAgeMin) })} icon="clock" onPress={() => startFromRef.current?.(lastFix.position)} />
+                  <Button label={t("resilient.fromLastFix", { minutes: Math.max(1, lastFixAgeMin) })} icon="clock" variant={approxStart ? "secondary" : undefined} onPress={() => startFromRef.current?.(lastFix.position)} />
                 )}
                 <Button label={t("resilient.pickOnMap")} icon="pin" variant="secondary" onPress={() => setPicking(true)} />
               </View>

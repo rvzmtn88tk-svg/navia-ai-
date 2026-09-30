@@ -13,6 +13,8 @@ import type { FetchCategory } from "../providers/NearbyPlacesProvider";
 import { useNearbyStore } from "../store/nearbyStore";
 
 import { healthFrom, type GnssHealth, type GpsStatus } from "./liveStatus";
+import { plausibleApproxFix, shownFix } from "./approxFix";
+import { recordFix } from "../net/netLog";
 
 export type { GnssHealth, GpsStatus };
 export type LoadState = "idle" | "loading" | "ready" | "error";
@@ -82,7 +84,19 @@ export function useLiveContext() {
     if (!useNaviaStore.getState().isDemoMode) useNaviaStore.getState().refresh();
     setHealth(healthFrom(state.gnss));
     setGpsStatus("ready");
-    if (!accepted || state.trustedPosition?.position.timestamp !== sample.timestamp) return;
+    const trusted = accepted && state.trustedPosition?.position.timestamp === sample.timestamp;
+    recordFix(sample, trusted);
+    if (!trusted) {
+      // Not good enough to navigate by, but still where the phone is: draw it
+      // with its error circle instead of showing nothing (approxFix.ts).
+      const st = useNaviaStore.getState();
+      const last = shownFix(st.currentFix, st.approxFix);
+      if (plausibleApproxFix(sample, last, Date.now())) {
+        st.setApproxFix(sample);
+        if (!st.currentFix) void loadAlert(sample);
+      }
+      return;
+    }
     setCurrentFix(sample);
     void loadAlert(sample);
     // Shelters and resilience points are always kept ready for the "Nearest

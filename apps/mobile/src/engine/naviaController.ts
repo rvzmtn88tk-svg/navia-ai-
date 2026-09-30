@@ -75,6 +75,9 @@ type NaviaStore = {
   route: Route | null;
   currentFix: GNSSRawSample | null;
   setCurrentFix: (fix: GNSSRawSample | null) => void;
+  /** Latest plausible fix that is not good enough for navigation (drawn with its error circle; see approxFix.ts). */
+  approxFix: GNSSRawSample | null;
+  setApproxFix: (fix: GNSSRawSample | null) => void;
   alert: GeolocatedAirAlert | null;
   setAlert: (alert: GeolocatedAirAlert | null) => void;
   /** When the last alert at the user's place ended (null while one is active or none ended). */
@@ -105,7 +108,9 @@ export const useNaviaStore = create<NaviaStore>((set, get) => ({
   state: idleState,
   route: null,
   currentFix: null,
-  setCurrentFix: (fix) => set({ currentFix: fix }),
+  setCurrentFix: (fix) => set({ currentFix: fix, approxFix: null }),
+  approxFix: null,
+  setApproxFix: (fix) => set({ approxFix: fix }),
   alert: null,
   alertEndedAt: null,
   setAlert: (alert) => set((s) => ({ alert, alertEndedAt: nextAlertEndedAt(s.alert, alert, s.alertEndedAt, Date.now()) })),

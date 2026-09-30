@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList, RouteMode } from "../navigation/RootNavigator";
 import { DEMO_DESTINATION, destinationPoint } from "@navia/core";
+import { shownFix } from "../engine/approxFix";
 import { useNaviaStore } from "../engine/naviaController";
 import { useLiveContext, type GnssHealth, type GpsStatus } from "../engine/useLiveContext";
 import { useAppSettings, type MapLayer } from "../settings/AppSettings";
@@ -80,7 +81,11 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
   const { height: screenH, width: screenW } = useWindowDimensions();
   const { isDark, mapLayer, setMapLayer } = useAppSettings();
   const live = useLiveContext();
-  const fix = useNaviaStore((s) => s.currentFix);
+  const trustedFix = useNaviaStore((s) => s.currentFix);
+  const approxFix = useNaviaStore((s) => s.approxFix);
+  // Drawn position: the navigation-grade fix, or a plausible approximate one with its error circle.
+  const fix = shownFix(trustedFix, approxFix);
+  const approximate = fix != null && fix === approxFix;
   const alert = useNaviaStore((s) => s.alert);
   const threat = useNaviaStore((s) => s.airThreatSummary);
   const setDemoMode = useNaviaStore((s) => s.setDemoMode);
@@ -285,7 +290,7 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
           ref={map}
           mapStyle={style.style}
           user={user}
-          quality={live.health === "stable" ? "good" : live.health === "unstable" ? "degraded" : "lost"}
+          quality={approximate ? "degraded" : live.health === "stable" ? "good" : live.health === "unstable" ? "degraded" : "lost"}
           cameraMode={cameraMode}
           onUserGesture={onUserGesture}
           onBearingChange={setBearing}

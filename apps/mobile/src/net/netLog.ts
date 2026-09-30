@@ -110,3 +110,23 @@ export async function runNetSelfTest(): Promise<NetCheck[]> {
 export function selfTestRequestedAtLaunch(): boolean {
   try { return !!Settings.get("NaviaNetTest"); } catch { return false; }
 }
+
+// ——— location evidence: the last fixes the phone gave and what NAVIA did with them ———
+
+export type FixRecord = { at: string; accuracyM: number | null; ageMs: number; speedMps: number | null; trusted: boolean };
+const fixes: FixRecord[] = [];
+const FIX_FILE = `${FileSystem.documentDirectory ?? ""}location-log.json`;
+let fixTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Keeps accuracy/age/trusted of recent fixes (no coordinates) in Documents/location-log.json. */
+export function recordFix(sample: { timestamp: number; accuracyM: number | null; speedMps: number | null }, trusted: boolean): void {
+  fixes.push({ at: new Date().toISOString(), accuracyM: sample.accuracyM != null ? Math.round(sample.accuracyM) : null, ageMs: Date.now() - sample.timestamp, speedMps: sample.speedMps, trusted });
+  if (fixes.length > 200) fixes.shift();
+  if (!FileSystem.documentDirectory) return;
+  if (fixTimer) clearTimeout(fixTimer);
+  fixTimer = setTimeout(() => { void FileSystem.writeAsStringAsync(FIX_FILE, JSON.stringify({ savedAt: new Date().toISOString(), fixes })).catch(() => {}); }, 3000);
+}
+
+export function recentFixes(): readonly FixRecord[] {
+  return fixes;
+}
