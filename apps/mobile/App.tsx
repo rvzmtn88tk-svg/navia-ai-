@@ -11,6 +11,15 @@ import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 // Loaded at start: when NAVIA was launched in "no internet" test mode, the
 // app's own requests must fail from the first one, like the map's.
 import "./src/offline/network";
+import { installNetLog, runNetSelfTest, selfTestRequestedAtLaunch } from "./src/net/netLog";
+
+// Every failed request is kept (host, status/error, time) for Diagnostics and
+// for reading back from the phone; `-NaviaNetTest YES` repeats a service check.
+installNetLog();
+if (selfTestRequestedAtLaunch()) {
+  setTimeout(() => void runNetSelfTest(), 3000);
+  setInterval(() => void runNetSelfTest(), 30_000);
+}
 
 const navigationRef = createNavigationContainerRef();
 // Benchmark only: open the co-pilot screen (perf/bench.ts).

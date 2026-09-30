@@ -6,6 +6,7 @@
 // DiagnosticsEngine.snapshot()'s honest nulls).
 import { regionPackage } from "../offline/regionPackage";
 import { isSimulatedOffline } from "../offline/network";
+import { lastNetSelfTest, recentNetFailures, runNetSelfTest, type NetCheck } from "../net/netLog";
 import type { OfflinePackageStatus } from "@navia/core";
 import { compassAvailable, gyroAvailable, headingLatencySummary, lastHeading, resetHeadingLatency, runSyntheticSpin, subscribeHeading } from "../sensors/deviceHeading";
 import React, { useEffect, useState } from "react";
@@ -34,6 +35,23 @@ function Section({ title, p }: { title: string; p: ReturnType<typeof useAppSetti
   return <Text style={[styles.section, { color: p.accent }]}>{title}</Text>;
 }
 const fmt = (v: unknown, suffix = ""): string => (v == null ? "—" : `${v}${suffix}`);
+
+/** Asks every service NAVIA uses and shows the last failed requests (evidence for "doesn't work on mobile data"). */
+function NetworkCheck({ en, p }: { en: boolean; p: ReturnType<typeof useAppSettings>["palette"] }): JSX.Element {
+  const [checks, setChecks] = useState<NetCheck[] | null>(lastNetSelfTest()?.checks ?? null);
+  const [running, setRunning] = useState(false);
+  const failures = recentNetFailures().slice(-8).reverse();
+  return (
+    <View>
+      <Pressable accessibilityRole="button" onPress={() => { setRunning(true); void runNetSelfTest().then(setChecks).finally(() => setRunning(false)); }} style={[styles.row, { borderBottomColor: p.border }]}>
+        <Text style={[styles.value, { color: p.accent }]}>{running ? (en ? "Checking…" : "Перевіряю…") : (en ? "Check network services" : "Перевірити мережу")}</Text>
+      </Pressable>
+      {checks?.map((c) => <Row key={c.name} label={c.name} value={`${c.ok ? "OK" : "✕"} ${c.status ?? ""} · ${c.ms} ms${c.error ? ` · ${c.error}` : ""}`} p={p} />)}
+      {failures.length > 0 && <Text style={[styles.label, { color: p.muted, marginTop: 8 }]}>{en ? "Last failed requests" : "Останні невдалі запити"}</Text>}
+      {failures.map((f, i) => <Row key={`${f.at}-${i}`} label={`${f.at.slice(11, 19)} ${f.host}`} value={`${f.status ?? f.error ?? "?"} · ${f.ms} ms`} p={p} />)}
+    </View>
+  );
+}
 
 const STATE_LABELS: Record<string, string> = {
   NORMAL: "Норма",
@@ -210,6 +228,7 @@ export function DiagnosticsScreen(): JSX.Element {
 
           <Section title={en ? "Network" : "Мережа"} p={p} />
           <Row label={en ? "Status" : "Стан"} value={snapshot.networkAvailable ? (en ? "connected" : "є з’єднання") : (en ? "offline" : "немає з’єднання")} p={p} />
+          <NetworkCheck en={en} p={p} />
 
           <Section title={en ? "App" : "Застосунок"} p={p} />
           <Row label={en ? "Mode" : "Режим"} value={isDemoMode ? (en ? "Demo" : "Демо") : (en ? "Live" : "Реальний")} p={p} />
