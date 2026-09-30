@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NaviaCopilot, type CopilotReply } from "../src/copilot/copilot";
+import { NaviaCopilot, SELF_CHECK_PREFIX, type CopilotReply } from "../src/copilot/copilot";
 import { LLMUnavailableError, type CompletionRequest, type CompletionResponse, type ContentBlock, type LLMClient } from "../src/copilot/protocol";
 import { SCENARIOS, type Scenario } from "./scenarios";
 import { DEV_SUITE } from "./suite/dev";
@@ -43,6 +43,12 @@ class NeedDecision extends LLMUnavailableError {
   constructor(readonly request: CompletionRequest) { super("transcript exhausted: decision needed", false); }
 }
 
+function isSelfCheck(request: CompletionRequest): boolean {
+  const last = request.messages[request.messages.length - 1];
+  const content = last?.content;
+  return last?.role === "user" && Array.isArray(content) && content.some((b) => b.type === "text" && typeof (b as { text?: unknown }).text === "string" && ((b as { text: string }).text).startsWith(SELF_CHECK_PREFIX));
+}
+
 /** Replays one turn's decisions; throws NeedDecision (caught by the copilot) when they run out. */
 export class ReplayLLM implements LLMClient {
   private turnIndex = -1;
@@ -57,7 +63,14 @@ export class ReplayLLM implements LLMClient {
 
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
     this.requests.push(request);
-    const decision = this.transcript.turns[this.turnIndex]?.[this.callIndex++];
+    let decision = this.transcript.turns[this.turnIndex]?.[this.callIndex++];
+    // A recording made before NAVIA's self-check has no answer to it: replay the
+    // model as not complying (its last words again), so the grader judges the
+    // recorded behaviour as it was. Live runs show what the check changes.
+    if (!decision && isSelfCheck(request)) {
+      const turn = this.transcript.turns[this.turnIndex] ?? [];
+      decision = [...turn].reverse().find((d) => "text" in d);
+    }
     if (!decision) { this.needed = request; throw new NeedDecision(request); }
     const content: ContentBlock[] = "text" in decision
       ? [{ type: "text", text: decision.text }]

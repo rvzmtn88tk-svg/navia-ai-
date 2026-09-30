@@ -81,11 +81,112 @@ const LOCAL_NOTICE = "Розумний режим штурмана зараз н
 /** Remove formatting and internal ids (p3, s1, r2) that TTS would read out literally. */
 export function toSpeakable(text: string): string {
   return text
+    // "SKIP" is only for NAVIA-noticed events; never read it out in front of an answer.
+    .replace(/^\s*SKIP\s*\.?\s*\n+/i, "")
     .replace(/\s*\((?:id\s*)?[prs]\d{1,3}\)/g, "")
     .replace(/\*\*|__|`|#+\s/g, "")
     .replace(/^\s*[-•*]\s+/gm, "")
-    .replace(/\s+\n/g, "\n")
+    // Numbered lists are read aloud badly ("один крапка"): one sentence per item.
+    .replace(/^\s*\d{1,2}[.)]\s+/gm, "")
+    .replace(/([^.!?:\s])\s*\n+/g, "$1. ")
+    .replace(/\s*\n+\s*/g, " ")
+    .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+/**
+ * NAVIA is "it": a sentence that starts with a gendered past-tense verb about
+ * itself ("Знайшов три АЗС", "Додала зупинку") becomes impersonal ("Знайдено
+ * три АЗС", "Додано зупинку"). Only at the start of a sentence, where the
+ * subject can only be NAVIA; in a Ukrainian answer, a stray Russian "почти".
+ */
+const NEUTER: [RegExp, string][] = [
+  [/^(знайш(ов|ла|ло))(?=[\s,.!?:—-]|$)/iu, "Знайдено"], [/^(додав|додала|додало)(?=[\s,.!?:—-]|$)/iu, "Додано"], [/^(прибрав|прибрала|прибрало)(?=[\s,.!?:—-]|$)/iu, "Прибрано"],
+  [/^(зберіг|зберегла|зберегло)(?=[\s,.!?:—-]|$)/iu, "Збережено"], [/^(встановив|встановила|встановило)(?=[\s,.!?:—-]|$)/iu, "Встановлено"], [/^(скасував|скасувала|скасувало)(?=[\s,.!?:—-]|$)/iu, "Скасовано"],
+  [/^(змінив|змінила|змінило)(?=[\s,.!?:—-]|$)/iu, "Змінено"], [/^(перевірив|перевірила|перевірило)(?=[\s,.!?:—-]|$)/iu, "Перевірено"], [/^(зрозумів|зрозуміла|зрозуміло)(?=[\s,.!?:—-]|$)/iu, "Зрозуміло"],
+];
+export function neuterize(text: string): string {
+  const ukrainian = /[іїєґ]/i.test(text);
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => {
+      let out = sentence;
+      for (const [re, repl] of NEUTER) out = out.replace(re, repl);
+      return out;
+    })
+    .join(" ")
+    .replace(/(^|\s)почти(?=\s)/g, (m, sp: string) => (ukrainian ? `${sp}майже` : m));
+}
+
+/** A spoken answer longer than this is cut at a sentence boundary (the driver is driving). */
+export const MAX_SPOKEN_WORDS = 60;
+export function capSpokenWords(text: string, max = MAX_SPOKEN_WORDS): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= max) return text;
+  const sentences = text.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) ?? [text];
+  let out = "";
+  for (const s of sentences) {
+    const next = (out + s).trim();
+    if (next.split(/\s+/).length > max) break;
+    out = next + " ";
+  }
+  // A question at the end (the driver has to answer it) is kept even past the limit.
+  const lastQuestion = sentences.filter((s) => s.trim().endsWith("?")).pop()?.trim();
+  const cut = out.trim() || (sentences[0] ?? text).trim();
+  return lastQuestion && !cut.includes(lastQuestion) ? `${cut} ${lastQuestion}` : cut;
+}
+
+const ACTION_TOOLS = new Set(Object.entries(TOOL_POLICY).filter(([, p]) => p !== "read").map(([t]) => t));
+/** "Додати …?", "Змінити маршрут на …?": a yes/no about one concrete action (not "ОККО чи WOG?"). */
+const PROPOSAL_Q = /((додати|додам|додаю|змін|замін|поміня|поїха|поїде|їдемо|заїха|заїде|заїжджа|прибра|скасува|перестав|встанов|переспрям|переключ|перебуду|add|change|switch|set)[^?]*\?|(гаразд|добре|підтверджуєте|підтвердити|погоджуєтесь|згодні|так|ок|окей|ok|okay)\s*\?\s*$)/i;
+const CHOICE = /(\sчи\s|\sабо\s|яку|який|яке|які|куди|куда|де саме|where|which)[^?]*\?/i;
+/**
+ * The language to answer in, from the driver's own words: a sentence in
+ * English → en, in Russian → ru, otherwise (Ukrainian, a single word, a mix) → uk.
+ * The fast model otherwise drifts to Ukrainian from the Ukrainian place names.
+ */
+export function replyLanguage(text: string): "uk" | "ru" | "en" {
+  const t = text.trim();
+  const words = t.split(/\s+/).filter((w) => /\p{L}/u.test(w));
+  if (words.length < 2) return "uk";
+  const latin = (t.match(/[a-z]/gi) ?? []).length;
+  const cyr = (t.match(/[а-яёіїєґ]/gi) ?? []).length;
+  if (latin > cyr * 2) return "en";
+  if (/[іїєґ]/i.test(t)) return "uk";
+  if (/[ыэъё]/i.test(t) || /(^|\s)(что|где|как|сколько|ещё|еще|найди|найти|пути|дороге|хочу|мне|нужно|можно|давай|второе|первое|остановк|заправк\w* по дороге|пожалуйста)(\s|[.,!?]|$)/i.test(t)) return "ru";
+  return "uk";
+}
+const LANGUAGE_NAME = { uk: "Ukrainian", ru: "Russian", en: "English" } as const;
+
+/** Marks NAVIA's self-check messages to the model (transcript replay recognises them). */
+export const SELF_CHECK_PREFIX = "[NAVIA self-check] ";
+/** The driver asked NAVIA to DO something (not only to find): go somewhere, add, plan, change, remove. */
+const DRIVER_ACTION = /(поїхали|поїдемо|їдемо|їдьмо|веди|вези|додай|додати|зроби зупинку|заїдемо|заїдь|розплануй|сплануй|зміни|змінимо|заміни|поміняй|встанови|прибери|скасуй|поверни|перестав|поехали|едем|вези|добавь|сделай остановку|заедем|измени|поменяй|убери|верни|take me|go to|add|plan|change|switch|remove)/i;
+/** "Додано.", "Зупинку видалено": the driver hears that something was done. */
+const DONE_CLAIM = /(^|[\s.!,—-])(додано|додав|додала|видалено|видалена|видалений|прибрано|скасовано|змінено|замінено|встановлено|збережено|переставлено|перебудовано|запам.?ятовано|повернуто)([\s.!,]|$)/i;
+
+/**
+ * Checks the model's final words against what really happened this turn and
+ * returns a correction to send back to the model once, or null:
+ * - an empty answer after tools ran;
+ * - a yes/no about an action that was never proposed (the "yes" would do nothing);
+ * - a claim that something was done when no action tool ran.
+ */
+export function replyCorrection(text: string, trace: ToolTraceEntry[], hasPending: boolean, driverText = ""): string | null {
+  // Done = an action tool that ran without error and was not merely proposed (awaiting confirmation).
+  const acted = trace.some((t) => ACTION_TOOLS.has(t.tool) && !t.isError && (t.result as { status?: unknown } | null)?.status !== "awaiting_user_confirmation");
+  const proposed = trace.some((t) => ACTION_TOOLS.has(t.tool) && !t.isError);
+  if (!text.trim()) {
+    return trace.length > 0 ? "Tell the driver the result of what you just did or found, in one or two short spoken sentences, in the reply language. Do not mention this check." : null;
+  }
+  // Only when the driver asked for the action: after a plain "find …", offering "Додати?" without a proposal is the design.
+  if (!hasPending && !proposed && DRIVER_ACTION.test(driverText) && PROPOSAL_Q.test(text) && !CHOICE.test(text.match(/[^.!?]*\?/g)?.pop() ?? "")) {
+    return "You asked the driver to confirm an action, but nothing is pending, so a \"yes\" would do nothing. Call the action tool now (add_stop, set_destination, switch_route or reorder_stops — find the place or destination first if needed) so it returns awaiting_user_confirmation, then ask the yes/no question. If you only meant to list options, don't ask to confirm. Do not mention this check to the driver.";
+  }
+  if (!acted && DONE_CLAIM.test(text)) {
+    return "You told the driver an action was done, but it was not done this turn (no action tool ran, or it only awaits the driver's confirmation). Fix it: safe actions (remove_stop, set_route_preferences, set_reminder, cancel_reminder, remember_preference, forget_preference) run at once — call the tool now; if it awaits confirmation, ask for it; otherwise say plainly it was not done. Do not mention this check to the driver.";
+  }
+  return null;
 }
 
 export class NaviaCopilot {
@@ -165,6 +266,7 @@ export class NaviaCopilot {
         role: "user",
         content: [
           { type: "text", text: buildTripSnapshot(this.options.runtime, this.session) },
+          ...(event ? [] : [{ type: "text" as const, text: `<reply_language>${LANGUAGE_NAME[replyLanguage(text)]}</reply_language>` }]),
           { type: "text", text },
         ],
       },
@@ -179,6 +281,7 @@ export class NaviaCopilot {
     const distinctTools = new Set<string>();
     let finalText = "";
     let stopReason: string | undefined;
+    let corrected = false;
 
     try {
       for (let callIndex = 0; callIndex < maxCalls; callIndex++) {
@@ -253,6 +356,14 @@ export class NaviaCopilot {
         if (response.stopReason === "pause_turn") continue;
 
         finalText = response.content.filter(isTextBlock).map((b) => b.text).join(" ").trim();
+        // One self-check round: the words must match what was actually done.
+        const correction = !event && !corrected && callIndex < maxCalls - 1 ? replyCorrection(finalText, trace, this.session.pendingActions.length > 0, text) : null;
+        if (correction) {
+          corrected = true;
+          messages.push({ role: "user", content: [{ type: "text", text: SELF_CHECK_PREFIX + correction }] });
+          finalText = "";
+          continue;
+        }
         break;
       }
     } finally {
@@ -264,7 +375,8 @@ export class NaviaCopilot {
         ? "Запит не вдалося завершити вчасно. Спробуйте сформулювати коротше."
         : "Вибачте, не вдалося сформулювати відповідь.";
     }
-    finalText = toSpeakable(finalText);
+    finalText = neuterize(toSpeakable(finalText));
+    if (!event) finalText = capSpokenWords(finalText);
     if (!/^\s*SKIP\s*\.?$/i.test(finalText)) this.remember(memoryText, finalText);
     if (tiers.includes("smart")) this.session.lastSmartTurnAt = nowMs;
     return this.reply(finalText, "llm", started, { trace, tiers, models, usage, ...(stopReason ? { stopReason } : {}) });

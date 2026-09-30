@@ -229,7 +229,8 @@ test("chooseTier: cascade rules", () => {
 });
 
 test("toSpeakable strips markdown the TTS would read aloud", () => {
-  assert.equal(toSpeakable("**WOG** через 4 км\n- OKKO"), "WOG через 4 км\nOKKO");
+  // Line breaks become sentence breaks: a TTS reads a new line as nothing, a list as one run-on.
+  assert.equal(toSpeakable("**WOG** через 4 км\n- OKKO"), "WOG через 4 км. OKKO");
   assert.equal(toSpeakable("WOG (p3) через 4 км"), "WOG через 4 км");
 });
 
