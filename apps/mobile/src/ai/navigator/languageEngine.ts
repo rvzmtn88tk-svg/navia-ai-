@@ -21,7 +21,7 @@ let lastLatencyMs: number | null = null;
 
 /** Anonymous per-install id for the proxy's rate limit (random, not tied to the user). */
 let deviceId: string | null = null;
-function device(): string {
+export function device(): string {
   if (deviceId) return deviceId;
   deviceId = `nv-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
   try {

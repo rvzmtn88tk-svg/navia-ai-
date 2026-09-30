@@ -1,11 +1,12 @@
 // Spoken guidance. One queue for all NAVIA speech: new maneuver prompts
 // interrupt stale ones, and music is ducked (not stopped) while speaking.
-// Provider: the iPhone's built-in voices. A neural cloud voice plugs in behind
-// the same `speak` call once a provider is chosen (see docs/NAVIA_TZ.md §10).
+// Provider: NAVIA's neural voice (natural male and female, cloudVoice.ts) when
+// the server and the network answer in time; otherwise the iPhone's own voice.
 import * as Speech from "expo-speech";
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from "expo-av";
 import type { VoiceGender } from "../settings/AppSettings";
 import { SpeechQueue } from "./speechQueue";
+import { cloudSpeechFile, playSpeechFile, stopCloudSpeech } from "./cloudVoice";
 
 type Lang = "uk" | "en";
 
@@ -56,23 +57,26 @@ async function ensureAudioMode(): Promise<void> {
   audioModeReady = true;
 }
 
-export type SpeakOptions = { lang: Lang; gender: VoiceGender; interrupt?: boolean };
+export type SpeakOptions = { lang: Lang; gender: VoiceGender; interrupt?: boolean; /** How long the neural voice may take to arrive (ms). */ cloudWaitMs?: number };
 
-export async function speak(text: string, { lang, gender, interrupt = true }: SpeakOptions): Promise<void> {
+export async function speak(text: string, { lang, gender, interrupt = true, cloudWaitMs = 1500 }: SpeakOptions): Promise<void> {
   await ensureAudioMode();
-  const voice = await pickVoice(lang, gender);
-  // iOS ships no male Ukrainian voice. Until the neural server voice is
-  // connected, "male" lowers the pitch of the available voice.
-  const lowered = gender === "male" && !(await hasGenderVoice(lang, "male"));
-  if (interrupt) Speech.stop();
+  if (interrupt) { Speech.stop(); stopCloudSpeech(); }
   const t0 = Date.now();
+  const started = () => { lastTtsStartMs = Date.now() - t0; const w = startWaiters.splice(0); for (const f of w) f(lastTtsStartMs); };
+  const file = await cloudSpeechFile(text, lang, gender, cloudWaitMs);
+  if (file && await playSpeechFile(file, started)) return;
+  // The iPhone's own voice (the best installed quality). There is no male
+  // Ukrainian voice on iOS: then the natural female voice speaks — a
+  // pitch-lowered one only sounded robotic.
+  const voice = await pickVoice(lang, gender);
   await new Promise<void>((resolve) => {
     Speech.speak(text, {
       language: lang === "uk" ? "uk-UA" : "en-US",
       voice: voice?.identifier,
       rate: lang === "uk" ? 0.98 : 1,
-      pitch: lowered ? 0.72 : 1,
-      onStart: () => { lastTtsStartMs = Date.now() - t0; const w = startWaiters.splice(0); for (const f of w) f(lastTtsStartMs); },
+      pitch: 1,
+      onStart: started,
       onDone: () => resolve(),
       onStopped: () => resolve(),
       onError: () => resolve(),
@@ -106,7 +110,8 @@ export function onSpeech(listener: SpeechListener): () => void {
 const queue = new SpeechQueue(async (text) => {
   const tag = tags.get(text) ?? null;
   for (const l of speechListeners) l(true, tag);
-  try { await speak(text, { ...queueOpts, interrupt: false }); } finally {
+  // An answer may wait a little longer for the natural voice than a turn prompt.
+  try { await speak(text, { ...queueOpts, interrupt: false, cloudWaitMs: tag === "answer" ? 3000 : 1500 }); } finally {
     tags.delete(text);
     // Idle only when nothing else waits in the queue.
     if (queue.pending.length === 0) for (const l of speechListeners) l(false, tag);
@@ -126,4 +131,5 @@ export function clearSpeechQueue(): void {
 
 export function stopSpeaking(): void {
   Speech.stop();
+  stopCloudSpeech();
 }

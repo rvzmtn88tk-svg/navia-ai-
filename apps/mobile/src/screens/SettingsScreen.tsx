@@ -8,6 +8,7 @@ import { useAppSettings, type AppLanguage, type ThemePreference, type VoiceGende
 import { useT } from "../i18n";
 import { Button, Card, Divider, ListRow, SectionLabel, Segmented, Text, TextField, useColors } from "../components/ui";
 import { hasGenderVoice, speak } from "../voice/VoiceGuide";
+import { cloudVoiceOnServer } from "../voice/cloudVoice";
 import { OfflinePackageCard } from "../components/OfflinePackageCard";
 import { isSmartCopilotConfigured, useNaviaStore } from "../engine/naviaController";
 import { radius, space } from "../theme/tokens";
@@ -23,14 +24,17 @@ export function SettingsScreen(): JSX.Element {
   } = useAppSettings();
   const aiConsent = useNaviaStore((s) => s.aiContextConsent);
   const setAiConsent = useNaviaStore((s) => s.setAiContextConsent);
-  const [maleAvailable, setMaleAvailable] = useState(true);
+  const [maleOnDevice, setMaleOnDevice] = useState(true);
+  const [neural, setNeural] = useState<boolean | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
-  useEffect(() => { void hasGenderVoice(lang, "male").then(setMaleAvailable); }, [lang]);
+  useEffect(() => { void hasGenderVoice(lang, "male").then(setMaleOnDevice); }, [lang]);
+  useEffect(() => { void cloudVoiceOnServer().then(setNeural); }, []);
+  const maleAvailable = maleOnDevice || neural === true;
 
   async function preview() {
     setPreviewing(true);
-    try { await speak(t("settings.voice.sample"), { lang, gender: voiceGender }); } finally { setPreviewing(false); }
+    try { await speak(t("settings.voice.sample"), { lang, gender: voiceGender, cloudWaitMs: 4000 }); } finally { setPreviewing(false); }
   }
 
   return (
@@ -72,7 +76,7 @@ export function SettingsScreen(): JSX.Element {
           value={voiceGender} onChange={setVoiceGender}
           options={[{ value: "female", label: t("settings.voice.female") }, { value: "male", label: t("settings.voice.male") + (maleAvailable ? "" : " *") }]}
         />
-        {voiceGender === "male" && !maleAvailable && <Text variant="caption" color="muted">{t("settings.voice.maleInterim")}</Text>}
+        {neural !== null && <Text variant="caption" color="muted">{t(neural ? "settings.voice.neural" : voiceGender === "male" && !maleOnDevice ? "settings.voice.maleInterim" : "settings.voice.deviceOnly")}</Text>}
         <Button label={t("settings.voice.preview")} icon="volume" variant="secondary" loading={previewing} onPress={() => void preview()} />
       </Card>
 

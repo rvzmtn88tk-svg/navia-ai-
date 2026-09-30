@@ -192,17 +192,20 @@ export function LandmarkScene({ width, active, labels }: SceneProps): JSX.Elemen
 }
 
 /** The dot's colour is the confidence: green, yellow, red. */
-export function TrustScene({ width, active }: { width: number; active: boolean }): JSX.Element {
-  const h = width * 0.42;
+export function TrustScene({ width, active, labels }: SceneProps): JSX.Element {
+  const h = width * VB_H / VB_W;
   const t = useLoop(active, 4500);
-  const colors = [B.success, B.warning, B.critical];
+  const rows = [[B.success, labels.green], [B.warning, labels.yellow], [B.critical, labels.red]] as const;
   return (
-    <View style={[styles.trustRow, { width, height: h }]}>
-      {colors.map((col, i) => {
-        const on = t.interpolate({ inputRange: [0, i / 3, i / 3 + 0.05, (i + 1) / 3 - 0.02, (i + 1) / 3, 1].map((v) => Math.min(1, Math.max(0, v))).map((v, j, arr) => (j > 0 && v <= arr[j - 1]! ? arr[j - 1]! + 0.0001 : v)), outputRange: [0.35, 0.35, 1, 1, 0.35, 0.35] });
+    <View style={[styles.trustCol, { width, height: h }]}>
+      <MapBackdrop w={width} h={h} dim />
+      {rows.map(([col, text], i) => {
+        // Each colour takes its turn to light up.
+        const on = t.interpolate({ inputRange: [0, i / 3 + 0.001, i / 3 + 0.05, (i + 1) / 3 - 0.02, (i + 1) / 3, 1], outputRange: [0.4, 0.4, 1, 1, 0.4, 0.4] });
         return (
-          <Animated.View key={col} style={[styles.trustDot, { borderColor: col, shadowColor: col, opacity: on, transform: [{ scale: on.interpolate({ inputRange: [0.35, 1], outputRange: [0.85, 1.1] }) }] }]}>
-            <View style={[styles.trustCore, { backgroundColor: col }]} />
+          <Animated.View key={col} style={[styles.trustRow, { opacity: on, transform: [{ scale: on.interpolate({ inputRange: [0.4, 1], outputRange: [0.96, 1.02] }) }] }]}>
+            <View style={[styles.trustDot, { borderColor: col, shadowColor: col }]}><View style={[styles.trustCore, { backgroundColor: col }]} /></View>
+            <RNText style={styles.trustText} numberOfLines={2}>{text}</RNText>
           </Animated.View>
         );
       })}
@@ -238,7 +241,61 @@ export function SafetyScene({ width, active, labels }: SceneProps): JSX.Element 
   );
 }
 
+/** The co-pilot: the driver asks, NAVIA answers and proposes, "Так" — the stop lands on the route. */
+export function CopilotScene({ width, active, labels }: SceneProps): JSX.Element {
+  const h = width * VB_H / VB_W;
+  const s = width / VB_W;
+  const t = useLoop(active, 6500);
+  const at = (a: number, b: number, c: number, d: number) => t.interpolate({ inputRange: [0, a, b, c, d, 1], outputRange: [0, 0, 1, 1, 0, 0] });
+  const question = at(0.04, 0.1, 0.9, 0.96);
+  const typing = at(0.14, 0.18, 0.26, 0.29);
+  const answer = at(0.29, 0.35, 0.9, 0.96);
+  const choices = at(0.4, 0.45, 0.62, 0.66);
+  const press = t.interpolate({ inputRange: [0, 0.53, 0.56, 0.6, 1], outputRange: [1, 1, 0.9, 1, 1] });
+  const stop = at(0.62, 0.68, 0.9, 0.96);
+  const done = at(0.68, 0.73, 0.9, 0.96);
+  const pin = ROUTE[2]!; // the fuel stop, at the second turn
+  const rise = (v: Animated.AnimatedInterpolation<number>) => [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }];
+  return (
+    <View style={{ width, height: h }}>
+      <MapBackdrop w={width} h={h} dim />
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: 0.55 }]}><RouteLine w={width} h={h} /></Animated.View>
+      <Animated.View style={[styles.stopPin, { left: pin[0] * s - 15, top: pin[1] * s - 15, opacity: stop, transform: [{ scale: stop.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) }] }]}>
+        <Icon name="fuel" size={15} color="#FFFFFF" />
+      </Animated.View>
+      <Animated.View style={[styles.bubbleMe, { opacity: question, transform: rise(question) }]}>
+        <Icon name="mic" size={13} color="#04201E" />
+        <RNText style={styles.bubbleMeText}>{labels.copilotQ}</RNText>
+      </Animated.View>
+      <Animated.View style={[styles.typing, { opacity: typing }]}>
+        {[0, 1, 2].map((i) => <View key={i} style={styles.typingDot} />)}
+      </Animated.View>
+      <Animated.View style={[styles.bubbleNavia, { opacity: answer, transform: rise(answer) }]}>
+        <NaviaEmblem size={20} />
+        <RNText style={styles.bubbleNaviaText}>{labels.copilotA}</RNText>
+      </Animated.View>
+      <Animated.View style={[styles.choiceRow, { opacity: choices }]}>
+        <Animated.View style={[styles.choice, styles.choiceYes, { transform: [{ scale: press }] }]}><RNText style={styles.choiceYesText}>{labels.yes}</RNText></Animated.View>
+        <View style={styles.choice}><RNText style={styles.choiceText}>{labels.no}</RNText></View>
+      </Animated.View>
+      <Chip icon="check" text={labels.stopAdded!} color={B.success} opacity={done} style={styles.chipBottomRight} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  stopPin: { position: "absolute", width: 30, height: 30, borderRadius: 15, backgroundColor: B.brandOrange, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#07101E" },
+  bubbleMe: { position: "absolute", right: 10, top: 10, maxWidth: "72%", flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, borderBottomRightRadius: 4, backgroundColor: B.brandTeal },
+  bubbleMeText: { color: "#04201E", fontSize: 13, fontWeight: "700" },
+  typing: { position: "absolute", left: 12, top: 52, flexDirection: "row", gap: 4, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, backgroundColor: "rgba(14,26,46,0.95)" },
+  typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#8FB4D8" },
+  bubbleNavia: { position: "absolute", left: 10, top: 50, maxWidth: "80%", flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 14, borderBottomLeftRadius: 4, backgroundColor: "rgba(14,26,46,0.96)", borderWidth: 1, borderColor: "rgba(63,224,218,0.35)" },
+  bubbleNaviaText: { color: "#E6F0FF", fontSize: 13, fontWeight: "600", flexShrink: 1 },
+  choiceRow: { position: "absolute", left: 10, top: 104, flexDirection: "row", gap: 8 },
+  choice: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: "rgba(143,180,216,0.5)", backgroundColor: "rgba(5,10,20,0.9)" },
+  choiceYes: { backgroundColor: B.brandTeal, borderColor: B.brandTeal },
+  choiceText: { color: "#C8D6E8", fontSize: 13, fontWeight: "700" },
+  choiceYesText: { color: "#04201E", fontSize: 13, fontWeight: "800" },
   puck: { position: "absolute", left: -11, top: -11, width: 22, height: 22, borderRadius: 11, borderWidth: 3, backgroundColor: "#07101E", alignItems: "center", justifyContent: "center", shadowOpacity: 0.9, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
   puckDot: { width: 8, height: 8, borderRadius: 4 },
   chip: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1, backgroundColor: "rgba(5,10,20,0.9)" },
@@ -248,9 +305,11 @@ const styles = StyleSheet.create({
   chipBottom: { left: 10, right: 10, bottom: 10, justifyContent: "center" },
   badge: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, borderWidth: 1, borderColor: B.brandOrange, backgroundColor: "rgba(5,10,20,0.92)" },
   badgeText: { color: "#FFE3C4", fontSize: 11, fontWeight: "700" },
-  trustRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-evenly" },
-  trustDot: { width: 58, height: 58, borderRadius: 29, borderWidth: 4, backgroundColor: "#07101E", alignItems: "center", justifyContent: "center", shadowOpacity: 0.9, shadowRadius: 14, shadowOffset: { width: 0, height: 0 } },
-  trustCore: { width: 18, height: 18, borderRadius: 9 },
+  trustCol: { justifyContent: "center", gap: 10, paddingHorizontal: 16 },
+  trustRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: "rgba(14,26,46,0.94)" },
+  trustDot: { width: 30, height: 30, borderRadius: 15, borderWidth: 3, backgroundColor: "#07101E", alignItems: "center", justifyContent: "center", shadowOpacity: 0.9, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } },
+  trustCore: { width: 10, height: 10, borderRadius: 5 },
+  trustText: { flex: 1, color: "#E6F0FF", fontSize: 15, fontWeight: "700" },
   shelter: { position: "absolute", width: 26, height: 26, borderRadius: 13, backgroundColor: B.critical, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#07101E" },
   meMark: { position: "absolute", width: 36, height: 36 },
 });

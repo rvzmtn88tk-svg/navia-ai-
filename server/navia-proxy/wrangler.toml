@@ -12,6 +12,8 @@ NAVIA_UNDERSTAND_MODEL = "claude-haiku-4-5-20251001"
 # smart tier to Opus 5.5 — Sonnet 5 here keeps a trip question in cents.
 NAVIA_AI_MODEL_FAST = "claude-haiku-4-5-20251001"
 NAVIA_AI_MODEL_SMART = "claude-sonnet-5"
+# Neural voices (/v1/tts): Azure AI Speech region of the AZURE_SPEECH_KEY secret.
+AZURE_SPEECH_REGION = "westeurope"
 
 # Per-device limit (abuse and cost guard): 20 questions per minute.
 [[ratelimits]]
@@ -25,6 +27,14 @@ namespace_id = "1001"
 [[ratelimits]]
 name = "COPILOT_LIMITER"
 namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+# Spoken phrases: guidance and answers, cached on the phone after the first time.
+[[ratelimits]]
+name = "TTS_LIMITER"
+namespace_id = "1003"
   [ratelimits.simple]
   limit = 60
   period = 60

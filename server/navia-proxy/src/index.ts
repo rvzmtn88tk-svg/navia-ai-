@@ -2,6 +2,7 @@
 //   POST /v1/understand  { question, facts }  →  { intent, confidence, answer, usedFacts, model, latencyMs }
 //   POST /v1/copilot/complete  the tool-calling co-pilot's model calls
 //        (apps/ai-backend's handler: validated conversation, tools from @navia/core)
+//   POST /v1/tts  { text, lang, gender }  →  audio/mpeg (neural voice, see tts.ts)
 //   GET  /health
 // The Anthropic key is a Worker secret (ANTHROPIC_API_KEY) and never leaves
 // here. The app identifies itself with X-Navia-App (APP_TOKEN secret — not a
@@ -13,6 +14,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { understand } from "../../../functions/src/understand";
 import { handleCompletion, LIMITS } from "../../../apps/ai-backend/src/handler";
 import { AnthropicLLMClient, type MessagesApi } from "../../../apps/ai-backend/src/anthropic-llm-client";
+import { parseTtsRequest, synthesize } from "./tts";
 
 interface Env {
   ANTHROPIC_API_KEY: string;
@@ -22,6 +24,9 @@ interface Env {
   NAVIA_AI_MODEL_SMART?: string;
   LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
   COPILOT_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
+  TTS_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
+  AZURE_SPEECH_KEY?: string;
+  AZURE_SPEECH_REGION?: string;
 }
 
 /** The key itself, even when a whole pasted `curl … x-api-key: sk-ant-…` line was stored as the secret. */
@@ -39,7 +44,21 @@ export default {
       // The key's shape only (never its value): tells a bad paste from a revoked key.
       const k = apiKey(env.ANTHROPIC_API_KEY);
       const keyShape = k ? { startsLikeKey: k.startsWith("sk-ant-"), length: k.length, hasSpaceOrQuote: /[\s"']/.test(k) } : null;
-      return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!k, keyShape });
+      return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!k, keyShape, tts: !!env.AZURE_SPEECH_KEY?.trim() });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/tts") {
+      if (!env.APP_TOKEN || request.headers.get("authorization") !== `Bearer ${env.APP_TOKEN}`) return json({ error: "forbidden" }, 403);
+      const speechKey = env.AZURE_SPEECH_KEY?.trim();
+      if (!speechKey) return json({ error: "tts not configured" }, 503);
+      const device = (request.headers.get("x-navia-device") ?? "").slice(0, 64) || request.headers.get("cf-connecting-ip") || "anon";
+      if (!(await env.TTS_LIMITER.limit({ key: device })).success) return json({ error: "rate limited" }, 429);
+      let body: unknown;
+      try { body = await request.json(); } catch { return json({ error: "invalid JSON" }, 400); }
+      const req = parseTtsRequest(body);
+      if (typeof req === "string") return json({ error: req }, 400);
+      const r = await synthesize(req, speechKey, env.AZURE_SPEECH_REGION?.trim() || "westeurope", request.signal);
+      if ("error" in r) return json({ error: r.error }, r.status);
+      return new Response(r.audio, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
     }
     if (request.method === "POST" && url.pathname === "/v1/copilot/complete") {
       // The app sends `Authorization: Bearer <APP_TOKEN>` (the same app token).
