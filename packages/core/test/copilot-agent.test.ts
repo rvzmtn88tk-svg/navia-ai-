@@ -194,7 +194,7 @@ test("UI confirm button executes the pending action without an LLM round-trip; d
   await copilot.ask("Заправка по дорозі");
   assert.equal(copilot.getPendingAction()?.tool, "add_stop");
   const confirmed = await copilot.confirmPendingAction();
-  assert.match(confirmed.text, /Додала зупинку ОККО/); // first in driving order
+  assert.match(confirmed.text, /Зупинку ОККО.* додано/); // first in driving order (NAVIA speaks in the neuter)
   assert.equal(world.host.route!.waypointCount, 1);
   assert.equal(llm.requests.length, 3);
   assert.equal(copilot.declinePendingAction().text, "Немає дії, яку потрібно скасувати.");

@@ -31,7 +31,9 @@ export const DEFAULT_ROUTER_POLICY: RouterPolicy = {
   mode: "auto",
   escalateAtCall: 3,
   escalateAtDistinctTools: 3,
-  longMessageChars: 160,
+  // 110, not 160: a three-stop plan in one sentence (~150 chars) went to the
+  // fast model and stated an ungrounded total (live holdout, 2026-09-30).
+  longMessageChars: 110,
   stickySmartMs: 0,
 };
 

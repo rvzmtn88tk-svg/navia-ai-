@@ -761,7 +761,7 @@ async function addStop(input: Record<string, unknown>, ctx: ToolContext, confirm
         arrival: arrivalClock(ctx.runtime.now(), newRemaining),
       },
       isError: false,
-      spoken: `Додала зупинку ${e.label}. Прибуття орієнтовно о ${arrivalClock(ctx.runtime.now(), newRemaining)}.`,
+      spoken: `Зупинку ${e.label} додано. Прибуття орієнтовно о ${arrivalClock(ctx.runtime.now(), newRemaining)}.`,
     };
   } catch (x) {
     ctx.runtime.planner.removeStop(stop.id);

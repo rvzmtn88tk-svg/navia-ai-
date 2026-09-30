@@ -68,7 +68,7 @@ export function phraseLocalPlaceResult(intent: LocalPlaceIntent, content: Row, i
       : content.error === "no_active_route" ? "Немає активного маршруту, щоб шукати по дорозі." : "Не вдалося виконати пошук.";
   }
   const results = (content.results as Row[] | undefined) ?? [];
-  if (results.length === 0) return `Не знайшла ${intent.label} ${intent.tool === "search_near" ? "поблизу місця призначення" : "по дорозі"}.`;
+  if (results.length === 0) return `Не знайдено: ${intent.label} ${intent.tool === "search_near" ? "поблизу місця призначення" : "по дорозі"}.`;
   const parts = results.slice(0, 2).map((r) => {
     if (intent.tool === "search_near") return `${String(r.name)} за ${String(r.distance_m)} метрів`;
     const side = sideWord(r.side);

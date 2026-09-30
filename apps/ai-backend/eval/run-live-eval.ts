@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import {
-  NaviaCopilot, COPILOT_SYSTEM_PROMPT, COPILOT_TOOLS, buildTripSnapshot, LLMUnavailableError,
+  NaviaCopilot, COPILOT_SYSTEM_PROMPT, COPILOT_TOOLS, buildTripSnapshot, LLMUnavailableError, BackendLLMClient,
   type CompletionRequest, type CompletionResponse, type LLMClient, type RouterPolicy, DEFAULT_ROUTER_POLICY, type Usage,
 } from "@navia/core";
 import { SCENARIOS, type Scenario } from "../../../packages/core/eval/scenarios";
@@ -159,13 +159,21 @@ async function main() {
     return;
   }
 
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    console.error("No Claude API credential found. Set ANTHROPIC_API_KEY (or run `ant auth login`) to run the live eval, or use --dry-run.");
-    process.exit(2);
+  // Through a deployed NAVIA backend (e.g. the NAVIA proxy, which keeps the key):
+  //   NAVIA_BACKEND_URL=https://… NAVIA_BACKEND_TOKEN=<app token> npm run eval:ai -- --suite holdout
+  const backendUrl = process.env.NAVIA_BACKEND_URL;
+  let factory: () => LLMClient;
+  if (backendUrl) {
+    factory = () => new BackendLLMClient({ baseUrl: backendUrl, clientToken: process.env.NAVIA_BACKEND_TOKEN, timeoutMs: 60_000 });
+  } else {
+    if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
+      console.error("No Claude API credential found. Set ANTHROPIC_API_KEY (or NAVIA_BACKEND_URL for a deployed backend) to run the live eval, or use --dry-run.");
+      process.exit(2);
+    }
+    const config = loadConfig();
+    const sdk = new Anthropic({ timeout: 60_000, maxRetries: 2 });
+    factory = () => new AnthropicLLMClient(sdk, config);
   }
-  const config = loadConfig();
-  const sdk = new Anthropic({ timeout: 60_000, maxRetries: 2 });
-  const factory = () => new AnthropicLLMClient(sdk, config);
 
   const results = [];
   for (const s of scenarios) {
@@ -205,7 +213,7 @@ async function main() {
     latencyMs: { p50: pct(0.5), p90: pct(0.9), max: latencies[latencies.length - 1] ?? 0 },
     costUsd: { total: totalCost, perTurn: allTurns.length ? totalCost / allTurns.length : 0 },
     fastOnlyTurns: allTurns.filter((t) => t.tiers.length > 0 && t.tiers.every((x) => x === "fast")).length,
-    models: { fast: config.fastModel, smart: config.smartModel, smartEffort: config.smartEffort }, policy: args.policy.mode,
+    models: backendUrl ? { backend: backendUrl, seen: [...new Set(allTurns.flatMap((t) => t.models))] } : { fast: loadConfig().fastModel, smart: loadConfig().smartModel, smartEffort: loadConfig().smartEffort }, policy: args.policy.mode,
   };
   for (const [name, g] of Object.entries(bySuite)) {
     console.log(`\n[${name}] ${g.passed}/${g.total} passed — ${Object.entries(g.byCategory).map(([c, x]) => `${c} ${x.passed}/${x.total}`).join(", ")}`);

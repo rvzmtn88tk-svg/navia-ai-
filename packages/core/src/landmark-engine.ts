@@ -153,7 +153,7 @@ export class LandmarkEngine {
       (p) => p.name.toLowerCase().includes(q) || (p.brand?.toLowerCase().includes(q) ?? false)
     );
     if (matchingPois.length === 0) {
-      return { kind: "no_match", message: `Я не знайшла жодного «${queryText}» поблизу вашого маршруту.` };
+      return { kind: "no_match", message: `Поблизу вашого маршруту не знайдено жодного «${queryText}».` };
     }
 
     const progress = this.progressEngine.computeProgress(route, currentPosition, speedMps);

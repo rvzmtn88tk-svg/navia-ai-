@@ -123,7 +123,7 @@ export class NaviaCopilot {
     const text = userText.trim();
     const nowMs = this.options.runtime.now().getTime();
     this.session.beginTurn(nowMs);
-    if (!text) return this.reply("Я не почула запитання.", "local", started, {});
+    if (!text) return this.reply("Не вдалося почути питання.", "local", started, {});
 
     const enabled = this.llmEnabled();
     if (!enabled.ok) return this.localAnswer(text, started, enabled.reason, false);
@@ -199,7 +199,7 @@ export class NaviaCopilot {
           const reason = e instanceof LLMUnavailableError ? e.message : `LLM call failed: ${(e as Error).message}`;
           if (callIndex === 0 && trace.length === 0) return event ? this.localEvent(event, started, reason) : this.localAnswer(text, started, reason, true);
           // Mid-turn failure after tools ran: don't discard what the tools established.
-          const partial = trace.length > 0 ? " Частину даних я отримала, але не встигла їх опрацювати — спитайте ще раз." : "";
+          const partial = trace.length > 0 ? " Частину даних отримано, але опрацювати їх не вдалося — спитайте ще раз." : "";
           return this.reply(`${LOCAL_NOTICE}${partial}`, "llm", started, { trace, tiers, models, usage, degradedReason: reason });
         }
         tiers.push(tier);
@@ -261,7 +261,7 @@ export class NaviaCopilot {
 
     if (!finalText) {
       finalText = trace.length > 0
-        ? "Не встигла завершити запит. Спробуйте сформулювати коротше."
+        ? "Запит не вдалося завершити вчасно. Спробуйте сформулювати коротше."
         : "Вибачте, не вдалося сформулювати відповідь.";
     }
     finalText = toSpeakable(finalText);
