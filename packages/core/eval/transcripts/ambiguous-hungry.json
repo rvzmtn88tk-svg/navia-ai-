@@ -1,0 +1,27 @@
+{
+  "scenario": "ambiguous-hungry",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "restaurant",
+                "fast_food",
+                "cafe"
+              ],
+              "open_now_only": true,
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Поруч по дорозі: Пузата Хата через 3,2 кілометра, або Ресторан Козак через 27 хвилин. Обидва праворуч і відчинені. Куди заїдемо?"
+      }
+    ]
+  ]
+}

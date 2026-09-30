@@ -1,0 +1,21 @@
+{
+  "scenario": "avoid-bad-roads",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "set_route_preferences",
+            "input": {
+              "avoid_unpaved": true
+            }
+          }
+        ]
+      },
+      {
+        "text": "Зараз не можу: поточний маршрутизатор не має даних про покриття доріг, тож маршрут лишається без змін. З онлайн-маршрутизатором я вмію уникати ґрунтових доріг, але про ями даних немає ніде."
+      }
+    ]
+  ]
+}

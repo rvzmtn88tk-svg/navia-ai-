@@ -38,4 +38,8 @@ export const config = {
   googleIosClientId: readEnv(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID),
   /** Sign in with Apple needs a paid Apple Developer team; the build adds the entitlement only when this is "1". */
   appleSignInEnabled: readEnv(process.env.EXPO_PUBLIC_NAVIA_APPLE_SIGNIN) === "1",
+  /** Token for the co-pilot endpoint (/v1/copilot/complete); the NAVIA proxy takes the same app token. Not a secret. */
+  aiClientToken: readEnv(process.env.EXPO_PUBLIC_NAVIA_AI_CLIENT_TOKEN) ?? readEnv(process.env.EXPO_PUBLIC_NAVIA_AI_APP_TOKEN),
+  /** Overpass API endpoint for live OSM place search (co-pilot "find fuel on the way"). Unset = no online place search. */
+  overpassUrl: readEnv(process.env.EXPO_PUBLIC_NAVIA_OVERPASS_URL),
 } as const;

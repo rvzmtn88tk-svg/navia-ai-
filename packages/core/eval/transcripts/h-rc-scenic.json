@@ -1,0 +1,19 @@
+{
+  "scenario": "h-rc-scenic",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "compare_routes",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "text": "Маршрутизатор не бачить помітно іншого варіанту: основна частина шляху йде Бориспільським шосе, 29 кілометрів. Можу спробувати без автомагістралей — перебудувати?"
+      }
+    ]
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "scenario": "h-long-mixed",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "name_variants": [
+                "OKKO",
+                "ОККО"
+              ],
+              "limit": 1
+            }
+          },
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "supermarket"
+              ],
+              "limit": 1
+            }
+          },
+          {
+            "name": "search_near",
+            "input": {
+              "anchor": "destination",
+              "categories": [
+                "parking"
+              ],
+              "limit": 2
+            }
+          }
+        ]
+      },
+      {
+        "text": "План з мінімумом гаків: спершу Фора через 2,3 кілометра — вода, потім ОККО через 7 кілометрів, обидві праворуч. Біля кінцевої — Паркінг Бориспіль-центр, 3 хвилини пішки. Додати обидві зупинки?"
+      }
+    ]
+  ]
+}

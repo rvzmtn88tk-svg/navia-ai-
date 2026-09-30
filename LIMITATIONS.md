@@ -78,3 +78,132 @@ From `apps/mobile`, rebuild and install on the connected iPhone (runs without Me
 ```bash
 npx expo run:ios --device --configuration Release --no-bundler
 ```
+The original starter file (`tests/core.test.ts` in the uploaded spec) used
+vitest. `npm install vitest` fails in this sandbox (see network note
+above), so all tests here use Node 22's built-in `node:test` +
+`node:assert/strict`, run through `tsx --test` (tsx is globally
+preinstalled in this sandbox and needs no network). This is a real,
+executing test runner — not a stub — and the test files themselves would
+need only a mechanical `describe/it/expect` rewrite to run under vitest
+once `npm install` can reach the registry again; nothing about the tests'
+logic is runner-specific.
+
+## What to do next on a real machine
+
+1. `npm install` at the repo root (now that a normal registry connection
+   exists) — this also picks up `@types/node` for `apps/mobile`'s
+   typecheck, which currently falls back to this sandbox's
+   `/opt/node-tools` global install (see `packages/core/tsconfig.test.json`
+   and `apps/mobile/tsconfig.json`).
+2. `cd apps/mobile && npm install && npm run typecheck` — fix whatever the
+   real react-native/expo/MapLibre types surface. This is the single
+   biggest unknown left: Stage 2's manual cross-check against
+   `packages/core`'s types found no mismatches, but a real `tsc` run may
+   still find JSX/React-level or `react-native`-specific issues a manual
+   read can't catch.
+3. Set `EXPO_PUBLIC_NAVIA_MAP_STYLE_URL`, `EXPO_PUBLIC_NAVIA_VALHALLA_URL`,
+   and `EXPO_PUBLIC_NAVIA_GEOCODER_URL` (see `.env.example`) — without the
+   first two, the map shows its "not configured" error state and routing
+   throws immediately, by design.
+4. Build a dev client (`eas build --profile development` or
+   `expo run:android`/`run:ios`) and test real GNSS/IMU behavior, real
+   address search, and real routing on a physical device per `BUILD.md` —
+   this is the step that turns `REAL / NOT TESTED` into `REAL / TESTED`
+   for `OnlineGeocoderProvider`, `OnlineValhallaProvider`,
+   `ExpoLocationPositionProvider`, `ExpoSensorsMotionProvider`, and TTS.
+5. Run `scripts/data/run-all.sh` on a machine with internet access to
+   produce a real `offline/metadata.json` + package, then swap
+   `NotYetBuiltOfflineMapManager` for a real `OfflineMapManager`
+   implementation that reads it.
+6. Implement `OfflineValhallaProvider` (the online one now exists) against
+   a built offline routing package, satisfying the existing
+   `RoutingProvider` interface — no UI changes needed.
+7. Pick and wire a real STT module for `ExpoSpeechVoiceProvider.startListening`
+   (currently an honest not-implemented stub) and validate it on-device.
+
+## AI co-pilot (added with the co-pilot upgrade)
+
+What is real and verified here: the co-pilot's tools, trip planner, place
+search (local + Overpass query/parse), routed detours, confirmation gate,
+agent loop, model-tier cascade, backend validation and the exact Claude API
+request it builds — 129 automated tests, typecheck clean for
+`packages/core` and `apps/ai-backend`.
+
+Not verified here, and why:
+- **No production-model run.** This environment has no Claude API key. The
+  26 eval scenarios were run model-in-the-loop, with Claude in the Claude
+  Code session playing the co-pilot model (all pass; see
+  `docs/AI_EVAL_REPORT.md`) — that is evidence the tools and prompt are
+  sufficient for a capable model, not a measurement of the production
+  Haiku 4.5 / Opus 5.5 setup, and the decider knew the checks. Costs in the
+  report are character-based estimates. Run
+  `ANTHROPIC_API_KEY=... npm run eval:ai` to measure real pass rate, latency
+  and cost.
+- **Usefulness benchmark uses synthetic places** on the single-road demo
+  network; the numbers show the value of route awareness, not real-world
+  POI coverage.
+- **Overpass (OSM place search) not called live** — unreachable from this
+  sandbox; the query/response handling is tested with a mocked fetch.
+- **Valhalla multi-stop/costing options** — written against the documented
+  API (`break` locations, `costing_options.auto`), not called live.
+- **No live traffic source.** `get_traffic_ahead` honestly reports
+  unavailable; route times are the routing engine's static estimates.
+- **No ratings/prices/reviews** in any data source — the co-pilot says so
+  rather than calling a place "good".
+- **"Bad roads"** maps to avoiding unpaved roads/tracks (the only road
+  quality signal in OSM routing); the demo router supports none of the
+  preferences and says so.
+- **Speech-to-text is now wired** (`expo-speech-recognition`, uk-UA, config
+  plugin + Info.plist strings in `app.json`) but has only been compiled and
+  bundled, never run on a device. The iOS JS bundle (`expo export`) and the
+  generated iOS project (`expo prebuild`, with temporary placeholder icons)
+  were verified in the sandbox; `pod install`/Xcode/iPhone were not.
+- `apps/mobile/assets/` (icon, splash, adaptive icon) referenced by
+  `app.json` is not in the repository; `expo prebuild` fails without it.
+- Saved home/work and AI consent are session-only (no persistent storage
+  yet), like recent destinations.
+
+## GNSS-denied navigation (jamming / spoofing)
+
+Details and numbers: `docs/GNSS_DENIED_REPORT.md`. Verified here: the
+navigator, its integration into `NavigationEngine`, the app/co-pilot wiring
+(typecheck + iOS JS bundle export), unit/integration tests, and a
+closed-loop Monte Carlo of 100,000 simulated trips. Not verified here:
+- **No real drive.** Synthetic road networks, sensor and spoof models; the
+  code has not run on an iPhone in a car. Record real GNSS+IMU logs and
+  replay them (report §6).
+- **Online routes have no local road graph**, so in the app the network is
+  the route itself: along-route tracking and spoof rejection work, but a
+  turn off the route is recognised only from gyro-confirmed GPS, and the
+  turn-anchored spoof check is off. Wiring the offline OSM graph into
+  `networkForRoute` enables the full behaviour the simulator measured.
+- **Without gyro/accelerometer** confidence is capped at LOW and success is
+  much lower (see report).
+- **Slow along-road drift spoofing** is detected only at the next turn or
+  stop.
+- **IMU calibration** (gravity sign, stop/move vibration threshold) is
+  learned from good GPS during the first minutes; untested on real mounts.
+
+## AI core rework (conversation memory, tools, proactive, voice, gateway)
+
+Verified here:
+- scripted-LLM tests of every code path: references via numbered results /
+  focus / undo, plans confirmed together, informed-order confirmation,
+  preferences, reminders → proactive events (including SKIP and offline
+  delivery), read cache, driving context, voice loop, gateway translation;
+- 324 new evaluation scenarios (dev 265, holdout 59), with the previous
+  deterministic system measured on them;
+- a model-in-the-loop run of the whole holdout (Claude in this session as the
+  model).
+
+Not verified here:
+- **No production-model run**: no LLM API key in this environment. Run
+  `ANTHROPIC_API_KEY=… npm run eval:ai -- --suite all`.
+- **Hands-free voice** (continuous recognition, wake word) is compiled and
+  unit-tested but untested on a device. iOS speech recognition sessions are
+  time-limited; the loop re-arms, and battery use is unmeasured.
+- **OpenAI-compatible gateway**: request/response translation is unit-tested
+  with a mocked endpoint, not against a live provider.
+- **Proactive traffic alerts** need a live traffic feed (none connected).
+- **Preferences and the active-trip cache** use expo-sqlite key-value
+  storage; typechecked and bundled, not run on a device.

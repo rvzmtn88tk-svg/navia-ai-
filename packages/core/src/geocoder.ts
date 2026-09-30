@@ -25,11 +25,12 @@ export class DemoGeocoderProvider implements GeocoderProvider {
   constructor(private places: { label: string; location: LatLon }[]) {}
 
   async search(query: string, opts: { limit?: number } = {}): Promise<GeocodeResult[]> {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
+    // Word-order-independent: every word of the query must appear in the label.
+    const tokens = query.toLowerCase().split(/[\s,.;«»"'()]+/).filter((t) => t.length > 0);
+    if (tokens.length === 0) return [];
     const limit = opts.limit ?? 5;
     return this.places
-      .filter((p) => p.label.toLowerCase().includes(q))
+      .filter((p) => { const label = p.label.toLowerCase(); return tokens.every((t) => label.includes(t)); })
       .slice(0, limit)
       .map((p) => ({ label: p.label, location: p.location, source: "demo" as const }));
   }

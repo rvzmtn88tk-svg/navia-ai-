@@ -1,5 +1,11 @@
+// Voice I/O adapter — spec section 17 ("VOICE"). Text-to-speech via
+// expo-speech; speech-to-text via expo-speech-recognition (Apple Speech
+// framework on iOS), Ukrainian by default. Permissions (microphone + speech
+// recognition) are requested when the driver taps the mic.
 import * as Speech from "expo-speech";
-import { ExpoSpeechRecognitionModule } from "expo-speech-recognition";
+import { ExpoSpeechRecognitionModule, addSpeechRecognitionListener } from "expo-speech-recognition";
+
+export type ListeningHandle = { stop: () => void };
 
 export class ExpoSpeechVoiceProvider {
   async speak(text: string, options: { language?: string } = {}): Promise<void> {
@@ -117,6 +123,60 @@ export class ExpoSpeechVoiceProvider {
         finish(error as Error, "start-failed");
       }
     });
+
+  }
+
+  /**
+   * One-shot listener for the voice panel (co-pilot during navigation).
+   * Listen for one utterance. Calls `onResult` once with the final
+   * transcript, or `onError` with a Ukrainian, driver-readable reason
+   * (permission denied, recognition unavailable, nothing heard). Throws only
+   * if the native module is missing from the build.
+   */
+  async listenOnce(
+    onResult: (text: string) => void,
+    onError: (message: string) => void,
+    options: { lang?: string } = {},
+  ): Promise<ListeningHandle> {
+    if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+      onError("Розпізнавання мовлення недоступне на цьому пристрої.");
+      return { stop: () => {} };
+    }
+    const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (!permission.granted) {
+      onError("Немає дозволу на мікрофон або розпізнавання мовлення. Увімкніть його в Налаштуваннях.");
+      return { stop: () => {} };
+    }
+    Speech.stop(); // don't transcribe our own TTS
+    let delivered = false;
+    const subs = [
+      addSpeechRecognitionListener("result", (event) => {
+        if (!event.isFinal || delivered) return;
+        const text = event.results[0]?.transcript?.trim() ?? "";
+        delivered = true;
+        cleanup();
+        if (text) onResult(text);
+        else onError(message("no-speech"));
+      }),
+      addSpeechRecognitionListener("error", (event) => {
+        if (delivered) return;
+        delivered = true;
+        cleanup();
+        onError(event.error === "no-speech" || event.error === "speech-timeout"
+          ? message("no-speech")
+          : event.error === "not-allowed"
+            ? "Немає дозволу на розпізнавання мовлення."
+            : `Розпізнавання мовлення не вдалося (${event.error}).`);
+      }),
+      addSpeechRecognitionListener("end", () => {
+        if (!delivered) { delivered = true; cleanup(); onError(message("no-speech")); }
+      }),
+    ];
+    function cleanup() { for (const s of subs) s.remove(); }
+    ExpoSpeechRecognitionModule.start({ lang: options.lang ?? "uk-UA", interimResults: false, continuous: false });
+    return {
+      stop: () => { ExpoSpeechRecognitionModule.stop(); },
+    };
   }
 }
 

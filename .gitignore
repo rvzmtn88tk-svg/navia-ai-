@@ -20,3 +20,5 @@ functions/lib/
 
 # Navigator simulator: every run (≈50 MB), regenerate with npm run navigator:sim
 apps/mobile/test/reports/navigator-sim.csv
+# Monte Carlo per-scenario rows (large; regenerate with npm run sim:gnss:100k)
+packages/core/sim/reports/*.rows.jsonl

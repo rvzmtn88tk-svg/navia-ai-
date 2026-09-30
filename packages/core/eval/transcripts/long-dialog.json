@@ -1,0 +1,74 @@
+{
+  "scenario": "long-dialog",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "cafe"
+              ],
+              "limit": 2
+            }
+          }
+        ]
+      },
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Aroma Kava праворуч через 4 кілометри, часу майже не додасть. Заїдемо?"
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Додала Aroma Kava. Прибуття о 14:48."
+      }
+    ],
+    [
+      {
+        "text": "З зупинкою на каву — 32 кілометри, близько 48 хвилин, прибуття о 14:48."
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "remove_stop",
+            "input": {
+              "stop_id": "s1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Зупинку прибрала, їдемо прямо до Борисполя, 48 хвилин."
+      }
+    ],
+    [
+      {
+        "text": "Зупинку прибрала, їдемо прямо до Борисполя, 48 хвилин."
+      }
+    ]
+  ]
+}

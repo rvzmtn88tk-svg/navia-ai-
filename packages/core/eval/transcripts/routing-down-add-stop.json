@@ -1,0 +1,49 @@
+{
+  "scenario": "routing-down-add-stop",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p2"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Найближча — ОККО праворуч через 7 кілометрів, гак приблизно хвилина. Точний час зараз не порахую, маршрутизатор не відповідає. Додати зупинку?"
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p2"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Не вдалося додати зупинку: маршрутизатор зараз недоступний. Ведемо далі поточним маршрутом, ОККО буде праворуч через 7 кілометрів — можна заїхати самостійно."
+      }
+    ]
+  ]
+}

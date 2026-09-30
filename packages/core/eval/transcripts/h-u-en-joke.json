@@ -1,0 +1,11 @@
+{
+  "scenario": "h-u-en-joke",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "text": "Why did the GPS break up with the map? It felt the relationship had lost direction. Want me to find a coffee stop instead?"
+      }
+    ]
+  ]
+}

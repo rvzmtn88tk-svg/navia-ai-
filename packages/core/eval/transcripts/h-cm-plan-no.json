@@ -1,0 +1,61 @@
+{
+  "scenario": "h-cm-plan-no",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "cafe"
+              ],
+              "max_detour_minutes": 5,
+              "limit": 1
+            }
+          },
+          {
+            "name": "find_destination",
+            "input": {
+              "saved_place": "home"
+            }
+          }
+        ]
+      },
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p2"
+            }
+          },
+          {
+            "name": "set_destination",
+            "input": {
+              "place_id": "p1",
+              "keep_stops": true
+            }
+          }
+        ]
+      },
+      {
+        "text": "План такий: кава в Aroma Kava через 4 кілометри, потім додому. Підтверджуєте?"
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "cancel_pending_action",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "text": "Добре, залишаю маршрут як був."
+      }
+    ]
+  ]
+}

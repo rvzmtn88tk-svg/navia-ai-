@@ -22,8 +22,8 @@
         "NSLocationWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації у фоновому режимі під час поїздки.",
         "NSMicrophoneUsageDescription": "NAVIA використовує мікрофон для голосових команд.",
-        "NSSpeechRecognitionUsageDescription": "NAVIA розпізнає ваші українські голосові команди для керування навігацією.",
-        "NSCameraUsageDescription": "NAVIA використовує камеру для розпізнавання орієнтирів (Camera Vision)."
+        "NSCameraUsageDescription": "NAVIA використовує камеру для розпізнавання орієнтирів (Camera Vision).",
+        "NSSpeechRecognitionUsageDescription": "NAVIA розпізнає ваші голосові запитання, щоб штурман міг відповісти."
       }
     },
     "android": {
@@ -47,8 +47,8 @@
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "NAVIA використовує мікрофон для голосових команд.",
-          "speechRecognitionPermission": "NAVIA розпізнає ваші українські голосові команди для керування навігацією."
+          "microphonePermission": "NAVIA використовує мікрофон, щоб чути ваші голосові запитання під час поїздки.",
+          "speechRecognitionPermission": "NAVIA розпізнає ваші голосові запитання, щоб штурман міг відповісти."
         }
       ],
       [

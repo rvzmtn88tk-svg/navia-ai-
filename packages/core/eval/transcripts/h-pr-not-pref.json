@@ -1,0 +1,28 @@
+{
+  "scenario": "h-pr-not-pref",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "name_variants": [
+                "WOG",
+                "ВОГ"
+              ],
+              "limit": 1
+            }
+          }
+        ]
+      },
+      {
+        "text": "WOG праворуч через 16 кілометрів, заїзд майже без гаку. Додати зупинку?"
+      }
+    ]
+  ]
+}

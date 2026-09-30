@@ -1,0 +1,25 @@
+{
+  "scenario": "h-rm-coffee-later",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "set_reminder",
+            "input": {
+              "topic": "кава",
+              "after_minutes": 40,
+              "categories": [
+                "cafe"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "Добре, нагадаю про каву о 14:40 і тоді підкажу, де зупинитись."
+      }
+    ]
+  ]
+}

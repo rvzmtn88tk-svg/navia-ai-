@@ -1,0 +1,49 @@
+{
+  "scenario": "coffee-then-continue",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "cafe"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Найближча кава — Aroma Kava праворуч через 4 кілометри, заїзд майже без втрати часу. Заїжджаємо?"
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Готово, спершу Aroma Kava, потім далі до Борисполя. Прибуття як і було, о 14:48."
+      }
+    ]
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "scenario": "h-pr-short",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "remember_preference",
+            "input": {
+              "key": "reply_length",
+              "value": "short",
+              "driver_words": "Відповідай коротше, мене це відволікає."
+            }
+          }
+        ]
+      },
+      {
+        "text": "Добре, відповідатиму коротше."
+      }
+    ]
+  ]
+}

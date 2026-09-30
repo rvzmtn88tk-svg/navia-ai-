@@ -1,0 +1,28 @@
+{
+  "scenario": "no-kfc",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fast_food"
+              ],
+              "name_variants": [
+                "KFC",
+                "КФС"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "KFC по дорозі не знайшла. З фастфуду є McDonald's ліворуч через 12 кілометрів, гак близько 3 хвилин. Підійде?"
+      }
+    ]
+  ]
+}

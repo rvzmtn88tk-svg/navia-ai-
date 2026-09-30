@@ -1,0 +1,11 @@
+{
+  "scenario": "h-late-meeting",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "text": "За оцінкою маршрутизатора — о 14:48, це ще 48 хвилин. Живих даних про затори в мене немає, тож можливі відхилення."
+      }
+    ]
+  ]
+}

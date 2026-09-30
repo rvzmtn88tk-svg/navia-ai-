@@ -1,0 +1,11 @@
+{
+  "scenario": "status-remaining",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "text": "Ще 31 кілометр, приблизно 48 хвилин. Прибуття о 14:48."
+      }
+    ]
+  ]
+}

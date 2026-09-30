@@ -25,7 +25,7 @@ import type { GNSSRawSample, GNSSConfig } from "./gnss-monitor";
 import { GNSSMonitor } from "./gnss-monitor";
 import { calculateConfidence } from "./confidence";
 import { SensorFusionEngine } from "./sensor-fusion";
-import type { Route, RoutingProvider, TravelMode } from "./route-engine";
+import type { Route, RoutingProvider, RoutePreferences, TravelMode } from "./route-engine";
 import { RouteProgressEngine, distanceFromRouteCorridorM, routeMeasure } from "./route-engine";
 import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
@@ -33,6 +33,11 @@ import { TelemetryLogger } from "./telemetry-logger";
 import { haversineMeters } from "./geodesy";
 import { GnssTrendMonitor, type GnssTrend } from "./gnss-trend";
 import { MotionDetector, RouteDeadReckoner, deadReckoningConfidence, type DeadReckoningEstimate } from "./route-dead-reckoning";
+import { RoadNetwork } from "./resilient/road-network";
+import { ResilientNavigator, type ResilientConfig, type NavigatorEstimate, type NavigatorMotion } from "./resilient/resilient-navigator";
+import { MotionPreprocessor, type MotionPreprocessorOptions } from "./resilient/motion-preprocessor";
+import { rerouteOriginAhead, prependCurrentRoad } from "./resilient/reroute";
+import { LocationStateTracker, type LocationStatus } from "./resilient/location-state";
 
 const DEFAULT_GNSS_CONFIG: GNSSConfig = {
   maxPlausibleSpeedMps: 45, maxJumpM: 150, maxFreshAgeMs: 6000, accuracyGoodM: 10, accuracyBadM: 80,
@@ -40,6 +45,19 @@ const DEFAULT_GNSS_CONFIG: GNSSConfig = {
 const GNSS_LOST_CONFIRM_MS = 3_000;
 /** Standing still: a fix of the same place this old is still the truth. */
 const STATIONARY_FIX_MAX_AGE_MS = 15_000;
+
+export type ResilientNavigationOptions = {
+  /**
+   * The road graph around the route (offline map package), so the navigator
+   * can follow the car through junctions it takes off the route without
+   * GNSS. When absent, the route itself is used as the road network: the car
+   * is still tracked along the route through GNSS outages and spoofing, and
+   * leaving the route is detected from GNSS fixes the gyro confirms.
+   */
+  networkForRoute?: (route: Route) => RoadNetwork | null;
+  config?: Partial<ResilientConfig>;
+  motion?: MotionPreprocessorOptions;
+};
 
 export type NavigationEngineOptions = {
   routingProvider: RoutingProvider;
@@ -49,7 +67,16 @@ export type NavigationEngineOptions = {
   /** Same, while the device is standing still: iOS sends few or no fixes when
    * the position does not change, so silence is not signal loss. */
   stationaryStaleAfterMs?: number;
+  /**
+   * Keep navigating to the destination when GNSS is jammed, degraded or
+   * spoofed (ResilientNavigator: road-constrained particle filter + gyro +
+   * accelerometer). Off by default so the classic pipeline's behaviour is
+   * unchanged for callers that don't opt in.
+   */
+  resilient?: ResilientNavigationOptions | boolean;
 };
+
+const BAND_CONFIDENCE: Record<ConfidenceBand, number> = { HIGH: 0.9, MEDIUM: 0.65, LOW: 0.35, UNKNOWN: 0.1 };
 
 function idleState(): NavigationState {
   return {
@@ -116,6 +143,18 @@ export class NavigationEngine {
   private conflictFixes: GNSSRawSample[] = [];
   private conflictSuppressedUntil = 0;
 
+  // Resilient (GNSS-independent) navigation.
+  private resilientOptions: ResilientNavigationOptions | null;
+  private resilient: ResilientNavigator | null = null;
+  /** The resilient network is the route polyline only (no side roads). */
+  private resilientRouteOnly = false;
+  private motionPre: MotionPreprocessor | null = null;
+  private pendingMotion: NavigatorMotion[] = [];
+  private lastImuAtMs: number | null = null;
+  private lastResilientStepMs: number | null = null;
+  private lastFedGnssTs: number | null = null;
+  private lastEstimate: NavigatorEstimate | null = null;
+
   constructor(options: NavigationEngineOptions) {
     this.routingProvider = options.routingProvider;
     const gnssConfig = { ...DEFAULT_GNSS_CONFIG, ...options.gnssConfig };
@@ -123,6 +162,25 @@ export class NavigationEngine {
     this.gnssMaxFreshAgeMs = gnssConfig.maxFreshAgeMs;
     this.staleAfterMs = options.staleAfterMs ?? 6000;
     this.stationaryStaleAfterMs = options.stationaryStaleAfterMs ?? 30_000;
+    this.resilientOptions = options.resilient === true ? {} : options.resilient ? options.resilient : null;
+    if (this.resilientOptions) this.motionPre = new MotionPreprocessor(this.resilientOptions.motion);
+  }
+
+  /** The resilient navigator's latest estimate (null when disabled or no route). */
+  getResilientEstimate(): NavigatorEstimate | null { return this.resilient ? this.lastEstimate : null; }
+
+  /**
+   * Where a reroute should start. With the resilient navigator tracking the
+   * car off the route without GNSS, that's the next junction ahead of it on
+   * the road it is on; otherwise the current position.
+   */
+  getRerouteOrigin(): LatLon | null {
+    const est = this.lastEstimate;
+    if (this.resilient && est?.offRouteEdge && !this.resilientRouteOnly) {
+      return rerouteOriginAhead(this.resilient.net, est.offRouteEdge.edge, est.offRouteEdge.offset).ahead;
+    }
+    const p = this.currentState.position?.position;
+    return p ? { lat: p.lat, lon: p.lon } : null;
   }
 
   getState(): NavigationState { return this.currentState; }
@@ -134,10 +192,25 @@ export class NavigationEngine {
    * honestly (no silent demo fallback — spec section 40/user's explicit
    * "don't switch to DemoRoutingProvider and call it real") if the
    * provider fails (e.g. Valhalla endpoint unreachable). */
-  async requestRoute(origin: LatLon, destination: LatLon, mode: TravelMode = "car"): Promise<Route> {
+  async requestRoute(
+    origin: LatLon,
+    destination: LatLon,
+    options: TravelMode | { mode?: TravelMode; waypoints?: LatLon[]; preferences?: RoutePreferences } = "car",
+  ): Promise<Route> {
+    const o = typeof options === "string" ? { mode: options } : options;
     const revision = ++this.routeRevision;
-    const route = await this.routingProvider.route({ origin, destination, mode });
+    const route = await this.routingProvider.route({ origin, destination, mode: o.mode ?? "car", ...(o.waypoints ? { waypoints: o.waypoints } : {}), ...(o.preferences ? { preferences: o.preferences } : {}) });
     if (revision !== this.routeRevision) throw new Error("NavigationEngine: route request was cancelled or superseded.");
+    this.applyRoute(route);
+    return route;
+  }
+
+  getRoutingProvider(): RoutingProvider { return this.routingProvider; }
+
+  /** Adopt an already-computed route (a reroute with a new stop, a chosen
+   * alternative, new road preferences) as the active one. */
+  applyRoute(route: Route): void {
+    if (this.resilientOptions) route = this.adoptResilientRoute(route);
     this.route = route;
     this.lastProgressM = 0;
     this.offRouteDetector.reset();
@@ -161,10 +234,9 @@ export class NavigationEngine {
       etaSeconds: route.durationS,
       offRoute: false,
     };
-    this.telemetry.log("ROUTE_UPDATE", { distanceM: route.distanceM, source: route.source }, Date.now());
+    this.telemetry.log("ROUTE_UPDATE", { distanceM: route.distanceM, source: route.source, waypoints: route.waypointCount ?? 0 }, Date.now());
     this.stateMachine.tick(baseSmInput({ routeRequested: true }));
     this.stateMachine.tick(baseSmInput({ routeReady: true }));
-    return route;
   }
 
   clearRoute(): void {
@@ -190,10 +262,51 @@ export class NavigationEngine {
     this.offRouteDetector.reset();
     this.stateMachine.reset();
     this.currentState = idleState();
+    this.resilient = null;
+    this.lastEstimate = null;
+  }
+
+  /**
+   * Hand a new route to the resilient navigator. A reroute that starts at
+   * the junction ahead of a car tracked off the route gets the rest of the
+   * current road prepended; the navigator keeps its hypotheses when the road
+   * network is shared, and is rebuilt (seeded at the route start when GNSS
+   * isn't trusted) when the network is the route itself.
+   */
+  private adoptResilientRoute(route: Route): Route {
+    const opts = this.resilientOptions!;
+    const prev = this.resilient, prevEst = this.lastEstimate;
+    if (prev && prevEst?.offRouteEdge && !this.resilientRouteOnly && route.geometry[0]) {
+      const { ahead } = rerouteOriginAhead(prev.net, prevEst.offRouteEdge.edge, prevEst.offRouteEdge.offset);
+      if (haversineMeters(ahead, route.geometry[0]) < 5) route = prependCurrentRoad(prev.net, prevEst.offRouteEdge.edge, prevEst.offRouteEdge.offset, route);
+    }
+    const graph = opts.networkForRoute?.(route) ?? null;
+    if (prev && graph && prev.net === graph) {
+      prev.setRoute(route);
+      return route;
+    }
+    const net = graph ?? RoadNetwork.fromRoute(route);
+    this.resilientRouteOnly = graph == null;
+    const nav = new ResilientNavigator(net, { ...(graph == null ? { turnAnchoredCheck: false } : {}), ...opts.config });
+    nav.setRoute(route);
+    // Mid-drive reroute without trusted GNSS: the new route starts where the car is.
+    if (prevEst && prevEst.gnss !== "OK") nav.initAtRouteStart(prevEst.speedMps);
+    this.resilient = nav;
+    this.lastEstimate = null;
+    this.lastResilientStepMs = null;
+    return route;
   }
 
   pushImuSample(sample: IMUSample): void {
     this.lastImuSample = sample;
+    if (this.motionPre) {
+      const m = this.motionPre.push(sample);
+      if (m) {
+        this.pendingMotion.push(m);
+        if (this.pendingMotion.length > 10) this.pendingMotion.shift();
+      }
+      this.lastImuAtMs = sample.timestamp;
+    }
     this.motion.push(sample);
   }
 
@@ -468,6 +581,23 @@ export class NavigationEngine {
     // Without GNSS, arrival is not declared automatically: the estimate can be off.
     const hasArrived = !dr && progress != null && progress.distanceRemainingM < 10;
 
+    const resilient = route ? this.stepResilient(nowMs, route, offRouteConfirmed) : null;
+    if (resilient) {
+      const s = resilient.state;
+      const mode = this.stateMachine.tick({
+        gnssIntegrity: s.gnss,
+        confidenceBand: s.confidenceBand,
+        offRouteConfirmed: s.offRoute,
+        hasArrived: resilient.arrived,
+        routeRequested: false,
+        routeReady: false,
+      });
+      if (mode === "RECOVERING" && this.currentState.mode !== "RECOVERING") this.telemetry.log("RECOVERY", {}, nowMs);
+      if (s.offRoute && !this.currentState.offRoute) this.telemetry.log("OFF_ROUTE", { source: "resilient" }, nowMs);
+      this.currentState = { ...s, mode };
+      return this.currentState;
+    }
+
     const mode = this.stateMachine.tick({
       gnssIntegrity: gnssIntegrityState,
       confidenceBand: drConfidence?.band ?? confidence.band,
@@ -499,6 +629,7 @@ export class NavigationEngine {
       nextStep: progress?.nextStep ?? this.currentState.nextStep ?? route?.steps[0] ?? null,
       nextStepDistanceM: progress?.nextStepDistanceM ?? this.currentState.nextStepDistanceM ?? null,
       etaSeconds: progress?.etaSeconds ?? this.currentState.etaSeconds ?? (route?.durationS ?? null),
+      nextManeuverDistanceM: progress?.nextStepDistanceM ?? this.currentState.nextStepDistanceM ?? null,
       nearbyLandmarks: [],
       offRoute: offRouteConfirmed,
       networkAvailable: this.networkAvailable,
@@ -511,5 +642,105 @@ export class NavigationEngine {
       updatedAt: nowMs,
     };
     return this.currentState;
+  }
+
+  private resilientTrusted: NavigationState["trustedPosition"] = null;
+  private locationTracker = new LocationStateTracker();
+  private locationStatus: LocationStatus | null = null;
+  private lastReliablePosition: LatLon | null = null;
+
+  /**
+   * Advance the resilient navigator (at most once per ~second — its gyro
+   * window is in steps of one second) and build the NavigationState from it.
+   * `classicOffRoute` is the corridor detector's verdict on raw GNSS; it is
+   * used only when the network is the route itself and the rejected fixes
+   * look like a real drive confirmed by a gyro turn.
+   */
+  private stepResilient(nowMs: TimestampMs, route: Route, classicOffRoute: boolean): { state: Omit<NavigationState, "mode">; arrived: boolean } | null {
+    const nav = this.resilient;
+    if (!nav) return null;
+    let est = this.lastEstimate;
+    if (this.lastResilientStepMs == null || nowMs - this.lastResilientStepMs >= 900) {
+      const raw = this.lastGnssRaw;
+      const fresh = raw && raw.timestamp !== this.lastFedGnssTs && nowMs - raw.timestamp <= this.staleAfterMs ? raw : null;
+      if (fresh) this.lastFedGnssTs = fresh.timestamp;
+      const imuLive = this.lastImuAtMs != null && nowMs - this.lastImuAtMs < 3000;
+      let motion: NavigatorMotion | null = null;
+      if (imuLive && this.pendingMotion.length > 0) {
+        const n = this.pendingMotion.length;
+        motion = {
+          yawRateDps: this.pendingMotion.reduce((a, m) => a + m.yawRateDps, 0) / n,
+          accelStd: this.pendingMotion.reduce((a, m) => a + m.accelStd, 0) / n,
+        };
+      }
+      this.pendingMotion = [];
+      est = nav.step({
+        t: nowMs / 1000,
+        gnss: fresh ? { lat: fresh.lat, lon: fresh.lon, accuracyM: fresh.accuracyM, speedMps: fresh.speedMps, courseDeg: fresh.headingDeg } : null,
+        motion,
+      });
+      // Healthy fixes calibrate the phone-mount-dependent IMU parameters.
+      if (fresh && est.gnss === "OK") this.motionPre?.observeGnss(fresh.timestamp, fresh.speedMps, fresh.headingDeg);
+      if (est.gnss !== (this.lastEstimate?.gnss ?? "OK")) this.telemetry.log(est.gnss === "OK" ? "GNSS_FIX" : "GNSS_DEGRADED", { resilientVerdict: est.gnss, uncertaintyM: Math.round(est.uncertaintyM) }, nowMs);
+      this.lastEstimate = est;
+      this.lastResilientStepMs = nowMs;
+      this.locationStatus = this.locationTracker.update(est);
+      if (est.gnss === "OK" || est.gnss === "DEGRADED") this.lastReliablePosition = est.position;
+    }
+    if (!est) return null;
+    const loc = this.locationStatus ?? this.locationTracker.update(est);
+
+    // Route-only network: a departure from the route shows up as GNSS fixes
+    // the filter rejects (it can't follow them off the chain) but that are a
+    // plausible drive with a gyro-confirmed turn. Then the raw fixes win.
+    const leftChain = this.resilientRouteOnly && classicOffRoute && nav.rejectedTrackPlausible();
+    const offRoute = est.offRoute || leftChain;
+    const raw = this.lastGnssRaw;
+    const useRaw = leftChain && raw != null;
+    const position: LatLon = useRaw ? { lat: raw.lat, lon: raw.lon } : est.position;
+    const source = useRaw ? "GNSS" : est.source;
+    const band: ConfidenceBand = useRaw ? "LOW" : est.band;
+    const confidence = BAND_CONFIDENCE[band];
+    const accuracyM = useRaw ? raw.accuracyM : Math.round(est.uncertaintyM);
+    const posEstimate = { position: { ...position, timestamp: nowMs, accuracyM, source }, confidence, band, source };
+    if (!useRaw && (est.gnss === "OK" || est.gnss === "DEGRADED")) this.resilientTrusted = posEstimate;
+
+    const gnss: GNSSIntegrityState = est.gnss === "OK" ? "NORMAL" : est.gnss === "DEGRADED" ? "DEGRADED" : "LOST";
+    const step = est.next ? route.steps[est.next.stepIndex] ?? null : null;
+    const remaining = est.routeRemainingM ?? route.distanceM;
+    const state: Omit<NavigationState, "mode"> = {
+      position: posEstimate,
+      trustedPosition: this.resilientTrusted,
+      gnss,
+      confidence,
+      confidenceBand: band,
+      speedMps: useRaw ? raw.speedMps : est.speedMps,
+      headingDeg: useRaw ? raw.headingDeg : est.headingDeg,
+      routeProgressM: est.routeAlongM ?? 0,
+      routeRemainingM: remaining,
+      nextStep: step,
+      nextManeuverDistanceM: est.next ? est.next.distanceM : null,
+      nearbyLandmarks: [],
+      offRoute,
+      networkAvailable: this.networkAvailable,
+      offlineMapAvailable: false,
+      lastTrustedFixAt: this.resilientTrusted?.position.timestamp ?? null,
+      updatedAt: nowMs,
+      positioning: {
+        source,
+        gnssVerdict: est.gnss,
+        gnssSuspectedSpoofing: est.gnssInconsistent,
+        uncertaintyM: est.uncertaintyM,
+        maneuverUncertaintyM: est.next ? est.next.uncertaintyM : null,
+        onRouteProbability: est.onRouteProbability,
+        imuAvailable: this.lastImuAtMs != null && nowMs - this.lastImuAtMs < 3000,
+        secondsSinceTrustedFix: est.secondsSinceAcceptedFix,
+        locationState: useRaw ? "REDUCED_ACCURACY" : loc.state,
+        guidance: useRaw ? "approximate" : loc.guidance,
+        locationConfidence: loc.confidence,
+        lastReliablePosition: this.lastReliablePosition,
+      },
+    };
+    return { state, arrived: est.arrived };
   }
 }

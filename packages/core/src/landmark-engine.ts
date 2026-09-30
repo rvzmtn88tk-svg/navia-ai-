@@ -32,7 +32,17 @@ export type LandmarkCategory =
   | "church"
   | "parking"
   | "government_building"
-  | "recognizable_landmark";
+  | "recognizable_landmark"
+  // Trip-service categories the AI co-pilot searches for along a route.
+  | "restaurant"
+  | "cafe"
+  | "fast_food"
+  | "ev_charging"
+  | "toilets"
+  | "hotel"
+  | "atm"
+  | "car_wash"
+  | "car_repair";
 
 export type POI = {
   id: string;
@@ -40,6 +50,12 @@ export type POI = {
   brand?: string;
   category: LandmarkCategory;
   location: LatLon;
+  /** Raw OSM `opening_hours` value when the data source has one; never synthesized. */
+  openingHours?: string;
+  /** Where this record came from, so the AI can say so (spec section 40). */
+  source?: "osm-online" | "offline-index" | "demo";
+  /** Free-text extras straight from the data source (e.g. OSM `cuisine`). */
+  cuisine?: string;
 };
 
 export type LandmarkRelevanceInputs = {
@@ -76,6 +92,15 @@ const SEMANTIC_IMPORTANCE: Record<LandmarkCategory, number> = {
   pharmacy: 0.55,
   recognizable_landmark: 0.5,
   parking: 0.4,
+  restaurant: 0.45,
+  cafe: 0.4,
+  fast_food: 0.5,
+  ev_charging: 0.4,
+  toilets: 0.2,
+  hotel: 0.5,
+  atm: 0.2,
+  car_wash: 0.35,
+  car_repair: 0.35,
 };
 
 const ROUTE_CORRIDOR_M = 60; // within this distance of the route line -> routeProximity 1

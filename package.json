@@ -9,11 +9,18 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "tsx --test packages/*/test/**/*.test.ts apps/mobile/test/**/*.test.ts",
-    "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p packages/core/tsconfig.test.json",
+    "test": "tsx --test packages/*/test/**/*.test.ts apps/mobile/test/**/*.test.ts apps/ai-backend/test/*.test.ts",
+    "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p packages/core/tsconfig.test.json && tsc --noEmit -p apps/ai-backend/tsconfig.json",
     "android": "npm run android --workspace=@navia/mobile --",
     "ios": "npm run ios --workspace=@navia/mobile --",
-    "navigator:sim": "caffeinate -i tsx apps/mobile/test/sim/run.ts"
+    "navigator:sim": "caffeinate -i tsx apps/mobile/test/sim/run.ts",
+    "ai:backend": "npm start -w @navia/ai-backend",
+    "eval:ai": "tsx apps/ai-backend/eval/run-live-eval.ts",
+    "eval:replay": "tsx packages/core/eval/model-in-the-loop.ts --all",
+    "bench:ai": "tsx packages/core/eval/benchmark.ts",
+    "sim:gnss": "tsx packages/core/sim/run-monte-carlo.ts --n 2000 --workers 4 --out packages/core/sim/reports/mc-2k.json",
+    "sim:gnss:100k": "tsx packages/core/sim/run-monte-carlo.ts --n 100000 --workers 4 --out packages/core/sim/reports/mc-100k.json",
+    "sim:replay": "tsx packages/core/sim/replay-one.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.15",

@@ -95,6 +95,23 @@ export class DemoEngine {
   getTelemetry(): TelemetryLogger {
     return this.telemetry;
   }
+  getRoutingProvider(): DemoRoutingProvider {
+    return this.routingProvider;
+  }
+
+  /**
+   * Adopt a new route mid-drive (a stop added, an alternative chosen). The
+   * simulated vehicle continues from where it is: its along-route distance
+   * is re-derived by projecting the current fused position onto the new
+   * route, exactly as RouteProgressEngine would for real GPS.
+   */
+  applyRoute(route: Route): void {
+    const here = this.lastFusedPosition ?? this.options.origin;
+    this.route = route;
+    this.distanceTraveledM = this.progressEngine.computeProgress(route, here, AVERAGE_SPEED_MPS).distanceCompletedM;
+    this.offRouteDetector = new OffRouteDetector();
+    this.telemetry.log("ROUTE_UPDATE", { distanceM: route.distanceM, waypoints: route.waypointCount ?? 0 }, this.simTimeMs);
+  }
 
   /** Section 27: a real routed trip, Kyiv center -> Kyiv Oblast destination. */
   async start(): Promise<void> {
@@ -270,6 +287,7 @@ export class DemoEngine {
       nextStep: progress.nextStep,
       nextStepDistanceM: progress.nextStepDistanceM,
       etaSeconds: progress.etaSeconds,
+      nextManeuverDistanceM: progress.nextStepDistanceM,
       nearbyLandmarks: [],
       offRoute: offRouteConfirmed,
       networkAvailable: this.networkAvailable,

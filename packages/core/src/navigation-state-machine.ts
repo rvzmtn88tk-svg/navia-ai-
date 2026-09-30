@@ -100,6 +100,9 @@ export class NavigationStateMachine {
       case "GNSS_DEGRADED":
       case "GNSS_LOST":
       case "POSITION_UNCERTAIN": {
+        // Navigating without GNSS can still end at the destination (the
+        // upstream arrival check is responsible for being sure enough).
+        if (input.hasArrived) { this.mode = "ARRIVED"; break; }
         // Escalate further if it's getting worse; otherwise look for recovery.
         if (newSample) this.trackDegradation(input);
         if (newSample && GNSS_DEGRADING_MODES.includes(this.mode) && isGoodSample) {

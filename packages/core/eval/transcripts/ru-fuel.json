@@ -1,0 +1,24 @@
+{
+  "scenario": "ru-fuel",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Ближайшая заправка — ОККО справа через 7 километров, заезд меньше минуты. Дальше WOG справа через 16 километров."
+      }
+    ]
+  ]
+}

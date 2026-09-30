@@ -1,0 +1,48 @@
+{
+  "scenario": "h-ref-that-place-parking",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "restaurant"
+              ],
+              "name_variants": [
+                "Пузата Хата"
+              ],
+              "limit": 1
+            }
+          }
+        ]
+      },
+      {
+        "text": "Пузата Хата праворуч через 3,2 кілометра, заїзд близько хвилини."
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "search_near",
+            "input": {
+              "anchor": "place",
+              "place_id": "p1",
+              "categories": [
+                "parking"
+              ],
+              "radius_m": 400,
+              "limit": 2
+            }
+          }
+        ]
+      },
+      {
+        "text": "Окремої парковки біля Пузатої Хати в моїх даних немає — можливо, є місця біля самого закладу, але напевно не скажу."
+      }
+    ]
+  ]
+}

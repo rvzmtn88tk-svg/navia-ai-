@@ -1,0 +1,28 @@
+{
+  "scenario": "h-kid-sick",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel",
+                "cafe",
+                "parking",
+                "supermarket"
+              ],
+              "ahead_max_km": 5,
+              "limit": 2
+            }
+          }
+        ]
+      },
+      {
+        "text": "Найближче місце зупинитись — Фора праворуч через 2,3 кілометра, приблизно 3 хвилини. Додати зупинку?"
+      }
+    ]
+  ]
+}

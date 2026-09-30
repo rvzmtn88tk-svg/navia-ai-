@@ -1,0 +1,37 @@
+{
+  "scenario": "h-pr-hate-mcd",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "remember_preference",
+            "input": {
+              "key": "avoided_brands",
+              "value": [
+                "McDonald's",
+                "KFC"
+              ],
+              "driver_words": "Фастфуд мені більше ніколи не пропонуй."
+            }
+          },
+          {
+            "name": "remember_preference",
+            "input": {
+              "key": "preferred_food",
+              "value": [
+                "restaurant",
+                "cafe"
+              ],
+              "driver_words": "Фастфуд мені більше ніколи не пропонуй."
+            }
+          }
+        ]
+      },
+      {
+        "text": "Запам'ятала: фастфуд більше не пропонуватиму, шукатиму ресторани й кав'ярні."
+      }
+    ]
+  ]
+}

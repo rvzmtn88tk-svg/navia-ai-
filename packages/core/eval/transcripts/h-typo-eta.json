@@ -1,0 +1,11 @@
+{
+  "scenario": "h-typo-eta",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model on the HOLDOUT suite — manual model-in-the-loop, not the production Haiku/Opus configuration; the decider also wrote the suite",
+  "turns": [
+    [
+      {
+        "text": "Орієнтовно о 14:48, ще 48 хвилин."
+      }
+    ]
+  ]
+}

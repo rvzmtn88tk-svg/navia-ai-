@@ -1,0 +1,54 @@
+{
+  "scenario": "second-option",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "Попереду три: ОККО через 7 кілометрів, WOG через 16 і SOCAR через 25 кілометрів. Перші дві праворуч, майже без гаку."
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "WOG через 16 кілометрів, праворуч, часу майже не додасть. Додаю?"
+      }
+    ],
+    [
+      {
+        "tools": [
+          {
+            "name": "add_stop",
+            "input": {
+              "place_id": "p1"
+            }
+          }
+        ]
+      },
+      {
+        "text": "Додала WOG. Прибуття о 14:48."
+      }
+    ]
+  ]
+}

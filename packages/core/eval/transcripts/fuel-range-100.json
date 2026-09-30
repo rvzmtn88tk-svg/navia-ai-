@@ -1,0 +1,25 @@
+{
+  "scenario": "fuel-range-100",
+  "decider": "Claude (Opus 5.5, this Claude Code session) acting as the co-pilot model — manual model-in-the-loop, not the production Haiku/Opus configuration",
+  "turns": [
+    [
+      {
+        "tools": [
+          {
+            "name": "search_along_route",
+            "input": {
+              "categories": [
+                "fuel"
+              ],
+              "vehicle_range_km": 100,
+              "limit": 3
+            }
+          }
+        ]
+      },
+      {
+        "text": "До місця призначення лише 31 кілометр, тож пального вистачить із запасом. Якщо хочете заправитись дорогою, найзручніше ОККО праворуч через 7 кілометрів або WOG праворуч через 16."
+      }
+    ]
+  ]
+}
