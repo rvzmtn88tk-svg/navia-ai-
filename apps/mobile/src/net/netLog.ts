@@ -97,7 +97,7 @@ export async function runNetSelfTest(): Promise<NetCheck[]> {
     check("Address search (Photon)", `${config.autocompleteUrl}?q=${encodeURIComponent("Хрещатик")}&limit=1`),
     check("Geocoder (Nominatim)", `${config.geocoderUrl.replace(/\/+$/, "")}/search?q=Kyiv&format=json&limit=1`, ua),
     check("Air alerts (NEPTUN)", "https://neptun.in.ua/api/v1/alerts"),
-    check("Kyiv alerts (data.kyivcity.gov.ua)", "https://data.kyivcity.gov.ua/", { method: "HEAD" }),
+    check("Kyiv alerts (data.kyivcity.gov.ua)", "https://data.kyivcity.gov.ua/dataset/statystyka-povitrianykh-tryvoh-u-misti-kyievi-dep-municipal/resource/e1216fe6-7cbd-41ad-b478-85983a2e2669/data/download"),
     check("Shelters (KMDA GIS)", "https://gisserver.kyivcity.gov.ua/mayno/rest/services/KYIV_API/Public_protection/MapServer?f=json"),
     check("Places (Overpass)", "https://overpass-api.de/api/status"),
   ]);
