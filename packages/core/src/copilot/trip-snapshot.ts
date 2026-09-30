@@ -62,7 +62,7 @@ function positioningLine(state: NavigationState): string | null {
 function deadReckoningLine(state: NavigationState): string | null {
   if (state.positionMode !== "DEAD_RECKONING" && state.positionMode !== "MANUAL") return null;
   const a = state.deadReckoningAnchor;
-  const from = !a ? "unknown" : a.source === "landmark" ? `a landmark the driver confirmed ${a.ageS} s ago` : a.source === "manual" ? `a point the driver set ${a.ageS} s ago` : a.source === "confirmation" ? `a maneuver the driver confirmed ${a.ageS} s ago` : `the last trusted GPS fix ${a.ageS} s ago`;
+  const from = !a ? "unknown" : a.source === "landmark" ? `a landmark the driver described ${a.ageS} s ago — undo_position_fix if they say it is wrong` : a.source === "manual" ? `a point the driver set ${a.ageS} s ago` : a.source === "confirmation" ? `a maneuver the driver confirmed ${a.ageS} s ago` : `the last trusted GPS fix ${a.ageS} s ago`;
   const sigma = state.positionUncertaintyM;
   const guidance = sigma == null ? "none" : sigma <= 30 ? "exact" : sigma <= 150 ? "approximate" : "none";
   return `positioning: location_state=${guidance === "none" ? "UNCERTAIN" : "ESTIMATED"} source=DEAD_RECKONING (no usable GPS: along the route from ${from}, speed from motion sensors) ` +
@@ -98,6 +98,12 @@ export function buildTripSnapshot(runtime: CopilotRuntime, session: CopilotSessi
   );
   const positioning = positioningLine(state) ?? deadReckoningLine(state);
   if (positioning) lines.push(positioning);
+  else if (!state.position && !state.trustedPosition) {
+    const a = runtime.approximatePosition?.();
+    lines.push(a && a.ageS <= 120
+      ? `positioning: approximate only (GPS ±${Math.round(a.accuracyM)} m, not navigation-grade; where_am_i works, say "about")`
+      : "positioning: no position yet (no GPS fix)");
+  }
   lines.push(`speed: ${state.speedMps != null ? `${Math.round(state.speedMps * 3.6)} km/h` : "unknown"}`);
 
   const rc = buildRouteContext(runtime);

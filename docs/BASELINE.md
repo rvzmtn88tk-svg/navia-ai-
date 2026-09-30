@@ -90,3 +90,22 @@ The "GPS failed → describe → re-localize → continue" loop has neither a re
 - **Fix:** a plausible untrusted fix (≤ 1.5 km, fresh, no impossible jump) is drawn with its real error circle; nearby places, shelters and the alert load around it; a trip can start from it ("Почати звідси (±N м)"). Navigation still uses trusted fixes only.
 - **Regression tests:** approxFix.test.ts 3/3; npm test 439/439.
 - **Device:** installed on the iPhone 30.09 (IMPLEMENTED, NOT DEVICE-VERIFIED outdoors). `Documents/location-log.json` now records accuracy/age/trusted of recent fixes (no coordinates) for the next outdoor check.
+
+## Progress — "one brain" (30.09.2026)
+
+```
+ПУНКТ: один мозг — все вопросы при интернете идут к штурману (Claude с инструментами)
+БЫЛО: к Claude шли только команды поездки; «де я», «що з GPS», «скільки ще», «укриття», болтовня —
+      шаблонный классификатор (владелец: «сырой, как шаблон»).
+СДЕЛАНО:
+- Чат и голосовой режим в поездке: при интернете и согласии всё идёт к штурману; шаблоны — только без
+  интернета/согласия и мгновенный экстренный 112 и «повтори»; если сервер недоступен — шаблонный ответ.
+- Инструмент where_am_i (улица/район — Nominatim, что рядом — тайлы, погрешность; при большой погрешности
+  поля «probably_…»); приблизительная позиция (±65 м) доступна штурману; найденные места — карточки с маршрутом.
+- Единственное близкое совпадение ориентира ставит позицию сразу (с отменой); при потере GPS — умная модель
+  (Sonnet); самопроверка ловит ложные «сделано/отмена» и по-русски; NAVIA «готове» (средний род).
+ДОКАЗАТЕЛЬСТВО: npm test 444/444; eval:replay 28/28; живые прогоны на реальных данных Киева (Бажана:
+  тайлы OSM, Valhalla, Nominatim, укрытия КМДА): one-brain 24/24 и 23/24 (провал — язык, проверка
+  исправлена), потеря GPS 18/18 и 17/18 (docs/AI_ONE_BRAIN_LIVE.md, docs/AI_GPS_LOSS_LIVE.md).
+НЕ ПРОВЕРЕНО: в машине; голос — всё ещё системный (ключ Azure не добавлен).
+```

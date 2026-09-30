@@ -46,12 +46,16 @@ export type TurnSignals = {
   msSinceLastSmartTurn: number | null;
   /** Tier used by the previous call in this turn (never downgrade mid-turn). */
   previousTier: ModelTier | null;
+  /** GPS is not placing the car (dead reckoning, a manual/landmark point, only a coarse fix):
+   * locating the driver from what they see must not skip steps — the smart tier. */
+  positionUncertain?: boolean;
 };
 
 export function chooseTier(signals: TurnSignals, policy: RouterPolicy = DEFAULT_ROUTER_POLICY): ModelTier {
   if (policy.mode === "always_fast") return "fast";
   if (policy.mode === "always_smart") return "smart";
   if (signals.previousTier === "smart") return "smart";
+  if (signals.positionUncertain) return "smart";
   if (signals.userTextLength > policy.longMessageChars) return "smart";
   if (policy.stickySmartMs > 0 && signals.msSinceLastSmartTurn != null && signals.msSinceLastSmartTurn <= policy.stickySmartMs) return "smart";
   if (signals.toolErrors > 0) return "smart";

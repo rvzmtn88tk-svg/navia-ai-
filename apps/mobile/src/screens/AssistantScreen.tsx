@@ -18,7 +18,8 @@ import { detectIntent, detectKind, directionWords, greeting, suggestions, walkMi
 import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { askSmart, Navigator, wantsModel, type NavigatorReply } from "../ai/navigator/navigator";
 import { languageLevel, remoteLanguageAvailable } from "../ai/navigator/languageEngine";
-import { wantsLocatingCopilot, wantsTripCopilot, yesNo } from "../ai/tripCopilot";
+import { LOCAL_ALWAYS, wantsTripCopilot, yesNo } from "../ai/tripCopilot";
+import { placesFromTrace } from "../ai/copilotPlaces";
 import { activeCopilot, useNaviaStore } from "../engine/naviaController";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { useCopilotActions } from "../ai/useCopilotActions";
@@ -128,8 +129,14 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     // tool-calling trip co-pilot (packages/core/src/copilot).
     const copilot = activeCopilot();
     const yn = copilot.getPendingAction() ? yesNo(text) : null;
-    const locating = remote && wantsLocatingCopilot(understand(text).intent, { routeActive: store.route != null, positionMode: store.state.positionMode, gnss: store.state.gnss }, copilot.isLocating?.() ?? false);
-    const tripAction = yn != null || wantsTripCopilot(text, store.route != null) || locating;
+    const localIntent = understand(text).intent;
+    // One brain: with the NAVIA server available, every question goes to the
+    // co-pilot (Claude with tools). The on-device rules answer only offline,
+    // without consent, or when the co-pilot cannot be reached — and the
+    // instant emergency flow always stays on the phone.
+    const agentWanted = remote && !LOCAL_ALWAYS.has(localIntent);
+    const explicitTrip = yn != null || wantsTripCopilot(text, store.route != null);
+    const tripAction = explicitTrip || (agentWanted && (store.aiContextConsent || !store.aiConsentAsked));
     const needsModel = tripAction || (remote && wantsModel(text, understand(text)));
     if (needsModel && remote && !store.aiConsentAsked) {
       pendingQuestion.current = { text, spoken };
@@ -146,10 +153,20 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
       const job = yn === "yes" ? copilot.confirmPendingAction() : yn === "no" ? Promise.resolve(copilot.declinePendingAction()) : copilot.ask(text);
       void job
         .then((r) => {
+          // The co-pilot could not think (no network / server): the on-device answer instead of "unavailable".
+          if (r.mode === "local" && !explicitTrip) {
+            const local = navigatorRef.current.ask(text, snapshotRef.current);
+            setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) } : m)));
+            if (spoken) void say(local.speech);
+            return;
+          }
           const actions: CopilotAction[] = r.pendingAction
             ? [{ kind: "ask", label: t("copilot.yes"), question: t("copilot.yes") }, { kind: "ask", label: t("copilot.no"), question: t("copilot.no") }]
             : [];
-          setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: r.text, actions } : m)));
+          const st = useNaviaStore.getState();
+          const here = st.currentFix ?? st.approxFix;
+          const places = placesFromTrace(r.trace, copilot.registry, here ? { lat: here.lat, lon: here.lon } : null);
+          setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: r.text, actions, ...(places.length ? { places } : {}) } : m)));
           // A route the co-pilot changed (stop added, preferences, new destination) shows at once.
           useNaviaStore.getState().refresh();
           if (spoken) void say(r.text);

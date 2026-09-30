@@ -31,6 +31,9 @@ import { formatClock, formatDistance, formatDuration, useT, type Translate } fro
 import { GuidanceAnnouncer, cautiousPhrase, instructionPhrase, type StepLike } from "../voice/guidance";
 import { navigatorModeOf, type NavigatorMode } from "../navigation/navigatorMode";
 import { askSmart, Navigator, ProactiveMonitor } from "../ai/navigator/navigator";
+import { understand } from "../ai/navigator/intents";
+import { remoteLanguageAvailable } from "../ai/navigator/languageEngine";
+import { LOCAL_ALWAYS, yesNo } from "../ai/tripCopilot";
 import { perfEnd, perfStart } from "../perf/perf";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { saveRouteOffline, type OfflineProgress } from "../map/offlineRoute";
@@ -380,6 +383,19 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const voiceNavigator = useRef(new Navigator()).current;
+  /** One brain by voice too: the co-pilot when it can be reached, the on-device rules otherwise. */
+  const voiceAnswer = useCallback(async (q: string): Promise<{ text: string; speech: string }> => {
+    const st = useNaviaStore.getState();
+    const copilot = activeCopilot();
+    const yn = copilot.getPendingAction() ? yesNo(q) : null;
+    const agent = yn != null || (remoteLanguageAvailable() && st.aiContextConsent && !LOCAL_ALWAYS.has(understand(q).intent));
+    if (agent) {
+      const r = await (yn === "yes" ? copilot.confirmPendingAction() : yn === "no" ? Promise.resolve(copilot.declinePendingAction()) : copilot.ask(q)).catch(() => null);
+      if (r && (r.mode === "llm" || yn != null)) { useNaviaStore.getState().refresh(); return { text: r.text, speech: r.text }; }
+    }
+    const local = await askSmart(voiceNavigator, q, snapshotRef.current);
+    return { text: local.text, speech: local.speech };
+  }, [voiceNavigator]);
   const hf = useRef<HandsFree | null>(null);
   useEffect(() => {
     if (!handsFreeOn || phase !== "navigating") { hf.current?.disable(); hf.current = null; setHfState("off"); return undefined; }
@@ -388,7 +404,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     const controller = new HandsFree(expoRecognizer(lang), {
       onQuestion: (q) => {
         const t0 = Date.now();
-        void askSmart(voiceNavigator, q, snapshotRef.current).then((r) => {
+        void voiceAnswer(q).then((r) => {
           if (!alive) return;
           setVoiceReply({ q, text: r.text });
           const understandMs = Date.now() - t0;

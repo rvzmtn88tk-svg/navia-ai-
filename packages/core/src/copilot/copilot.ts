@@ -109,6 +109,8 @@ const NEUTER: [RegExp, string][] = [
   [/^(убрал|убрала)(?=[\s,.!?:—-]|$)/iu, "Убрано"], [/^(сохранил|сохранила)(?=[\s,.!?:—-]|$)/iu, "Сохранено"], [/^(отменил|отменила)(?=[\s,.!?:—-]|$)/iu, "Отменено"],
   [/^(изменил|изменила)(?=[\s,.!?:—-]|$)/iu, "Изменено"], [/^(проверил|проверила)(?=[\s,.!?:—-]|$)/iu, "Проверено"],
   [/(^|,\s*)(вернулся|вернулась)(?=\s+к\s)/iu, "$1возвращаю"],
+  // "NAVIA готова / я готовий" → neuter; "маршрут готовий" (a masculine noun) stays.
+  [/(NAVIA|NAVIA[^.!?]{0,40}?|(^|\s)я)\s+готов(а|ий|ый)(?=[\s,.!?:—-]|$)/iu, "$1 готове"],
 ];
 export function neuterize(text: string): string {
   const ukrainian = /[іїєґ]/i.test(text);
@@ -121,6 +123,14 @@ export function neuterize(text: string): string {
     })
     .join(" ")
     .replace(/(^|\s)почти(?=\s)/g, (m, sp: string) => (ukrainian ? `${sp}майже` : m));
+}
+
+/** GPS is not what places the car right now (see TurnSignals.positionUncertain). */
+function positionUncertainNow(runtime: CopilotRuntime): boolean {
+  const { state } = runtime.getNavigation();
+  if (state.positionMode === "DEAD_RECKONING" || state.positionMode === "MANUAL") return true;
+  // No navigation-grade fix at all while GPS is weak or gone.
+  return !state.trustedPosition && state.gnss !== "NORMAL";
 }
 
 /** A spoken answer longer than this is cut at a sentence boundary (the driver is driving). */
@@ -163,7 +173,7 @@ export function replyLanguage(text: string, previous: "uk" | "ru" | "en" | null 
   return "uk";
 }
 /** Common Russian words that Ukrainian spells differently (no ы/э/ё needed to tell them apart). */
-const RUSSIAN_WORDS = /(^|[\s,.!?—-])(что|где|как|какая|какой|какое|какие|какую|сколько|ещё|еще|нет|вижу|видно|здесь|сейчас|куда|откуда|почему|теперь|опять|снова|сбился|потерялся|пропал|станцию|найди|найти|пути|дороге|хочу|мне|нужно|можно|давай|спасибо|хорошо|ладно|второе|первое|остановк\w*|пожалуйста|справа|слева|напротив|перекр[её]ст\w*)(?=[\s,.!?—-]|$)/iu;
+const RUSSIAN_WORDS = /(^|[\s,.!?—-])(расскажи|скажи|покажи|помоги|подскажи|можешь|может|сейчас|время|какое|пока|тоже|очень|только|что|где|как|какая|какой|какое|какие|какую|сколько|ещё|еще|нет|вижу|видно|здесь|сейчас|куда|откуда|почему|теперь|опять|снова|сбился|потерялся|пропал|станцию|найди|найти|пути|дороге|хочу|мне|нужно|можно|давай|спасибо|хорошо|ладно|второе|первое|остановк\w*|пожалуйста|справа|слева|напротив|перекр[её]ст\w*)(?=[\s,.!?—-]|$)/iu;
 const LANGUAGE_NAME = { uk: "Ukrainian", ru: "Russian", en: "English" } as const;
 
 /** Marks NAVIA's self-check messages to the model (transcript replay recognises them). */
@@ -171,7 +181,7 @@ export const SELF_CHECK_PREFIX = "[NAVIA self-check] ";
 /** The driver asked NAVIA to DO something (not only to find): go somewhere, add, plan, change, remove. */
 const DRIVER_ACTION = /(поїхали|поїдемо|їдемо|їдьмо|веди|вези|додай|додати|зроби зупинку|заїдемо|заїдь|розплануй|сплануй|зміни|змінимо|заміни|поміняй|встанови|прибери|скасуй|поверни|перестав|поехали|едем|вези|добавь|сделай остановку|заедем|измени|поменяй|убери|верни|take me|go to|add|plan|change|switch|remove)/i;
 /** "Додано.", "Зупинку видалено": the driver hears that something was done. */
-const DONE_CLAIM = /(^|[\s.!,—-])(додано|додав|додала|видалено|видалена|видалений|прибрано|скасовано|змінено|замінено|встановлено|збережено|переставлено|перебудовано|запам.?ятовано|повернуто)([\s.!,]|$)/i;
+const DONE_CLAIM = /(^|[\s.!,—-])(додано|додав|додала|видалено|видалена|видалений|прибрано|скасовано|змінено|замінено|встановлено|збережено|переставлено|перебудовано|запам.?ятовано|повернуто|позицію уточнено|позицію скасовано|добавлено|удалено|убрано|отменено|отмена|изменено|сохранено|возвращаю|возвращено|позиция уточнена|позиция отменена)([\s.!,]|$)/iu;
 
 /**
  * Checks the model's final words against what really happened this turn and
@@ -192,7 +202,7 @@ export function replyCorrection(text: string, trace: ToolTraceEntry[], hasPendin
     return "You asked the driver to confirm an action, but nothing is pending, so a \"yes\" would do nothing. Call the action tool now (add_stop, set_destination, switch_route or reorder_stops — find the place or destination first if needed) so it returns awaiting_user_confirmation, then ask the yes/no question. If you only meant to list options, don't ask to confirm. Do not mention this check to the driver.";
   }
   if (!acted && DONE_CLAIM.test(text)) {
-    return "You told the driver an action was done, but it was not done this turn (no action tool ran, or it only awaits the driver's confirmation). Fix it: safe actions (remove_stop, set_route_preferences, set_reminder, cancel_reminder, remember_preference, forget_preference) run at once — call the tool now; if it awaits confirmation, ask for it; otherwise say plainly it was not done. Do not mention this check to the driver.";
+    return "You told the driver an action was done, but it was not done this turn (no action tool ran, or it only awaits the driver's confirmation). Fix it: safe actions (remove_stop, set_route_preferences, set_reminder, cancel_reminder, remember_preference, forget_preference, confirm_position, undo_position_fix) run at once — call the tool now; if it awaits confirmation, ask for it; otherwise say plainly it was not done. Do not mention this check to the driver.";
   }
   return null;
 }
@@ -308,6 +318,7 @@ export class NaviaCopilot {
           userTextLength: text.length,
           msSinceLastSmartTurn: this.session.lastSmartTurnAt != null ? nowMs - this.session.lastSmartTurnAt : null,
           previousTier: tiers[tiers.length - 1] ?? null,
+          positionUncertain: !event && positionUncertainNow(this.options.runtime),
         }, this.options.routerPolicy ?? DEFAULT_ROUTER_POLICY);
         this.options.onProgress?.({ stage: "llm", callIndex, tier });
 

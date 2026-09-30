@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { capSpokenWords, neuterize, replyCorrection, toSpeakable, type ToolTraceEntry } from "../src/copilot/copilot";
+import { chooseTier } from "../src/copilot/model-router";
 
 const t = (tool: string, isError = false): ToolTraceEntry => ({ tool, input: {}, isError, result: {}, ms: 1 });
 
@@ -80,4 +81,20 @@ test("Russian replies speak in the neuter too", () => {
   assert.equal(neuterize("Понял, вы у станции Харківська."), "Понятно, вы у станции Харківська.");
   assert.equal(neuterize("Хорошо, вернулся к предыдущей позиции."), "Хорошо, возвращаю к предыдущей позиции.");
   assert.equal(neuterize("Нашла две заправки."), "Найдено две заправки.");
+});
+
+test("NAVIA is neuter when it says it is ready; a ready route stays masculine", () => {
+  assert.equal(neuterize("NAVIA орієнтується за датчиками й готова знайти вас."), "NAVIA орієнтується за датчиками й готове знайти вас.");
+  assert.equal(neuterize("Маршрут готовий."), "Маршрут готовий.");
+});
+
+test("claiming a position undo without calling it is caught (Russian too)", () => {
+  assert.ok(replyCorrection("Отмена позиции. Что вы видите сейчас?", [], false, "Нет, я не там"));
+  assert.equal(replyCorrection("Отмена позиции. Что вы видите сейчас?", [{ tool: "undo_position_fix", input: {}, isError: false, result: { status: "undone" }, ms: 1 }], false, "Нет, я не там"), null);
+});
+
+test("GPS not placing the car → the smart model (locating must not skip steps)", () => {
+  const base = { callIndex: 0, distinctToolsUsed: 0, toolErrors: 0, userTextLength: 20, msSinceLastSmartTurn: null, previousTier: null };
+  assert.equal(chooseTier(base), "fast");
+  assert.equal(chooseTier({ ...base, positionUncertain: true }), "smart");
 });

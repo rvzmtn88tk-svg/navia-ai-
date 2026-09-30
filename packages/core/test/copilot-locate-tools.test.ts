@@ -87,6 +87,11 @@ test("metro + Дніпро-М opposite → unique → confirm_position moves the
   assert.match(cands[0]!.seen, /Харківська/);
   assert.match(cands[0]!.seen, /Dnipro|Дніпро/i);
   assert.ok(!JSON.stringify(loc.content).match(/"lat"|"lon"/), "no coordinates reach the model");
+  // One strong nearby match re-localizes at once (no second step needed from the model).
+  assert.equal(loc.content.position_fixed, true);
+  assert.match(String(loc.content.driver_is_now), /Харківська/);
+  const auto = engine.tick(now + 200);
+  assert.ok(haversineMeters(auto.position!.position, kharkivska.location) < 120, "placed by locate itself");
   const fix = await run("confirm_position", { candidate_id: cands[0]!.id });
   assert.equal(fix.isError, false, JSON.stringify(fix.content));
   assert.equal(fix.content.status, "done");

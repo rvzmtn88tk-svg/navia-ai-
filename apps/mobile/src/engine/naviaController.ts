@@ -35,6 +35,7 @@ import { nextAlertEndedAt } from "./liveStatus";
 import { usePlacesStore } from "../store/placesStore";
 import { TilePlaceSearchProvider, tileLocalizationData } from "../providers/vectorTiles";
 import { useNearbyStore } from "../store/nearbyStore";
+import { streetAt } from "../providers/streetAt";
 
 const idleState: NavigationState = {
   mode: "IDLE", position: null, trustedPosition: null, gnss: "LOST",
@@ -187,6 +188,12 @@ const realRuntime = new EngineCopilotRuntime({
   preferences: preferenceStore,
   // "I see a Fora and a junction": real map features around the estimate (map tiles).
   mapFeatures: (center, radiusM) => tileLocalizationData(center, radiusM),
+  // A coarse fix (±65 m indoors, no known Wi-Fi) still tells the co-pilot roughly where we are.
+  approximatePosition: () => {
+    const a = useNaviaStore.getState().approxFix;
+    return a && a.accuracyM != null ? { location: { lat: a.lat, lon: a.lon }, accuracyM: a.accuracyM, ageS: Math.round((Date.now() - a.timestamp) / 1000) } : null;
+  },
+  describePlace: (p) => streetAt(p),
   // Alert status and the shelters already loaded for the Safety panel.
   safetyInfo: () => {
     const alert = useNaviaStore.getState().alert;

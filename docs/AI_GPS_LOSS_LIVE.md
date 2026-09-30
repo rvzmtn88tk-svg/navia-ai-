@@ -1,6 +1,6 @@
 # Live check: GPS loss → locate by what the driver sees
 
-Run 2026-09-30T13:43:54.518Z · real model through the NAVIA proxy · real OSM data of Kyiv (fixtures) · NavigationEngine route dead reckoning.
+Run 2026-09-30T19:42:48.209Z · real model through the NAVIA proxy · real OSM data of Kyiv (fixtures) · NavigationEngine route dead reckoning.
 **Result: 18/18 checks pass.**
 
 
@@ -8,9 +8,9 @@ Run 2026-09-30T13:43:54.518Z · real model through the NAVIA proxy · real OSM d
 
 **Водій:** Пропал навигатор, что делать?
 
-**NAVIA:** GPS потерян, но навигация работает по датчикам движения — NAVIA вас отслеживает. Что вы видите прямо сейчас на дороге?
+**NAVIA:** GPS пропал, но NAVIA продолжает вести по карте и датчикам движения — сейчас держитесь на E 40, скоро потребуется небольшой поворот налево, смотрите на дорогу. Что видите вокруг — может, заправку, ТЦ или название улицы?
 
-Tools: none · 2.2 s
+Tools: none · 3.3 s
 
 - PASS no position fix without evidence
 - PASS asks what the driver sees
@@ -20,9 +20,9 @@ Tools: none · 2.2 s
 
 **Водій:** Вижу станцию метро, хз какая, а напротив магазин Днипро-М
 
-**NAVIA:** Понял, вы у станции Харківська. Через примерно 80 метров — небольшой поворот левее на E 40.
+**NAVIA:** Это метро «Харківська». Через примерно 80 метров плавный поворот налево на E 40.
 
-Tools: locate_by_description→unique, confirm_position→done · 7.7 s
+Tools: locate_by_description→unique, confirm_position→done · 6.4 s
 
 - PASS locate_by_description called
 - PASS position fixed
@@ -31,9 +31,9 @@ Tools: locate_by_description→unique, confirm_position→done · 7.7 s
 
 **Водій:** Нет, я не там
 
-**NAVIA:** Хорошо, вернулся к предыдущей позиции. Опишите, что видите — магазин, остановку, название улицы, что-нибудь ещё?
+**NAVIA:** Хорошо, вернулись к прежней оценке позиции — что видите сейчас рядом?
 
-Tools: undo_position_fix→undone · 3.2 s
+Tools: undo_position_fix→undone · 4.9 s
 
 - PASS undo_position_fix called
 
@@ -41,9 +41,9 @@ Tools: undo_position_fix→undone · 3.2 s
 
 **Водій:** Вижу станцию метро, хз какая, а напротив магазин Днипро-М
 
-**NAVIA:** Вижу, что рядом две станции. Какая это станция — Позняки или Харківська?
+**NAVIA:** Это метро «Позняки» или «Харківська»?
 
-Tools: locate_by_description→ambiguous · 3.8 s
+Tools: locate_by_description→ambiguous · 5.4 s
 
 - PASS locate_by_description called
 - PASS no fix while ambiguous
@@ -51,9 +51,9 @@ Tools: locate_by_description→ambiguous · 3.8 s
 
 **Водій:** Харьковская
 
-**NAVIA:** Впереди примерно через 80 метров легкий поворот влево на Е 40. Осталось 4 км.
+**NAVIA:** Вы у метро «Харківська», рядом «Дніпро-М». Через примерно 80 метров — небольшой поворот налево, на E 40.
 
-Tools: locate_by_description→unique, confirm_position→done · 4.4 s
+Tools: locate_by_description→unique, confirm_position→done · 6.2 s
 
 - PASS fixed after the answer
 
@@ -61,9 +61,9 @@ Tools: locate_by_description→unique, confirm_position→done · 4.4 s
 
 **Водій:** Вижу справа Икею
 
-**NAVIA:** На карте рядом с вами ИКЕЮ не нашлось. Видите ещё что-то — заправку, остановку, название улицы?
+**NAVIA:** На карте рядом с оценённой позицией IKEA не находится. Подскажите, видите ли поблизости ещё что-то — заправку, остановку или название улицы?
 
-Tools: check_landmark→position_uncertain_use_locate (refused), locate_by_description→none · 8.1 s
+Tools: locate_by_description→none · 5.5 s
 
 - PASS locate_by_description called
 - PASS no fix
@@ -73,9 +73,9 @@ Tools: check_landmark→position_uncertain_use_locate (refused), locate_by_descr
 
 **Водій:** Вижу Фору, а за ней перекрёсток
 
-**NAVIA:** С какой стороны от вас "Фора" — слева или справа?
+**NAVIA:** С какой стороны Фора — слева или справа?
 
-Tools: check_landmark→position_uncertain_use_locate (refused), locate_by_description→ambiguous · 5.6 s
+Tools: locate_by_description→ambiguous · 6.1 s
 
 - PASS locate_by_description called
 - PASS no fix while ambiguous

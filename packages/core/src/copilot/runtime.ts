@@ -42,6 +42,10 @@ export interface CopilotRuntime {
   undoLandmarkFix?(): boolean;
   /** Air-alert status and known shelters the app has loaded (get_safety_info); absent = no data. */
   safetyInfo?(): SafetyInfo;
+  /** A fix too coarse for navigation but still where the phone is (±65 m indoors, no known Wi-Fi). */
+  approximatePosition?(): { location: LatLon; accuracyM: number; ageS: number } | null;
+  /** Street and district at a point (reverse geocoding); null when unknown. */
+  describePlace?(p: LatLon): Promise<{ street: string | null; area: string | null } | null>;
 }
 
 export type SafetyInfo = {
@@ -70,6 +74,8 @@ export type EngineRuntimeOptions = {
   now?: () => Date;
   mapFeatures?: (center: LatLon, radiusM: number) => Promise<{ features: MapFeature[]; junctions: LatLon[] }>;
   safetyInfo?: () => SafetyInfo;
+  approximatePosition?: () => { location: LatLon; accuracyM: number; ageS: number } | null;
+  describePlace?: (p: LatLon) => Promise<{ street: string | null; area: string | null } | null>;
 };
 
 export class EngineCopilotRuntime implements CopilotRuntime {
@@ -103,6 +109,12 @@ export class EngineCopilotRuntime implements CopilotRuntime {
   }
   safetyInfo(): SafetyInfo {
     return this.options.safetyInfo?.() ?? { alert: null, shelters: [] };
+  }
+  approximatePosition(): { location: LatLon; accuracyM: number; ageS: number } | null {
+    return this.options.approximatePosition?.() ?? null;
+  }
+  describePlace(p: LatLon): Promise<{ street: string | null; area: string | null } | null> {
+    return this.options.describePlace ? this.options.describePlace(p) : Promise.resolve(null);
   }
   applyLandmarkFix(location: LatLon, accuracyM: number): { applied: boolean; reason?: string; offRouteM?: number } {
     const h = this.host();

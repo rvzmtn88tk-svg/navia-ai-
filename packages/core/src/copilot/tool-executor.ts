@@ -19,7 +19,7 @@ import { orderStopsAlongRoute, type TripStop } from "../trip-planner";
 import { CONFIRMATION_REQUIRED_TOOLS, SEARCHABLE_CATEGORIES, TOOL_POLICY, type CopilotToolName } from "./tool-definitions";
 import type { CopilotRuntime, CopilotSession, EntityRegistry, PlaceEntity } from "./runtime";
 import { validatePreference } from "./preferences";
-import { distinguish, locateByDescription, searchRadiusM, type DescribedObject, type LocateCandidate } from "../landmark-localizer";
+import { distinguish, featureCategories, locateByDescription, searchRadiusM, type DescribedObject, type LocateCandidate } from "../landmark-localizer";
 
 export type ToolContext = {
   runtime: CopilotRuntime;
@@ -643,7 +643,11 @@ const LANDMARK_FIX_ACCURACY_M = 40;
 function estimateFor(ctx: ToolContext): { location: LatLon; sigmaM: number; source: string } | null {
   const { state } = ctx.runtime.getNavigation();
   const p = state.position?.position ?? state.trustedPosition?.position ?? null;
-  if (!p) return null;
+  if (!p) {
+    // No navigation-grade fix: the phone's own coarse position, with its real error.
+    const a = ctx.runtime.approximatePosition?.();
+    return a && a.ageS <= 120 ? { location: a.location, sigmaM: Math.max(a.accuracyM, 50), source: "approximate_gps" } : null;
+  }
   const onGnss = state.positionMode === "GNSS" || (!state.positionMode && state.gnss === "NORMAL");
   const sigmaM = state.positionUncertaintyM ?? (onGnss ? p.accuracyM ?? 30 : 500);
   return { location: { lat: p.lat, lon: p.lon }, sigmaM: Math.max(sigmaM, onGnss ? 50 : 150), source: onGnss ? "gnss" : state.positionMode === "MANUAL" ? "manual" : "dead_reckoning" };
@@ -689,8 +693,24 @@ async function locateTool(input: Record<string, unknown>, ctx: ToolContext): Pro
     : r.hint.kind === "side" ? { ask_about: "side_of_road", options: r.hint.options.map((o) => ({ ...o, if_driver_says_this: then(o.candidate) })) }
     : r.hint.kind === "name" ? { ask_about: "which_name", options: r.hint.options.map((o) => ({ ...o, if_driver_says_this: then(o.candidate) })) }
     : { ask_about: "is_there_nearby", category: r.hint.category, if_yes: r.hint.present_at.length === 1 ? then(r.hint.present_at[0]!) : "locate_by_description again with that object added", if_no: r.hint.absent_at.length === 1 ? then(r.hint.absent_at[0]!) : "locate_by_description again" };
+  // One strong, nearby match re-localizes at once (spec §76) — the model does
+  // not have to remember a second step; "no, I'm not there" undoes it.
+  let autoFix: Record<string, unknown> | null = null;
+  const top = r.candidates[0];
+  if (r.status === "unique" && top && !top.farFromEstimate && est.source !== "gnss" && ctx.runtime.applyLandmarkFix) {
+    const applied = ctx.runtime.applyLandmarkFix(top.location, LANDMARK_FIX_ACCURACY_M);
+    if (applied.applied) {
+      ctx.session.recordAction({
+        at: ctx.runtime.now().getTime(), tool: "confirm_position", summary: `position set at ${describeCandidate(top)}`,
+        undo: { tool: "undo_position_fix", input: {}, summary: "return to the previous position estimate" },
+      });
+      autoFix = { position_fixed: true, driver_is_now: `next to ${describeCandidate(top)}`, accuracy_m: LANDMARK_FIX_ACCURACY_M, ...(guidanceFrom(ctx, top.location) ?? {}), if_driver_says_wrong: "undo_position_fix" };
+    }
+  }
   const next = r.status === "unique"
-    ? (r.candidates[0]!.farFromEstimate ? `ask the driver to confirm, then confirm_position ${r.candidates[0]!.id} driver_confirmed=true` : `confirm_position ${r.candidates[0]!.id} now (the driver is next to what they described), then give the next maneuver`)
+    ? (autoFix ? "tell the driver where they are (driver_is_now, the place's name) and the next maneuver"
+      : top!.farFromEstimate ? `ask the driver to confirm, then confirm_position ${top!.id} driver_confirmed=true`
+      : `confirm_position ${top!.id} now (the driver is next to what they described), then give the next maneuver`)
     : r.status === "ambiguous" ? "ask the distinguishing_hint question; do not confirm yet"
     : r.status === "none" ? "say it is not found nearby on the map; ask for another visible thing (shop or fuel sign, bus stop, metro, street name); do not guess"
     : "the map has no such objects; ask about a shop, stop, metro or street name";
@@ -714,6 +734,7 @@ async function locateTool(input: Record<string, unknown>, ctx: ToolContext): Pro
       ...(r.unsupported.length ? { unsupported: r.unsupported, unsupported_note: "the map data has no such objects; ask about something else" } : {}),
       data_source: "OpenStreetMap map data",
       ...(combined ? { combined_with_previous_description: true } : {}),
+      ...(autoFix ?? {}),
       next_step: next,
     },
     isError: false,
@@ -762,12 +783,53 @@ function confirmPositionTool(input: Record<string, unknown>, ctx: ToolContext): 
     at: ctx.runtime.now().getTime(), tool: "confirm_position", summary: `position set at ${cand.label}`,
     undo: { tool: "undo_position_fix", input: {}, summary: "return to the previous position estimate" },
   });
-  return { content: { status: "done", position: `next to ${cand.label}`, accuracy_m: LANDMARK_FIX_ACCURACY_M, ...(guidanceFrom(ctx, cand.location) ?? {}) }, isError: false };
+  return {
+    content: {
+      status: "done", driver_is_now: `next to ${cand.label}`, accuracy_m: LANDMARK_FIX_ACCURACY_M, ...(guidanceFrom(ctx, cand.location) ?? {}),
+      tell_driver: "where they are (driver_is_now, the place's name) and the next maneuver",
+      if_driver_says_wrong: "undo_position_fix",
+    },
+    isError: false,
+  };
 }
 
 function undoPositionFixTool(ctx: ToolContext): ToolOutcome {
   if (!ctx.runtime.undoLandmarkFix || !ctx.runtime.undoLandmarkFix()) return { content: { status: "nothing_to_undo" }, isError: false };
   return { content: { status: "undone", note: "back to the previous estimate; ask what the driver sees to locate again" }, isError: false, spoken: "Добре, повернуто попередню позицію." };
+}
+
+async function whereAmITool(ctx: ToolContext): Promise<ToolOutcome> {
+  const est = estimateFor(ctx);
+  const { state, route } = ctx.runtime.getNavigation();
+  if (!est) return { content: { position: "unknown", gps: state.gnss, note: "no GPS fix yet and no estimate: ask the driver to wait a moment outdoors or describe what they see" }, isError: false };
+  const [place, around] = await Promise.all([
+    ctx.runtime.describePlace ? ctx.runtime.describePlace(est.location).catch(() => null) : Promise.resolve(null),
+    ctx.runtime.mapFeatures ? ctx.runtime.mapFeatures(est.location, Math.max(150, Math.min(400, est.sigmaM))).catch(() => null) : Promise.resolve(null),
+  ]);
+  const nearby = (around?.features ?? [])
+    .filter((f) => f.name && featureCategories(f).length > 0)
+    .map((f) => ({ name: f.name!, kind: featureCategories(f)[0]!, d: haversineMeters(est.location, f.location) }))
+    .sort((a, b) => a.d - b.d)
+    .filter((x, i, arr) => arr.findIndex((y) => y.name === x.name) === i)
+    .slice(0, 4)
+    .map((x) => ({ name: x.name, kind: x.kind, distance_m: Math.round(x.d / 10) * 10 }));
+  const rc = route ? buildRouteContext(ctx.runtime) : null;
+  // With a wide error the street itself is only likely: the field names say so.
+  const unsure = est.sigmaM > 60;
+  return {
+    content: {
+      [unsure ? "probably_on_street" : "street"]: place?.street ?? "unknown",
+      [unsure ? "probably_in_area" : "area"]: place?.area ?? "unknown",
+      position_source: est.source,
+      uncertainty_m: Math.round(est.sigmaM),
+      ...(est.sigmaM > 60 ? { precision_note: `say "about" / "near": the position is known to ±${Math.round(est.sigmaM)} m` } : {}),
+      gps: state.gnss,
+      nearby,
+      ...(route ? { on_route: !state.offRoute, ...(rc ? { remaining_km: km(rc.remainingM) } : {}) } : { on_route: "no active route" }),
+      data_source: "OpenStreetMap (reverse geocoding + map data)",
+    },
+    isError: false,
+  };
 }
 
 function safetyInfoTool(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
@@ -1339,6 +1401,7 @@ async function dispatchRead(name: CopilotToolName, input: Record<string, unknown
       case "confirm_position": return confirmPositionTool(input, ctx);
       case "undo_position_fix": return undoPositionFixTool(ctx);
       case "get_safety_info": return safetyInfoTool(input, ctx);
+      case "where_am_i": return await whereAmITool(ctx);
       case "remove_stop": return await removeStop(input, ctx);
       case "set_route_preferences": return await setRoutePreferences(input, ctx);
       case "cancel_pending_action": {

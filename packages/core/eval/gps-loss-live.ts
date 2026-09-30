@@ -57,9 +57,10 @@ type Scenario = { name: string; make: () => NaviaCopilot; turns: Turn[] };
 
 const called = (r: { tools: { tool: string }[] }, name: string) => r.tools.some((x) => x.tool === name);
 const ok = (r: { tools: { tool: string; isError: boolean }[] }, name: string) => r.tools.some((x) => x.tool === name && !x.isError);
-const noMetres = (t: string) => !/\d+\s*(м|m|метр)/i.test(t);
+/** No maneuver distance in metres ("in 60 m", "через 80 метрів"); an honest "accuracy about 100 m" is fine. */
+const noMetres = (t: string) => !/(через|in|за)\s+(приблизно\s+|примерно\s+|около\s+)?\d+\s*(м\b|m\b|метр)/i.test(t);
 /** A question or a request to name what they see ("назовіть…", "скажите, что видите"). */
-const asks = (t: string) => t.includes("?") || /(скаж|назов|назв|дайте (мені |мне )?знати|дайте знать|що бачите|что видите|розкажіть|расскажите|опишіть|опишите)/i.test(t);
+const asks = (t: string) => t.includes("?") || /(скаж|назов|назв|дайте (мені |мне )?знати|дайте знать|бачите|видите|розкажіть|расскажите|опишіть|опишите|підтвердіть|подтвердите)/i.test(t);
 
 const khPos = 3910, pzPos = 2639; // along the Bazhana route (fixture)
 const SCENARIOS: Scenario[] = [

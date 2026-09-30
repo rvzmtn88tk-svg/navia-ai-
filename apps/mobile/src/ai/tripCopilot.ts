@@ -45,8 +45,9 @@ export function yesNo(text: string): "yes" | "no" | null {
   return null;
 }
 
-/** What the on-device navigator keeps even while GPS is lost: the instant emergency flow and "repeat". */
-const LOCAL_ONLY = new Set(["emergency", "repeat"]);
+/** What the on-device navigator always answers itself: the instant emergency flow and "repeat". */
+export const LOCAL_ALWAYS: ReadonlySet<string> = new Set(["emergency", "repeat"]);
+const LOCAL_ONLY = LOCAL_ALWAYS;
 
 /**
  * While a trip runs and GPS is not what places the car (lost, dead reckoning,

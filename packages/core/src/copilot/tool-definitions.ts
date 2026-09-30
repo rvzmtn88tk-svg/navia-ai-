@@ -144,7 +144,7 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
   {
     name: "locate_by_description",
     description:
-      "Where is the driver, from what they describe seeing, when GPS is lost, unreliable or they feel lost ('I see a Fora and a junction after it', 'metro, and opposite it a Dnipro-M'). Put each thing they mention in objects (the first is what they are next to), with relations between them and the side of the road if they said it. The code searches REAL map data (OpenStreetMap) in the area where the car can be and along the route, checks the relations, and returns: unique (one place), ambiguous (several — with a hint: the one observation that separates them), none (nothing matches — ask for something else; never guess), or unsupported (the map has no data for that kind of thing). Candidates carry ids l1, l2…",
+      "Where is the driver, from what they describe seeing, when GPS is lost, unreliable or they feel lost ('I see a Fora and a junction after it', 'metro, and opposite it a Dnipro-M'). Put each thing they mention in objects (the first is what they are next to), with relations between them and the side of the road if they said it. The code searches REAL map data (OpenStreetMap) in the area where the car can be and along the route, checks the relations, and returns: unique (one place — when it is near the estimate the navigator is placed there at once: position_fixed, undo with undo_position_fix), ambiguous (several — with a hint: the one observation that separates them), none (nothing matches — ask for something else; never guess), or unsupported (the map has no data for that kind of thing). Candidates carry ids l1, l2…",
     input_schema: {
       type: "object",
       properties: {
@@ -184,6 +184,12 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
   {
     name: "undo_position_fix",
     description: "Undo the last confirm_position ('no, I'm not there', 'that was the wrong shop'): the navigator returns to its previous estimate.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "where_am_i",
+    description:
+      "Where the driver is now, from NAVIA's position estimate: street and district (reverse geocoding), notable named places right next to them (map data), how the position is known (GPS / estimated) and its uncertainty in metres, and whether they are on the active route. For 'where am I', 'what street is this', 'what's around'. Never give coordinates.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -337,7 +343,7 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
 
 export type CopilotToolName =
   | "search_along_route" | "search_near" | "get_place_details" | "get_route_overview" | "compare_routes" | "get_traffic_ahead"
-  | "find_destination" | "check_landmark" | "get_landmarks_ahead" | "locate_by_description" | "confirm_position" | "undo_position_fix" | "get_safety_info" | "add_stop" | "remove_stop" | "set_destination"
+  | "find_destination" | "check_landmark" | "get_landmarks_ahead" | "locate_by_description" | "confirm_position" | "undo_position_fix" | "get_safety_info" | "where_am_i" | "add_stop" | "remove_stop" | "set_destination"
   | "set_route_preferences" | "switch_route" | "reorder_stops" | "set_reminder" | "cancel_reminder"
   | "remember_preference" | "forget_preference" | "cancel_pending_action";
 
@@ -354,7 +360,7 @@ export type ToolPolicy = "read" | "safe_action" | "confirm";
 
 export const TOOL_POLICY: Record<CopilotToolName, ToolPolicy> = {
   search_along_route: "read", search_near: "read", get_place_details: "read", get_route_overview: "read",
-  compare_routes: "read", get_traffic_ahead: "read", find_destination: "read", check_landmark: "read", get_landmarks_ahead: "read", locate_by_description: "read", get_safety_info: "read",
+  compare_routes: "read", get_traffic_ahead: "read", find_destination: "read", check_landmark: "read", get_landmarks_ahead: "read", locate_by_description: "safe_action", get_safety_info: "read", where_am_i: "read",
   confirm_position: "safe_action", undo_position_fix: "safe_action",
   add_stop: "confirm", set_destination: "confirm", switch_route: "confirm", reorder_stops: "confirm",
   remove_stop: "safe_action", set_route_preferences: "safe_action", set_reminder: "safe_action", cancel_reminder: "safe_action",
