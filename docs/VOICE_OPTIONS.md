@@ -2,7 +2,11 @@
 
 Goal: natural Ukrainian female and male voices for turn prompts, within the ~$20/month test budget, with the iPhone's built-in voice as the offline fallback.
 
-Current state: prompts use the iPhone system voice through `apps/mobile/src/voice/VoiceGuide.ts` (one `speak()` entry point, music ducked, interruptions handled). A neural voice plugs in behind the same call; phrasing and timing (`voice/guidance.ts`) do not change.
+Current state (30.09.2026): **Azure Neural TTS chosen and wired** (owner asked for a natural, non-robotic male voice).
+
+- Proxy: `POST /v1/tts {text, lang, gender}` in `server/navia-proxy/src/tts.ts` → MP3. Voices: uk-UA-OstapNeural (male), uk-UA-PolinaNeural (female); Russian text (ы/э/ъ/ё) → ru-RU-DmitryNeural / SvetlanaNeural; English → en-US Andrew / Ava Multilingual. Auth `Bearer <APP_TOKEN>`, TTS_LIMITER 60/min per device. `/health` reports `tts: true|false`.
+- App: `apps/mobile/src/voice/cloudVoice.ts` — each phrase is cached on the phone (`cacheDirectory/navia-tts/`, SHA-256 of voice+text); wait budget 1.5 s for prompts, 3 s for co-pilot answers, 4 s for the Settings preview; a download that arrives late is still cached. Any failure → the iPhone voice (`VoiceGuide.speak`), so speech never goes silent. The old pitch-lowered "male" voice was removed (it sounded robotic).
+- Status: **UNAVAILABLE until the owner adds the key**: portal.azure.com → Speech resource, region West Europe, tier Free F0 → KEY 1 → `cd server/navia-proxy && npx wrangler secret put AZURE_SPEECH_KEY`. No app reinstall is needed after that.
 
 ## Candidates
 
@@ -22,7 +26,6 @@ Prices change often; confirm on each provider's pricing page before choosing.
 - No network, timeout (> 1.5 s) or error → the iPhone system voice speaks immediately, so guidance never goes silent.
 - Audio ducking: already configured (`DuckOthers`) — music lowers during a prompt instead of stopping.
 
-## Decision needed from the owner
+## Decision
 
-1. Which provider to trial (recommendation: Azure for guaranteed uk-UA female + male within free tier, ElevenLabs if realism matters most).
-2. Listen to samples of 2–3 voices before wiring the chosen one.
+Azure chosen (explicit uk-UA male + female, free tier 0.5M characters/month). ElevenLabs remains the option if even more realism is wanted later — it would plug into the same `/v1/tts` route.
