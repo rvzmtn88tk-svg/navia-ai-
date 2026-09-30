@@ -119,7 +119,8 @@ export class MotionPreprocessor {
       // A real turn seen by both: do the signs agree?
       const agree = Math.sign(dCourse) === Math.sign(dYaw);
       this.signVotes += agree ? 1 : -1;
-      if (this.signVotes <= -2) { this.upSign = this.upSign === 1 ? -1 : 1; this.signVotes = 0; }
+      // Two turns against the guess are two turns FOR the other sign: flip and count them.
+      if (this.signVotes <= -2) { this.upSign = this.upSign === 1 ? -1 : 1; this.signVotes = 2; }
       this.signVotes = Math.max(-2, Math.min(5, this.signVotes));
       this.courseRef = { course: courseDeg, yaw: this.yawIntegral, t: tMs };
     }

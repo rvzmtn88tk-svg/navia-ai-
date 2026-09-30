@@ -151,7 +151,9 @@ export type NavigationState = {
    * reckoning along the route, or a user-placed start. */
   positionMode?: "GNSS" | "DEAD_RECKONING" | "MANUAL" | null;
   /** What the dead-reckoned position counts from, and how long ago (driver landmark, manual point, GNSS). */
-  deadReckoningAnchor?: { source: "gnss" | "manual" | "confirmation" | "landmark"; ageS: number } | null;
+  deadReckoningAnchor?: { source: "gnss" | "manual" | "confirmation" | "landmark" | "coarse" | "turn" | "structure"; ageS: number; speedSource?: string } | null;
+  /** Dead reckoning felt a turn where the route has none: probably a wrong turn (see navigation-engine). */
+  possibleWrongTurn?: { atMs: number; direction: "left" | "right"; origin: LatLon } | null;
   /** Along-route uncertainty in metres while not on GNSS (grows over time). */
   positionUncertaintyM?: number | null;
   /** GNSS has consistently reported a place far from the dead-reckoned one

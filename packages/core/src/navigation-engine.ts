@@ -30,9 +30,13 @@ import { RouteProgressEngine, distanceFromRouteCorridorM, routeMeasure } from ".
 import { OffRouteDetector } from "./off-route-detector";
 import { NavigationStateMachine } from "./navigation-state-machine";
 import { TelemetryLogger } from "./telemetry-logger";
-import { haversineMeters } from "./geodesy";
+import { destinationPoint, haversineMeters } from "./geodesy";
 import { GnssTrendMonitor, type GnssTrend } from "./gnss-trend";
 import { MotionDetector, RouteDeadReckoner, deadReckoningConfidence, type DeadReckoningEstimate } from "./route-dead-reckoning";
+import { RouteHeadingProfile, TurnDetector, matchTurn, matchTurnOnProfile, routeTurns, type RouteTurn, type TurnEvent } from "./turn-detector";
+import { AltitudeEventDetector, matchStructure, type RouteStructure } from "./altitude-events";
+import type { SpeedMemory } from "./speed-memory";
+import { RouteGeometryIndex } from "./route-geometry";
 import { RoadNetwork } from "./resilient/road-network";
 import { ResilientNavigator, type ResilientConfig, type NavigatorEstimate, type NavigatorMotion } from "./resilient/resilient-navigator";
 import { MotionPreprocessor, type MotionPreprocessorOptions } from "./resilient/motion-preprocessor";
@@ -74,7 +78,20 @@ export type NavigationEngineOptions = {
    * unchanged for callers that don't opt in.
    */
   resilient?: ResilientNavigationOptions | boolean;
+  /**
+   * Aids for route dead reckoning (all on by default): coarse Wi-Fi/cell fixes
+   * as weak evidence, gyroscope turns matched to route maneuvers (and wrong
+   * turns), bridges/tunnels felt on the barometer.
+   */
+  routeAids?: { coarseFixes?: boolean; turns?: boolean; structures?: boolean };
+  /** Learned speed per stretch of road and time of day (see speed-memory.ts). */
+  speedMemory?: SpeedMemory | null;
 };
+
+/** What the driver says about the car's motion (report_driver_observation). */
+export type DriverObservation =
+  | { kind: "stopped" } | { kind: "moving" } | { kind: "speed"; kmh: number }
+  | { kind: "turned"; direction: "left" | "right" | "around" } | { kind: "on_bridge" } | { kind: "in_tunnel" };
 
 const BAND_CONFIDENCE: Record<ConfidenceBand, number> = { HIGH: 0.9, MEDIUM: 0.65, LOW: 0.35, UNKNOWN: 0.1 };
 
@@ -150,6 +167,24 @@ export class NavigationEngine {
   /** The resilient network is the route polyline only (no side roads). */
   private resilientRouteOnly = false;
   private motionPre: MotionPreprocessor | null = null;
+  // ——— route dead-reckoning aids ———
+  private routeAids: { coarseFixes: boolean; turns: boolean; structures: boolean };
+  private speedMemory: SpeedMemory | null;
+  private routeMotion = new MotionPreprocessor();
+  private turnDetector = new TurnDetector();
+  private altitudeDetector = new AltitudeEventDetector();
+  private routeIndex: RouteGeometryIndex | null = null;
+  private turnsOnRoute: RouteTurn[] = [];
+  private headingProfile: RouteHeadingProfile | null = null;
+  private structuresOnRoute: RouteStructure[] = [];
+  private lastDr: DeadReckoningEstimate | null = null;
+  private wrongTurn: NonNullable<NavigationState["possibleWrongTurn"]> | null = null;
+  private lastLearnedLookupMs = 0;
+  /** Walking: steps from the pedometer and the stride learned from GNSS. */
+  private stepBase: { steps: number; atMs: number } | null = null;
+  private strideM = 0.72;
+  private strideRef: { steps: number; pos: LatLon } | null = null;
+  private lastStepCount: number | null = null;
   private pendingMotion: NavigatorMotion[] = [];
   private lastImuAtMs: number | null = null;
   private lastResilientStepMs: number | null = null;
@@ -165,6 +200,8 @@ export class NavigationEngine {
     this.stationaryStaleAfterMs = options.stationaryStaleAfterMs ?? 30_000;
     this.resilientOptions = options.resilient === true ? {} : options.resilient ? options.resilient : null;
     if (this.resilientOptions) this.motionPre = new MotionPreprocessor(this.resilientOptions.motion);
+    this.routeAids = { coarseFixes: true, turns: true, structures: true, ...options.routeAids };
+    this.speedMemory = options.speedMemory ?? null;
   }
 
   /** The resilient navigator's latest estimate (null when disabled or no route). */
@@ -216,6 +253,12 @@ export class NavigationEngine {
     this.lastProgressM = 0;
     this.offRouteDetector.reset();
     this.deadReckoner.setRoute(route);
+    this.routeIndex = route.geometry.length >= 2 ? new RouteGeometryIndex(route.geometry) : null;
+    this.turnsOnRoute = this.routeIndex ? routeTurns(route, this.routeIndex) : [];
+    this.headingProfile = this.routeIndex ? new RouteHeadingProfile(this.routeIndex) : null;
+    this.structuresOnRoute = [];
+    this.wrongTurn = null;
+    this.lastDr = null;
     // Seed dead reckoning: from the user-placed start, or the last trusted fix.
     const seedFrom = this.manualStart?.position ?? this.lastTrustedPosition?.position ?? null;
     if (seedFrom) {
@@ -300,6 +343,12 @@ export class NavigationEngine {
 
   pushImuSample(sample: IMUSample): void {
     this.lastImuSample = sample;
+    // Route dead reckoning: turns felt on the gyroscope (any phone mount).
+    const rm = this.routeMotion.push(sample);
+    if (rm && this.routeAids.turns) {
+      const ev = this.turnDetector.push(rm, sample.timestamp, this.routeMotion.getCalibration().signConfirmed);
+      if (ev) this.onFeltTurn(ev, sample.timestamp);
+    }
     if (this.motionPre) {
       const m = this.motionPre.push(sample);
       if (m) {
@@ -444,8 +493,127 @@ export class NavigationEngine {
     if (integrity.trusted) {
       this.prevTrustedGnssRaw = this.lastTrustedGnssRaw;
       this.lastTrustedGnssRaw = sample;
+      // Learn this mount's gyro sign, this road's speed, this walker's stride.
+      this.routeMotion.observeGnss(sample.timestamp, sample.speedMps, sample.headingDeg);
+      this.speedMemory?.learn(sample, sample.speedMps, sample.headingDeg, sample.timestamp);
+      this.learnStride(sample);
+      this.wrongTurn = null;
+    } else if (this.routeAids.coarseFixes) {
+      this.fuseCoarseFix(sample, nowMs);
     }
     return integrity.trusted;
+  }
+
+  // ——— route dead-reckoning aids ———
+
+  /** A coarse fix (Wi-Fi/cell positioning survives GNSS jamming) narrows the along-route estimate. */
+  private fuseCoarseFix(sample: GNSSRawSample, nowMs: number): void {
+    const acc = sample.accuracyM;
+    if (!this.route || !this.routeIndex || !this.drWasActive || acc == null || acc < 30 || acc > 1500 || nowMs - sample.timestamp > 5_000) return;
+    const proj = this.routeIndex.project(sample);
+    // Off the route by more than its own error: not about where we are on the route.
+    if (!proj || proj.offsetM > acc + 60) return;
+    if (this.deadReckoner.fuseCoarse(proj.alongM, acc, nowMs)) this.telemetry.log("DEAD_RECKONING", { kind: "coarse-fix", accuracyM: acc }, nowMs);
+  }
+
+  /** A turn felt on the gyroscope while dead reckoning: a route maneuver (anchor there) or a wrong turn. */
+  private onFeltTurn(ev: TurnEvent, nowMs: number): void {
+    const dr = this.lastDr;
+    if (!this.route || !dr || !this.drWasActive) return;
+    const sinceEndS = Math.max(0, (nowMs - ev.endMs) / 1000);
+    const expected = dr.progressM - dr.speedMps * sinceEndS;
+    // Compare with how the route itself bends (curves, ramps, loops), not only maneuver points.
+    const hit = this.headingProfile ? matchTurnOnProfile(ev, expected, dr.uncertaintyM, Math.max(15, dr.speedMps) * ev.durationS, this.headingProfile) : null;
+    if (hit) {
+      this.deadReckoner.anchorAt(hit.endM + dr.speedMps * sinceEndS, 30 + 0.1 * dr.speedMps * sinceEndS, nowMs, "turn");
+      this.wrongTurn = null;
+      this.telemetry.log("LANDMARK", { kind: "gyro-turn", deltaDeg: Math.round(ev.deltaDeg) }, nowMs);
+      return;
+    }
+    // A clear turn where the route has none nearby: probably off the route.
+    if (Math.abs(ev.deltaDeg) >= 60 && ev.signReliable && this.routeIndex && !this.turnsOnRoute.some((t) => Math.abs(t.progressM - expected) <= dr.uncertaintyM + 150)) {
+      const junction = this.routeIndex.pointAt(Math.max(0, Math.min(this.routeIndex.lengthM, expected)));
+      const outBearing = this.routeIndex.bearingAt(Math.max(0, expected)) + ev.deltaDeg;
+      const origin = destinationPoint(junction, outBearing, dr.speedMps * sinceEndS);
+      this.wrongTurn = { atMs: ev.endMs, direction: ev.deltaDeg > 0 ? "right" : "left", origin };
+      this.telemetry.log("OFF_ROUTE", { kind: "gyro-wrong-turn", deltaDeg: Math.round(ev.deltaDeg) }, nowMs);
+    }
+  }
+
+  /** Bridges and tunnels on the active route (from the map), for barometer anchors and the driver's words. */
+  setRouteStructures(structures: RouteStructure[]): void {
+    this.structuresOnRoute = structures.filter((x) => Number.isFinite(x.fromM) && Number.isFinite(x.toM));
+  }
+
+  /** Relative altitude from the barometer (metres): a hump/dip matching a route bridge/tunnel is an anchor. */
+  pushAltitude(relAltM: number, tMs: number): void {
+    const ev = this.altitudeDetector.push(relAltM, tMs);
+    const dr = this.lastDr;
+    if (!ev || !dr || !this.drWasActive || !this.routeAids.structures) return;
+    const sinceS = Math.max(0, (tMs - ev.endMs) / 1000);
+    const hit = matchStructure(ev, dr.progressM - dr.speedMps * sinceS, dr.uncertaintyM, this.structuresOnRoute);
+    if (hit) {
+      this.deadReckoner.anchorAt(hit.toM + dr.speedMps * sinceS, 40, tMs, "structure");
+      this.telemetry.log("LANDMARK", { kind: `baro-${ev.kind}` }, tMs);
+    }
+  }
+
+  /** The car's own speed (OBD adapter), m/s; null when the adapter is gone. */
+  setVehicleSpeed(mps: number | null, tMs: number): void { this.deadReckoner.setSpeedHint("vehicle", mps, tMs); }
+
+  /** Live traffic flow speed where the car is, m/s (traffic feed); null when unknown. */
+  setTrafficSpeed(mps: number | null, tMs: number): void { this.deadReckoner.setSpeedHint("traffic", mps, tMs); }
+
+  /** Walking: the pedometer's cumulative step count. */
+  pushStepCount(steps: number, tMs: number): void {
+    if (!Number.isFinite(steps)) return;
+    this.lastStepCount = steps;
+    if (!this.stepBase) this.stepBase = { steps, atMs: tMs };
+    this.deadReckoner.pushStepDistance((steps - this.stepBase.steps) * this.strideM, tMs);
+  }
+
+  private learnStride(fix: GNSSRawSample): void {
+    if (this.lastStepCount == null || fix.accuracyM == null || fix.accuracyM > 20) return;
+    if (!this.strideRef) { this.strideRef = { steps: this.lastStepCount, pos: fix }; return; }
+    const steps = this.lastStepCount - this.strideRef.steps;
+    if (steps < 40) return;
+    const stride = haversineMeters(this.strideRef.pos, fix) / steps;
+    if (stride > 0.45 && stride < 1.1) this.strideM += 0.3 * (stride - this.strideM);
+    this.strideRef = { steps: this.lastStepCount, pos: fix };
+  }
+
+  /**
+   * What the driver says about the car's motion ("стою в пробці", "їду 40",
+   * "повернув праворуч", "я на мосту"): evidence for dead reckoning.
+   */
+  applyDriverObservation(o: DriverObservation, nowMs = Date.now()): { applied: boolean; detail: string } {
+    const dr = this.lastDr;
+    switch (o.kind) {
+      case "stopped": this.deadReckoner.setStationaryFor(90_000, nowMs); return { applied: true, detail: "standing: the estimate stops advancing (90 s or until motion is felt)" };
+      case "moving": this.deadReckoner.setStationaryFor(0, nowMs); return { applied: true, detail: "moving again" };
+      case "speed": {
+        if (!(o.kmh > 0 && o.kmh < 200)) return { applied: false, detail: "implausible speed" };
+        this.deadReckoner.setSpeedHint("driver", o.kmh / 3.6, nowMs);
+        return { applied: true, detail: `speed ${Math.round(o.kmh)} km/h used for dead reckoning` };
+      }
+      case "turned": {
+        if (!dr || !this.drWasActive) return { applied: false, detail: "GPS is placing the car; nothing to correct" };
+        const delta = o.direction === "right" ? 90 : o.direction === "left" ? -90 : 180;
+        const hit = matchTurn({ deltaDeg: delta, endMs: nowMs, durationS: 5, signReliable: o.direction !== "around" }, dr.progressM, dr.uncertaintyM, this.turnsOnRoute);
+        if (!hit) return { applied: false, detail: "no route turn like that near the estimate: maybe off the route" };
+        this.deadReckoner.anchorAt(hit.progressM, 30, nowMs, "confirmation");
+        return { applied: true, detail: "placed just after the matching route turn" };
+      }
+      case "on_bridge":
+      case "in_tunnel": {
+        if (!dr || !this.drWasActive) return { applied: false, detail: "GPS is placing the car; nothing to correct" };
+        const kind = o.kind === "on_bridge" ? "bridge" : "tunnel";
+        const s2 = this.structuresOnRoute.filter((x) => x.kind === kind).sort((a, b) => Math.abs((a.fromM + a.toM) / 2 - dr.progressM) - Math.abs((b.fromM + b.toM) / 2 - dr.progressM))[0];
+        if (!s2 || Math.abs((s2.fromM + s2.toM) / 2 - dr.progressM) > dr.uncertaintyM + 400) return { applied: false, detail: `no ${kind} on the route near the estimate (or no map data about ${kind}s)` };
+        this.deadReckoner.anchorAt((s2.fromM + s2.toM) / 2, Math.max(30, (s2.toM - s2.fromM) / 2), nowMs, "structure");
+        return { applied: true, detail: `placed on the ${kind}` };
+      }
+    }
   }
 
   /** Standing still (last trusted fix nearly motionless and the accelerometer,
@@ -596,7 +764,14 @@ export class NavigationEngine {
     // No usable GNSS on an active route: keep guiding along the route.
     let dr: DeadReckoningEstimate | null = null;
     if (route && !hasFreshTrustedPosition && this.deadReckoner.hasAnchor()) {
+      // The learned speed of the stretch ahead (refreshed every few seconds).
+      if (this.speedMemory && this.lastDr && nowMs - this.lastLearnedLookupMs > 5_000) {
+        this.lastLearnedLookupMs = nowMs;
+        const learned = this.speedMemory.lookup(this.lastDr.position, this.lastDr.headingDeg, nowMs);
+        this.deadReckoner.setSpeedHint("learned", learned?.mps ?? null, nowMs);
+      }
       dr = this.deadReckoner.estimate(nowMs, this.motion.isMoving(nowMs));
+      this.lastDr = dr;
       if (dr) progress = this.progressEngine.computeProgress(route, dr.position, dr.speedMps > 0 ? dr.speedMps : null, dr.progressM);
     }
     if (progress) this.lastProgressM = progress.distanceCompletedM;
@@ -667,7 +842,8 @@ export class NavigationEngine {
       offlineMapAvailable: false,
       lastTrustedFixAt: this.lastTrustedPosition?.position.timestamp ?? null,
       positionMode: route ? (hasFreshTrustedPosition ? "GNSS" : dr ? (dr.anchorSource === "manual" ? "MANUAL" : "DEAD_RECKONING") : null) : null,
-      deadReckoningAnchor: route && !hasFreshTrustedPosition && dr ? { source: dr.anchorSource, ageS: Math.round(dr.ageS) } : null,
+      deadReckoningAnchor: route && !hasFreshTrustedPosition && dr ? { source: dr.anchorSource, ageS: Math.round(dr.ageS), speedSource: dr.speedSource } : null,
+      possibleWrongTurn: route && !hasFreshTrustedPosition ? this.wrongTurn : null,
       positionUncertaintyM: dr ? Math.round(dr.uncertaintyM) : null,
       gnssConflict: this.currentConflict(nowMs, dr ? dr.position : null),
       gnssTrend: this.lastTrend ? { level: this.lastTrend.level, reasons: this.lastTrend.reasons, sinceLastFixMs: this.lastTrend.sinceLastFixMs, expectedIntervalMs: this.lastTrend.expectedIntervalMs, accuracyM: this.lastTrend.accuracyM } : null,

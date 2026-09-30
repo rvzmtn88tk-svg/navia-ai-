@@ -41,3 +41,6 @@ export * from "./storage";
 export * from "./active-trip-cache";
 export * from "./trip-recording";
 export * from "./landmark-localizer";
+export * from "./turn-detector";
+export * from "./speed-memory";
+export * from "./altitude-events";

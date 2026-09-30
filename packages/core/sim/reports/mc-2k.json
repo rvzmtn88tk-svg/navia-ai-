@@ -1,0 +1,618 @@
+{
+  "meta": {
+    "n": 2000,
+    "errors": 0,
+    "seconds": 57.428,
+    "generated": "2026-09-30T20:13:04.809Z"
+  },
+  "overall": {
+    "baseline": {
+      "scenarios": 2000,
+      "reached_destination_pct": 69.9,
+      "ci95_pct": [
+        67.9,
+        71.9
+      ],
+      "median_extra_distance_pct": 0,
+      "mean_wrong_turns": 8.72,
+      "median_position_error_p95_m": 572.3040675929989,
+      "confidently_wrong_pct_of_disrupted_seconds": 23.6
+    },
+    "resilient": {
+      "scenarios": 2000,
+      "reached_destination_pct": 89.3,
+      "ci95_pct": [
+        87.9,
+        90.6
+      ],
+      "median_extra_distance_pct": 0,
+      "mean_wrong_turns": 3.43,
+      "median_position_error_p95_m": 62.56523392396009,
+      "confidently_wrong_pct_of_disrupted_seconds": 4.6
+    }
+  },
+  "by_disruption": {
+    "degraded": {
+      "baseline": {
+        "scenarios": 166,
+        "reached_destination_pct": 95.2,
+        "ci95_pct": [
+          90.8,
+          97.5
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 2.17,
+        "median_position_error_p95_m": 70.64918724417585,
+        "confidently_wrong_pct_of_disrupted_seconds": 3.2
+      },
+      "resilient": {
+        "scenarios": 166,
+        "reached_destination_pct": 99.4,
+        "ci95_pct": [
+          96.7,
+          99.9
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 0.39,
+        "median_position_error_p95_m": 17.919242567819207,
+        "confidently_wrong_pct_of_disrupted_seconds": 1.7
+      }
+    },
+    "intermittent": {
+      "baseline": {
+        "scenarios": 110,
+        "reached_destination_pct": 100,
+        "ci95_pct": [
+          96.6,
+          100
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 0.31,
+        "median_position_error_p95_m": 42.05303539534983,
+        "confidently_wrong_pct_of_disrupted_seconds": 5.6
+      },
+      "resilient": {
+        "scenarios": 110,
+        "reached_destination_pct": 100,
+        "ci95_pct": [
+          96.6,
+          100
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 0.06,
+        "median_position_error_p95_m": 14.652317346865145,
+        "confidently_wrong_pct_of_disrupted_seconds": 0.4
+      }
+    },
+    "jam": {
+      "baseline": {
+        "scenarios": 396,
+        "reached_destination_pct": 66.4,
+        "ci95_pct": [
+          61.6,
+          70.9
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 9.54,
+        "median_position_error_p95_m": 901.7234449806472,
+        "confidently_wrong_pct_of_disrupted_seconds": 4.7
+      },
+      "resilient": {
+        "scenarios": 396,
+        "reached_destination_pct": 90.9,
+        "ci95_pct": [
+          87.7,
+          93.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 2.85,
+        "median_position_error_p95_m": 68.56341353110984,
+        "confidently_wrong_pct_of_disrupted_seconds": 0.5
+      }
+    },
+    "jam_to_end": {
+      "baseline": {
+        "scenarios": 330,
+        "reached_destination_pct": 56.4,
+        "ci95_pct": [
+          51,
+          61.6
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 12.36,
+        "median_position_error_p95_m": 1260.9176668722182,
+        "confidently_wrong_pct_of_disrupted_seconds": 3.2
+      },
+      "resilient": {
+        "scenarios": 330,
+        "reached_destination_pct": 82.7,
+        "ci95_pct": [
+          78.3,
+          86.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 5.25,
+        "median_position_error_p95_m": 69.78614300906638,
+        "confidently_wrong_pct_of_disrupted_seconds": 0.2
+      }
+    },
+    "none": {
+      "baseline": {
+        "scenarios": 78,
+        "reached_destination_pct": 100,
+        "ci95_pct": [
+          95.3,
+          100
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 0.01,
+        "median_position_error_p95_m": 15.106653471089064,
+        "confidently_wrong_pct_of_disrupted_seconds": 0
+      },
+      "resilient": {
+        "scenarios": 78,
+        "reached_destination_pct": 100,
+        "ci95_pct": [
+          95.3,
+          100
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 0.03,
+        "median_position_error_p95_m": 10.178629141726855,
+        "confidently_wrong_pct_of_disrupted_seconds": 0
+      }
+    },
+    "spoof_drift_along": {
+      "baseline": {
+        "scenarios": 116,
+        "reached_destination_pct": 62.1,
+        "ci95_pct": [
+          53,
+          70.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 11.13,
+        "median_position_error_p95_m": 549.5952425610892,
+        "confidently_wrong_pct_of_disrupted_seconds": 54.9
+      },
+      "resilient": {
+        "scenarios": 116,
+        "reached_destination_pct": 75,
+        "ci95_pct": [
+          66.4,
+          82
+        ],
+        "median_extra_distance_pct": 1,
+        "mean_wrong_turns": 8.05,
+        "median_position_error_p95_m": 504.57754325636347,
+        "confidently_wrong_pct_of_disrupted_seconds": 23
+      }
+    },
+    "spoof_drift_lateral": {
+      "baseline": {
+        "scenarios": 181,
+        "reached_destination_pct": 69.1,
+        "ci95_pct": [
+          62,
+          75.3
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 8.82,
+        "median_position_error_p95_m": 414.4276035488069,
+        "confidently_wrong_pct_of_disrupted_seconds": 80.2
+      },
+      "resilient": {
+        "scenarios": 181,
+        "reached_destination_pct": 86.7,
+        "ci95_pct": [
+          81,
+          90.9
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.75,
+        "median_position_error_p95_m": 92.55075107111253,
+        "confidently_wrong_pct_of_disrupted_seconds": 6.5
+      }
+    },
+    "spoof_far": {
+      "baseline": {
+        "scenarios": 163,
+        "reached_destination_pct": 69.3,
+        "ci95_pct": [
+          61.9,
+          75.9
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 9,
+        "median_position_error_p95_m": 893.729321626887,
+        "confidently_wrong_pct_of_disrupted_seconds": 3.3
+      },
+      "resilient": {
+        "scenarios": 163,
+        "reached_destination_pct": 90.8,
+        "ci95_pct": [
+          85.4,
+          94.3
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.23,
+        "median_position_error_p95_m": 68.15020254286661,
+        "confidently_wrong_pct_of_disrupted_seconds": 0.6
+      }
+    },
+    "spoof_jumping": {
+      "baseline": {
+        "scenarios": 145,
+        "reached_destination_pct": 60.7,
+        "ci95_pct": [
+          52.6,
+          68.3
+        ],
+        "median_extra_distance_pct": 2,
+        "mean_wrong_turns": 10.94,
+        "median_position_error_p95_m": 1231.9492087724477,
+        "confidently_wrong_pct_of_disrupted_seconds": 13
+      },
+      "resilient": {
+        "scenarios": 145,
+        "reached_destination_pct": 93.8,
+        "ci95_pct": [
+          88.6,
+          96.7
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 2.6,
+        "median_position_error_p95_m": 65.03787124299568,
+        "confidently_wrong_pct_of_disrupted_seconds": 1
+      }
+    },
+    "spoof_replay": {
+      "baseline": {
+        "scenarios": 172,
+        "reached_destination_pct": 61,
+        "ci95_pct": [
+          53.6,
+          68
+        ],
+        "median_extra_distance_pct": 3,
+        "mean_wrong_turns": 11.49,
+        "median_position_error_p95_m": 732.9254895870265,
+        "confidently_wrong_pct_of_disrupted_seconds": 86.8
+      },
+      "resilient": {
+        "scenarios": 172,
+        "reached_destination_pct": 83.1,
+        "ci95_pct": [
+          76.8,
+          88
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 5.16,
+        "median_position_error_p95_m": 222.3252913998174,
+        "confidently_wrong_pct_of_disrupted_seconds": 18.7
+      }
+    },
+    "spoof_static": {
+      "baseline": {
+        "scenarios": 143,
+        "reached_destination_pct": 69.9,
+        "ci95_pct": [
+          62,
+          76.8
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 8.92,
+        "median_position_error_p95_m": 967.6174071529057,
+        "confidently_wrong_pct_of_disrupted_seconds": 18.8
+      },
+      "resilient": {
+        "scenarios": 143,
+        "reached_destination_pct": 90.2,
+        "ci95_pct": [
+          84.2,
+          94.1
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.65,
+        "median_position_error_p95_m": 84.98608584137827,
+        "confidently_wrong_pct_of_disrupted_seconds": 0.3
+      }
+    }
+  },
+  "by_world": {
+    "highway": {
+      "baseline": {
+        "scenarios": 382,
+        "reached_destination_pct": 72.3,
+        "ci95_pct": [
+          67.6,
+          76.5
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 10.04,
+        "median_position_error_p95_m": 1242.208740187742,
+        "confidently_wrong_pct_of_disrupted_seconds": 21.3
+      },
+      "resilient": {
+        "scenarios": 382,
+        "reached_destination_pct": 86.4,
+        "ci95_pct": [
+          82.6,
+          89.5
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 5.63,
+        "median_position_error_p95_m": 410.0154648824736,
+        "confidently_wrong_pct_of_disrupted_seconds": 4.5
+      }
+    },
+    "suburban": {
+      "baseline": {
+        "scenarios": 412,
+        "reached_destination_pct": 81.6,
+        "ci95_pct": [
+          77.5,
+          85
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 9.85,
+        "median_position_error_p95_m": 470.5650128495174,
+        "confidently_wrong_pct_of_disrupted_seconds": 24.2
+      },
+      "resilient": {
+        "scenarios": 412,
+        "reached_destination_pct": 91,
+        "ci95_pct": [
+          87.9,
+          93.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 4.4,
+        "median_position_error_p95_m": 65.35639389633859,
+        "confidently_wrong_pct_of_disrupted_seconds": 2.4
+      }
+    },
+    "urban": {
+      "baseline": {
+        "scenarios": 1206,
+        "reached_destination_pct": 65.2,
+        "ci95_pct": [
+          62.4,
+          67.8
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 7.92,
+        "median_position_error_p95_m": 524.2584689165975,
+        "confidently_wrong_pct_of_disrupted_seconds": 24.7
+      },
+      "resilient": {
+        "scenarios": 1206,
+        "reached_destination_pct": 89.6,
+        "ci95_pct": [
+          87.8,
+          91.2
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 2.4,
+        "median_position_error_p95_m": 48.310605991839736,
+        "confidently_wrong_pct_of_disrupted_seconds": 5.2
+      }
+    }
+  },
+  "by_imu": {
+    "imu": {
+      "baseline": {
+        "scenarios": 1808,
+        "reached_destination_pct": 69.3,
+        "ci95_pct": [
+          67.1,
+          71.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 8.84,
+        "median_position_error_p95_m": 584.2695222770042,
+        "confidently_wrong_pct_of_disrupted_seconds": 23.8
+      },
+      "resilient": {
+        "scenarios": 1808,
+        "reached_destination_pct": 91.2,
+        "ci95_pct": [
+          89.8,
+          92.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 2.95,
+        "median_position_error_p95_m": 56.720506506292054,
+        "confidently_wrong_pct_of_disrupted_seconds": 5
+      }
+    },
+    "no_imu": {
+      "baseline": {
+        "scenarios": 192,
+        "reached_destination_pct": 75.5,
+        "ci95_pct": [
+          69,
+          81.1
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 7.64,
+        "median_position_error_p95_m": 462.982864428447,
+        "confidently_wrong_pct_of_disrupted_seconds": 21.6
+      },
+      "resilient": {
+        "scenarios": 192,
+        "reached_destination_pct": 71.4,
+        "ci95_pct": [
+          64.6,
+          77.3
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 7.96,
+        "median_position_error_p95_m": 532.509829962456,
+        "confidently_wrong_pct_of_disrupted_seconds": 1.5
+      }
+    }
+  },
+  "by_air_alert": {
+    "alert": {
+      "baseline": {
+        "scenarios": 973,
+        "reached_destination_pct": 72.4,
+        "ci95_pct": [
+          69.5,
+          75.1
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 8.43,
+        "median_position_error_p95_m": 507.7454880895433,
+        "confidently_wrong_pct_of_disrupted_seconds": 22
+      },
+      "resilient": {
+        "scenarios": 973,
+        "reached_destination_pct": 88.9,
+        "ci95_pct": [
+          86.8,
+          90.7
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.56,
+        "median_position_error_p95_m": 62.82273888998733,
+        "confidently_wrong_pct_of_disrupted_seconds": 3.8
+      }
+    },
+    "no_alert": {
+      "baseline": {
+        "scenarios": 1027,
+        "reached_destination_pct": 67.6,
+        "ci95_pct": [
+          64.7,
+          70.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 9,
+        "median_position_error_p95_m": 624.4348820428742,
+        "confidently_wrong_pct_of_disrupted_seconds": 25.2
+      },
+      "resilient": {
+        "scenarios": 1027,
+        "reached_destination_pct": 89.7,
+        "ci95_pct": [
+          87.7,
+          91.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.31,
+        "median_position_error_p95_m": 62.29161096413257,
+        "confidently_wrong_pct_of_disrupted_seconds": 5.3
+      }
+    }
+  },
+  "by_sign_reading": {
+    "no_signs": {
+      "baseline": {
+        "scenarios": 812,
+        "reached_destination_pct": 68.5,
+        "ci95_pct": [
+          65.2,
+          71.6
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 9.08,
+        "median_position_error_p95_m": 574.5207443133207,
+        "confidently_wrong_pct_of_disrupted_seconds": 22.9
+      },
+      "resilient": {
+        "scenarios": 812,
+        "reached_destination_pct": 88.4,
+        "ci95_pct": [
+          86,
+          90.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.72,
+        "median_position_error_p95_m": 67.54449912852311,
+        "confidently_wrong_pct_of_disrupted_seconds": 4.4
+      }
+    },
+    "reads_signs": {
+      "baseline": {
+        "scenarios": 1188,
+        "reached_destination_pct": 70.9,
+        "ci95_pct": [
+          68.2,
+          73.4
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 8.48,
+        "median_position_error_p95_m": 565.2897715420497,
+        "confidently_wrong_pct_of_disrupted_seconds": 24.2
+      },
+      "resilient": {
+        "scenarios": 1188,
+        "reached_destination_pct": 89.9,
+        "ci95_pct": [
+          88.1,
+          91.5
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.23,
+        "median_position_error_p95_m": 59.790855892417675,
+        "confidently_wrong_pct_of_disrupted_seconds": 4.7
+      }
+    }
+  },
+  "by_driver_error": {
+    "driver_mistake": {
+      "baseline": {
+        "scenarios": 192,
+        "reached_destination_pct": 68.8,
+        "ci95_pct": [
+          61.9,
+          74.9
+        ],
+        "median_extra_distance_pct": 3,
+        "mean_wrong_turns": 9.77,
+        "median_position_error_p95_m": 893.729321626887,
+        "confidently_wrong_pct_of_disrupted_seconds": 25
+      },
+      "resilient": {
+        "scenarios": 192,
+        "reached_destination_pct": 80.7,
+        "ci95_pct": [
+          74.6,
+          85.7
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 4.88,
+        "median_position_error_p95_m": 110.12708002451221,
+        "confidently_wrong_pct_of_disrupted_seconds": 4.6
+      }
+    },
+    "no_mistake": {
+      "baseline": {
+        "scenarios": 1808,
+        "reached_destination_pct": 70,
+        "ci95_pct": [
+          67.9,
+          72.1
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 8.61,
+        "median_position_error_p95_m": 556.1171945969967,
+        "confidently_wrong_pct_of_disrupted_seconds": 23.5
+      },
+      "resilient": {
+        "scenarios": 1808,
+        "reached_destination_pct": 90.2,
+        "ci95_pct": [
+          88.8,
+          91.5
+        ],
+        "median_extra_distance_pct": 0,
+        "mean_wrong_turns": 3.28,
+        "median_position_error_p95_m": 59.79387222703927,
+        "confidently_wrong_pct_of_disrupted_seconds": 4.5
+      }
+    }
+  }
+}
