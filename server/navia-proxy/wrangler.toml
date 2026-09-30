@@ -7,6 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 # Fast model: the driver hears the answer within ~1–2 s.
 NAVIA_UNDERSTAND_MODEL = "claude-haiku-4-5-20251001"
+# Co-pilot (/v1/copilot/complete, apps/ai-backend handler): routine turns on the
+# fast model; multi-step planning on the smart one. The cloud branch defaulted the
+# smart tier to Opus 5.5 — Sonnet 5 here keeps a trip question in cents.
+NAVIA_AI_MODEL_FAST = "claude-haiku-4-5-20251001"
+NAVIA_AI_MODEL_SMART = "claude-sonnet-5"
 
 # Per-device limit (abuse and cost guard): 20 questions per minute.
 [[ratelimits]]
@@ -14,4 +19,12 @@ name = "LIMITER"
 namespace_id = "1001"
   [ratelimits.simple]
   limit = 20
+  period = 60
+
+# Co-pilot: one question can take several model calls (tool rounds).
+[[ratelimits]]
+name = "COPILOT_LIMITER"
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 60
   period = 60

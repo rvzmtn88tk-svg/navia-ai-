@@ -1,5 +1,7 @@
 // NAVIA language proxy (Cloudflare Worker).
 //   POST /v1/understand  { question, facts }  →  { intent, confidence, answer, usedFacts, model, latencyMs }
+//   POST /v1/copilot/complete  the tool-calling co-pilot's model calls
+//        (apps/ai-backend's handler: validated conversation, tools from @navia/core)
 //   GET  /health
 // The Anthropic key is a Worker secret (ANTHROPIC_API_KEY) and never leaves
 // here. The app identifies itself with X-Navia-App (APP_TOKEN secret — not a
@@ -9,12 +11,17 @@
 // (functions/src/understand.ts), so both behave the same.
 import Anthropic from "@anthropic-ai/sdk";
 import { understand } from "../../../functions/src/understand";
+import { handleCompletion, LIMITS } from "../../../apps/ai-backend/src/handler";
+import { AnthropicLLMClient, type MessagesApi } from "../../../apps/ai-backend/src/anthropic-llm-client";
 
 interface Env {
   ANTHROPIC_API_KEY: string;
   APP_TOKEN: string;
   NAVIA_UNDERSTAND_MODEL?: string;
+  NAVIA_AI_MODEL_FAST?: string;
+  NAVIA_AI_MODEL_SMART?: string;
   LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
+  COPILOT_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
 }
 
 /** The key itself, even when a whole pasted `curl … x-api-key: sk-ant-…` line was stored as the secret. */
@@ -33,6 +40,23 @@ export default {
       const k = apiKey(env.ANTHROPIC_API_KEY);
       const keyShape = k ? { startsLikeKey: k.startsWith("sk-ant-"), length: k.length, hasSpaceOrQuote: /[\s"']/.test(k) } : null;
       return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!k, keyShape });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/copilot/complete") {
+      // The app sends `Authorization: Bearer <APP_TOKEN>` (the same app token).
+      const device = (request.headers.get("x-navia-device") ?? "").slice(0, 64) || request.headers.get("cf-connecting-ip") || "anon";
+      if (!(await env.COPILOT_LIMITER.limit({ key: device })).success) return json({ error: "rate limited" }, 429);
+      if (Number(request.headers.get("content-length") ?? 0) > LIMITS.maxBodyBytes) return json({ error: "body too large" }, 413);
+      let body: unknown;
+      try { body = await request.json(); } catch { return json({ error: "invalid JSON" }, 400); }
+      const llm = new AnthropicLLMClient(new Anthropic({ apiKey: apiKey(env.ANTHROPIC_API_KEY) }) as unknown as MessagesApi, {
+        fastModel: env.NAVIA_AI_MODEL_FAST ?? "claude-haiku-4-5-20251001",
+        smartModel: env.NAVIA_AI_MODEL_SMART ?? "claude-sonnet-5",
+        smartEffort: "medium",
+        fastMaxTokens: 1024,
+        smartMaxTokens: 4000,
+      });
+      const r = await handleCompletion(body, request.headers.get("authorization") ?? undefined, { llm, clientToken: env.APP_TOKEN || null, signal: request.signal });
+      return json(r.body, r.status);
     }
     if (request.method !== "POST" || url.pathname !== "/v1/understand") return json({ error: "not found" }, 404);
     if (!env.APP_TOKEN || request.headers.get("x-navia-app") !== env.APP_TOKEN) return json({ error: "forbidden" }, 403);

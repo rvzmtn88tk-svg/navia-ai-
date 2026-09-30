@@ -8,7 +8,7 @@ import { useKeepAwake } from "expo-keep-awake";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { haversineMeters, initialBearing, positionAtDistance, type GNSSRawSample, type IMUSample, type NavigationState, type RouteStep } from "@navia/core";
 import type { RootStackParamList, RouteMode } from "../navigation/RootNavigator";
-import { demoEngine, navigationEngine, useNaviaStore } from "../engine/naviaController";
+import { activeCopilot, activeTripCache, demoEngine, navigationEngine, preferenceStore, tripPlanner, useNaviaStore } from "../engine/naviaController";
 import { ExpoLocationPositionProvider, probePosition } from "../providers/ExpoLocationPositionProvider";
 import { ExpoSensorsMotionProvider } from "../providers/ExpoSensorsMotionProvider";
 import { useAppSettings } from "../settings/AppSettings";
@@ -92,6 +92,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     transition.setValue(0);
   }, [destinationLat, destinationLon]); // eslint-disable-line react-hooks/exhaustive-deps
   const [routeError, setRouteError] = useState<string | null>(null);
+  /** No internet: following the trip saved on the phone, or a reroute that could not be built. */
+  const [tripNotice, setTripNotice] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [retry, setRetry] = useState(0);
   const [noFix, setNoFix] = useState(false);
@@ -119,17 +121,48 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     setNoFix(false);
     let lastRerouteAt = 0;
     setRouteError(null);
+    setTripNotice(null);
     if (demo) demoEngine.reset(); else navigationEngine.clearRoute();
     refresh();
+
+    // The trip plan (destination + stops + road preferences, packages/core
+    // TripPlanner) owns every car (re)route, so the co-pilot's stops and
+    // "no toll roads" survive reroutes. A new destination starts a new plan
+    // with the preferences the driver saved as lasting.
+    if (!demo) {
+      const planned = tripPlanner.getPlan().destination;
+      if (!planned || planned.location.lat !== destination.lat || planned.location.lon !== destination.lon) {
+        tripPlanner.setDestination({ label: destinationLabel, location: destination });
+        activeCopilot().resetConversation();
+        const saved: Record<string, boolean> = {};
+        for (const [pref, key] of [["avoid_tolls", "avoidTolls"], ["avoid_highways", "avoidHighways"], ["avoid_unpaved", "avoidUnpaved"]] as const) {
+          const v = preferenceStore.get(pref);
+          if (typeof v === "boolean") saved[key] = v;
+        }
+        if (Object.keys(saved).length) tripPlanner.setPreferences(saved);
+      }
+    }
+    /** Car: through the trip plan; walking: a plain pedestrian route. */
+    async function routeFrom(origin: { lat: number; lon: number }) {
+      if (modeRef.current === "walk") await navigationEngine.requestRoute(origin, destination, "walk");
+      else navigationEngine.applyRoute(await tripPlanner.route(origin));
+    }
+    let savedRoute: unknown = null;
 
     async function requestRoute(origin: { lat: number; lon: number }) {
       try {
         perfStart("route: request → ready");
-        await navigationEngine.requestRoute(origin, destination, modeRef.current);
+        await routeFrom(origin);
         perfEnd("route: request → ready");
         if (!cancelled) { setRouteError(null); refresh(); }
       } catch (err) {
-        if (!cancelled) setRouteError((err as Error).message);
+        // No internet: the trip saved on the phone still has a full route to this destination.
+        const cached = modeRef.current === "car" ? await activeTripCache.load().catch(() => null) : null;
+        if (cached?.plan.destination && haversineMeters(cached.plan.destination.location, destination) < 50) {
+          tripPlanner.restore(cached.plan);
+          navigationEngine.applyRoute(cached.route);
+          if (!cancelled) { setRouteError(null); setTripNotice(t("route.cachedTrip")); refresh(); }
+        } else if (!cancelled) setRouteError((err as Error).message);
       }
     }
 
@@ -185,10 +218,19 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           rerouting = true;
           useNaviaStore.getState().setRerouting(true);
           lastRerouteAt = Date.now();
-          navigationEngine.requestRoute(here, destination, modeRef.current)
-            .then(() => { if (!cancelled) { setRouteError(null); refresh(); } })
-            .catch((err: Error) => { if (!cancelled) setRouteError(err.message); })
+          routeFrom(here)
+            .then(() => { if (!cancelled) { setRouteError(null); setTripNotice(null); refresh(); } })
+            // A failed reroute (typically no internet) never ends navigation: keep the current route and say so.
+            .catch(() => { if (!cancelled) setTripNotice(t("route.rerouteFailed")); })
             .finally(() => { rerouting = false; useNaviaStore.getState().setRerouting(false); });
+        }
+        if (modeRef.current === "car") {
+          // Keep the active trip saved on the phone whenever the route changes (reroute, co-pilot).
+          const r = navigationEngine.getRoute();
+          if (r && r !== savedRoute) { savedRoute = r; void activeTripCache.save(tripPlanner.getPlan(), r).catch(() => {}); }
+          // Co-pilot stops the car has reached: dropped, so later reroutes don't send it back.
+          const pos = s.position?.position;
+          if (pos) for (const stop of tripPlanner.markVisitedNear(pos)) void say(t("route.stopReached", { name: stop.label }), PRIORITY.guidance, { lang, gender: voiceGender });
         }
       }, TICK_MS);
     }
@@ -510,6 +552,11 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
           <Appear from={-24} style={[styles.maneuverWrap, { top: topInset }]}>
             <ManeuverCard step={nextStep} cue={nextCue ? landmarkCue(nextCue, lang) : null} distanceM={state.nextStepDistanceM ?? null} following={followingStep} reliable={positionReliable} estimated={estimated} uncertaintyM={uncertaintyM} offRoute={state.offRoute} t={t} lang={lang} c={c} />
             <NavigatorBanner mode={navMode} note={modeNote} state={state} t={t} lang={lang} c={c} />
+            {tripNotice && (
+              <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
+                <Text variant="subhead" color="warning" style={styles.flex}>{tripNotice}</Text>
+              </Appear>
+            )}
             {voiceReply && (
               <View style={[styles.voiceReply, { backgroundColor: c.maneuverCard, borderColor: c.brandTeal }]}>
                 {voiceReply.q ? <Text variant="caption" color={{ custom: c.onManeuverSecondary }} numberOfLines={1}>🎙 {voiceReply.q}</Text> : null}

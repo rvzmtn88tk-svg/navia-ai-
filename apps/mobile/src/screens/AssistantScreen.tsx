@@ -13,11 +13,13 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { ExpoSpeechVoiceProvider } from "../providers/ExpoSpeechVoiceProvider";
 import { useAppSettings } from "../settings/AppSettings";
-import type { NavigatorIntent } from "../ai/navigator/intents";
+import { understand, type NavigatorIntent } from "../ai/navigator/intents";
 import { detectIntent, detectKind, directionWords, greeting, suggestions, walkMinutes, type CopilotAction, type CopilotReply, type CopilotWorld, type PlaceKind, type WorldPlace } from "../ai/copilotBrain";
 import { useCopilotWorld } from "../ai/useCopilotWorld";
 import { askSmart, Navigator, wantsModel, type NavigatorReply } from "../ai/navigator/navigator";
 import { languageLevel, remoteLanguageAvailable } from "../ai/navigator/languageEngine";
+import { wantsTripCopilot, yesNo } from "../ai/tripCopilot";
+import { activeCopilot, useNaviaStore } from "../engine/naviaController";
 import { useNavigatorSnapshot } from "../ai/navigator/useSnapshot";
 import { useCopilotActions } from "../ai/useCopilotActions";
 import { useNearbyStore } from "../store/nearbyStore";
@@ -94,9 +96,68 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
   const timing = useRef<{ id: number; t0: number; computeMs: number; question: string } | null>(null);
   const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
 
+  /** A question waiting for the one-time consent answer; asked again after it. */
+  const pendingQuestion = useRef<{ text: string; spoken: boolean } | null>(null);
+  const sendRef = useRef<((raw: string, spoken?: boolean) => void) | null>(null);
+
   const send = useCallback((raw: string, spoken = false) => {
     const text = raw.trim();
     if (!text) return;
+    const store = useNaviaStore.getState();
+    const addPair = (assistant: Omit<Message, "id" | "role">): number => {
+      const userId = ++seq.current;
+      const replyId = ++seq.current;
+      setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", ...assistant }]);
+      setTimeout(() => list.current?.scrollToEnd({ animated: true }), 60);
+      return replyId;
+    };
+
+    // The one-time answer about sending questions to the NAVIA server (spec section 30).
+    if (text === t("copilot.consentYes") || text === t("copilot.consentNo")) {
+      const on = text === t("copilot.consentYes");
+      store.setAiContextConsent(on);
+      addPair({ text: on ? t("copilot.consentOn") : t("copilot.consentOff") });
+      const again = pendingQuestion.current;
+      pendingQuestion.current = null;
+      if (again) setTimeout(() => sendRef.current?.(again.text, again.spoken), 50);
+      return;
+    }
+
+    // Doing something with the trip (a stop on the way, no toll roads, home,
+    // a reminder, undo) or answering the co-pilot's yes/no proposal: the
+    // tool-calling trip co-pilot (packages/core/src/copilot).
+    const copilot = activeCopilot();
+    const yn = copilot.getPendingAction() ? yesNo(text) : null;
+    const tripAction = yn != null || wantsTripCopilot(text, store.route != null);
+    const needsModel = tripAction || (remote && wantsModel(text, understand(text)));
+    if (needsModel && remote && !store.aiConsentAsked) {
+      pendingQuestion.current = { text, spoken };
+      addPair({
+        text: t("copilot.consentQuestion"),
+        actions: [{ kind: "ask", label: t("copilot.consentYes"), question: t("copilot.consentYes") }, { kind: "ask", label: t("copilot.consentNo"), question: t("copilot.consentNo") }],
+      });
+      if (spoken) void say(t("copilot.consentQuestion"));
+      return;
+    }
+    if (tripAction) {
+      const replyId = addPair({ text: t("copilot.thinking") });
+      setBusy(true);
+      const job = yn === "yes" ? copilot.confirmPendingAction() : yn === "no" ? Promise.resolve(copilot.declinePendingAction()) : copilot.ask(text);
+      void job
+        .then((r) => {
+          const actions: CopilotAction[] = r.pendingAction
+            ? [{ kind: "ask", label: t("copilot.yes"), question: t("copilot.yes") }, { kind: "ask", label: t("copilot.no"), question: t("copilot.no") }]
+            : [];
+          setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: r.text, actions } : m)));
+          // A route the co-pilot changed (stop added, preferences, new destination) shows at once.
+          useNaviaStore.getState().refresh();
+          if (spoken) void say(r.text);
+        })
+        .catch(() => setMessages((old) => old.map((m) => (m.id === replyId ? { ...m, text: t("copilot.tripUnavailable") } : m))))
+        .finally(() => setBusy(false));
+      return;
+    }
+
     const t0 = nowMs();
     const w = worldRef.current;
     const reply = navigatorRef.current.ask(text, snapshotRef.current);
@@ -109,7 +170,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     // Not sure on the phone (or not understood): the language model (NAVIA
     // proxy, or the signed-in server) decides what is asked; answers about the
     // situation still come from the snapshot (askSmart). Otherwise the rules.
-    const needRemote = remote && wantsModel(text, reply);
+    const needRemote = remote && store.aiContextConsent && wantsModel(text, reply);
     // While the model is asked, the bubble says so (not the rules' refusal).
     const first = needRemote ? { text: t("copilot.thinking"), actions: [] } : { text: local.text, actions: local.actions, ...(local.places ? { places: local.places } : {}) };
     setMessages((old) => [...old, { id: userId, role: "user", text }, { id: replyId, role: "assistant", ...first }]);
@@ -143,6 +204,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
     }
     setTimeout(() => list.current?.scrollToEnd({ animated: true }), 60);
   }, [messages, remote, say, t]);
+  sendRef.current = send;
 
   // When a place search that a reply was waiting for finishes, update that reply.
   useEffect(() => {
@@ -233,9 +295,7 @@ export function AssistantScreen({ route: navRoute, navigation }: Props): JSX.Ele
   runRef.current = run;
   const onAction = useCallback((a: CopilotAction) => runRef.current(a), []);
   const renderItem = useCallback(({ item }: { item: Message }) => <MessageRow item={item} lang={lang} onAction={onAction} />, [lang, onAction]);
-  const sendRef = useRef(send);
-  sendRef.current = send;
-  const onSend = useCallback((q: string) => { void sendRef.current(q); }, []);
+  const onSend = useCallback((q: string) => { void sendRef.current?.(q); }, []);
   const level = languageLevel();
 
   return (

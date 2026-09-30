@@ -9,6 +9,7 @@ import { useT } from "../i18n";
 import { Button, Card, Divider, ListRow, SectionLabel, Segmented, Text, TextField, useColors } from "../components/ui";
 import { hasGenderVoice, speak } from "../voice/VoiceGuide";
 import { OfflinePackageCard } from "../components/OfflinePackageCard";
+import { isSmartCopilotConfigured, useNaviaStore } from "../engine/naviaController";
 import { radius, space } from "../theme/tokens";
 
 export function SettingsScreen(): JSX.Element {
@@ -20,6 +21,8 @@ export function SettingsScreen(): JSX.Element {
     language, setLanguage, themePreference, setThemePreference, displayName, setDisplayName,
     introSoundEnabled, setIntroSoundEnabled, briefingEnabled, setBriefingEnabled, voiceGender, setVoiceGender, resetOnboarding,
   } = useAppSettings();
+  const aiConsent = useNaviaStore((s) => s.aiContextConsent);
+  const setAiConsent = useNaviaStore((s) => s.setAiContextConsent);
   const [maleAvailable, setMaleAvailable] = useState(true);
   const [previewing, setPreviewing] = useState(false);
 
@@ -81,6 +84,9 @@ export function SettingsScreen(): JSX.Element {
         <ListRow icon="volume" title={t("settings.sound")} trailing={<Switch value={introSoundEnabled} onValueChange={setIntroSoundEnabled} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("settings.sound")} />} />
         <Divider inset={52} />
         <ListRow icon="route" title={t("settings.briefing")} subtitle={t("settings.briefingHint")} trailing={<Switch value={briefingEnabled} onValueChange={setBriefingEnabled} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("settings.briefing")} />} />
+        <Divider inset={52} />
+        <ListRow icon="sparkle" title={t("settings.smartCopilot")} subtitle={isSmartCopilotConfigured() ? t("settings.smartCopilotHint") : t("settings.smartCopilotOff")}
+          trailing={<Switch value={aiConsent} onValueChange={setAiConsent} disabled={!isSmartCopilotConfigured()} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("settings.smartCopilot")} />} />
         <Divider inset={52} />
         <ListRow icon="sparkle" title={t("settings.replayOnboarding")} onPress={() => { resetOnboarding(); navigation.popTo("Home"); }} />
         <Divider inset={52} />

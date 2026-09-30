@@ -41,5 +41,5 @@ export const config = {
   /** Token for the co-pilot endpoint (/v1/copilot/complete); the NAVIA proxy takes the same app token. Not a secret. */
   aiClientToken: readEnv(process.env.EXPO_PUBLIC_NAVIA_AI_CLIENT_TOKEN) ?? readEnv(process.env.EXPO_PUBLIC_NAVIA_AI_APP_TOKEN),
   /** Overpass API endpoint for live OSM place search (co-pilot "find fuel on the way"). Unset = no online place search. */
-  overpassUrl: readEnv(process.env.EXPO_PUBLIC_NAVIA_OVERPASS_URL),
+  overpassUrl: readEnv(process.env.EXPO_PUBLIC_NAVIA_OVERPASS_URL) ?? "https://overpass-api.de/api/interpreter",
 } as const;
