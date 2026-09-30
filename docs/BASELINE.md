@@ -50,3 +50,33 @@ The "GPS failed → describe → re-localize → continue" loop has neither a re
 - Data: metro stations/entrances, stops, traffic signals, any named/branded shop, banks, churches, bridges.
 - Routing: localization / GPS-loss / observation conversations → the agent when the co-pilot is available; the classifier stays only as the offline fallback.
 - Proof: deterministic tests on a **recorded real Overpass response** (Kyiv, dated, ODbL) for spec scenarios A–E (ambiguous Fora, metro + Дніпро-М, contradiction, no match, stationary); a live `gps_loss_dialog` eval through the proxy.
+
+## Progress — milestone "Grounded AI Navigator v1" (30.09.2026)
+
+```
+ПУНКТ: B1+B3+B4+B5 (+ get_safety_info) — штурман находит машину по тому, что видит водитель
+БЫЛО: «Вижу Фору, а за ней перекрёсток» → шаблон «нет данных»; «метро, напротив Дніпро-М» → «укрытие»;
+      у штурмана не было ни инструмента, ни данных, ни входа в движок.
+СДЕЛАНО:
+- packages/core/src/landmark-localizer.ts: описание (объекты + «напротив/за ним/на перекрёстке», сторона) →
+  реальные объекты OSM в зоне неопределённости и коридоре маршрута; unique / ambiguous / none / unsupported;
+  вопрос-разделитель выбирает код (сторона / название / что рядом); наблюдения складываются (память поездки).
+- NavigationEngine.applyLandmarkFix / undoLandmarkFix; trip_state показывает, от чего считается позиция и когда
+  метры запрещены (в том числе манёвр ближе погрешности).
+- Инструменты штурмана: locate_by_description, confirm_position (отказ без уникальности/подтверждения),
+  undo_position_fix, get_safety_info. check_landmark отказывает, пока GPS не даёт позицию.
+- Данные: объекты и перекрёстки из тайлов карты (OpenFreeMap/OSM); поиск мест штурмана из тайлов, Overpass —
+  запасной (с сети владельца Overpass недоступен совсем); прокси /v1/overpass.
+- Приложение: во время поездки без GPS разговор идёт к штурману (по состоянию, не по словам).
+ДОКАЗАТЕЛЬСТВО:
+- npm test 436/436; npm run typecheck; tsc apps/mobile; eval:replay 28/28; CI зелёный.
+- Сценарии A–E спецификации на записанных реальных данных Киева (test/fixtures/osm-*.json, ODbL):
+  landmark-localization.test.ts 12/12, copilot-locate-tools.test.ts 6/6, tilePlaces.test.ts 3/3.
+- Живая модель через прокси: `NAVIA_BACKEND_URL=… npx tsx packages/core/eval/gps-loss-live.ts` → 18/18
+  (docs/AI_GPS_LOSS_LIVE.md). Первый прогон 13/18, найденные причины исправлены в коде (не фразами).
+- Регрессия живого holdout (59, не используется для настройки): 50/59 (было 51/59; 4 диалога стали проходить,
+  5 перестали — все 5 про округление минут, длину ответа и remember_preference, новые инструменты в них не
+  участвуют: разброс модели, не регрессия). p50 3,1 с, p90 4,7 с, $0,20 за прогон.
+НЕ ПРОВЕРЕНО: на телефоне в машине (DEVICE-VERIFIED — нет); светофоры/знаки/мосты — в данных тайлов их нет
+  (честно «unsupported»); дорожный граф вокруг машины (B2) — не начат.
+```
