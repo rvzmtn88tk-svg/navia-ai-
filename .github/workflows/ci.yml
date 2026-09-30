@@ -31,5 +31,7 @@ jobs:
       - name: Co-pilot eval (replay, no API)
         run: npm run eval:replay
       - name: Types (Cloudflare proxy)
-        working-directory: server/navia-proxy
-        run: npm ci --ignore-scripts && npx tsc --noEmit
+        # The proxy imports functions/src (shared prompt), which resolves the SDK from functions/.
+        run: |
+          (cd functions && npm ci --ignore-scripts)
+          cd server/navia-proxy && npm ci --ignore-scripts && npx tsc --noEmit

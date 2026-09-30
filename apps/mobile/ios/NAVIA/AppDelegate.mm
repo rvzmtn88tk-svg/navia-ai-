@@ -115,7 +115,23 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectB
   // They will be passed down to the ViewController used by React Native.
   self.initialProps = @{};
 
-  return [super application:application didFinishLaunchingWithOptions:launchOptions];
+  BOOL ok = [super application:application didFinishLaunchingWithOptions:launchOptions];
+  // The intro's deep-space colour behind everything while JavaScript loads:
+  // otherwise iOS shows a white root view between the launch screen and the intro.
+  self.window.backgroundColor = [AppDelegate naviaSpace];
+  self.window.rootViewController.view.backgroundColor = [AppDelegate naviaSpace];
+  return ok;
+}
+
++ (UIColor *)naviaSpace
+{
+  return [UIColor colorWithRed:0.0078 green:0.0196 blue:0.0471 alpha:1];
+}
+
+- (void)customizeRootView:(RCTRootView *)rootView
+{
+  [super customizeRootView:rootView];
+  rootView.backgroundColor = [AppDelegate naviaSpace];
 }
 
 - (NSURL *)sourceURLForBridge:(RCTBridge *)bridge

@@ -165,7 +165,9 @@ export function IntroOverlay(): JSX.Element | null {
   // The whole scene flies into the emblem (which sits exactly at the centre).
   const sceneScale = burst.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 3.2, 14] });
   const sceneOpacity = burst.interpolate({ inputRange: [0, 0.5, 0.7], outputRange: [1, 1, 0] });
-  const coverOpacity = burst.interpolate({ inputRange: [0, 0.78, 1], outputRange: [1, 1, 0] });
+  // Later launches dissolve into the map; the first one goes straight into
+  // the story tour, so the map must not show through in between.
+  const coverOpacity = onboardingComplete ? burst.interpolate({ inputRange: [0, 0.78, 1], outputRange: [1, 1, 0] }) : 1;
   const flash = burst.interpolate({ inputRange: [0, 0.5, 0.62, 0.9], outputRange: [0, 0, 0.75, 0] });
   const emblemScale = rise.interpolate({ inputRange: [0, 1], outputRange: [0.78, 1] });
   const sweepX = sweep.interpolate({ inputRange: [0, 1], outputRange: [-120, 260] });
