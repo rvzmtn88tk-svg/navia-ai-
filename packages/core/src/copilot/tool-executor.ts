@@ -793,6 +793,18 @@ function confirmPositionTool(input: Record<string, unknown>, ctx: ToolContext): 
   };
 }
 
+function driverObservationTool(input: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  if (!ctx.runtime.applyDriverObservation) return err("not_supported", "This navigation mode takes no driver observations.");
+  const kind = String(input.kind ?? "");
+  const o = kind === "speed" ? { kind: "speed" as const, kmh: Number(input.speed_kmh) }
+    : kind === "turned" ? { kind: "turned" as const, direction: (input.direction === "left" || input.direction === "around" ? input.direction : "right") as "left" | "right" | "around" }
+    : kind === "stopped" || kind === "moving" || kind === "on_bridge" || kind === "in_tunnel" ? { kind } : null;
+  if (!o) return err("bad_request", "Unknown observation kind.");
+  const r = ctx.runtime.applyDriverObservation(o as never);
+  if (r.applied) ctx.session.recordAction({ at: ctx.runtime.now().getTime(), tool: "report_driver_observation", summary: `driver: ${kind}`, undo: null });
+  return { content: { status: r.applied ? "applied" : "not_applied", detail: r.detail }, isError: false };
+}
+
 function undoPositionFixTool(ctx: ToolContext): ToolOutcome {
   if (!ctx.runtime.undoLandmarkFix || !ctx.runtime.undoLandmarkFix()) return { content: { status: "nothing_to_undo" }, isError: false };
   return { content: { status: "undone", note: "back to the previous estimate; ask what the driver sees to locate again" }, isError: false, spoken: "Добре, повернуто попередню позицію." };
@@ -1400,6 +1412,7 @@ async function dispatchRead(name: CopilotToolName, input: Record<string, unknown
       case "locate_by_description": return await locateTool(input, ctx);
       case "confirm_position": return confirmPositionTool(input, ctx);
       case "undo_position_fix": return undoPositionFixTool(ctx);
+      case "report_driver_observation": return driverObservationTool(input, ctx);
       case "get_safety_info": return safetyInfoTool(input, ctx);
       case "where_am_i": return await whereAmITool(ctx);
       case "remove_stop": return await removeStop(input, ctx);

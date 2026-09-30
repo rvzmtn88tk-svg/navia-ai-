@@ -3,6 +3,7 @@
 //   POST /v1/copilot/complete  the tool-calling co-pilot's model calls
 //        (apps/ai-backend's handler: validated conversation, tools from @navia/core)
 //   POST /v1/overpass  data=<Overpass QL>  →  Overpass JSON (mirrors tried here)
+//   POST /v1/traffic/flow  { lat, lon }  →  { currentKmh, freeFlowKmh, confidence, closed } (TomTom)
 //   POST /v1/tts  { text, lang, gender }  →  audio/mpeg (neural voice, see tts.ts)
 //   GET  /health
 // The Anthropic key is a Worker secret (ANTHROPIC_API_KEY) and never leaves
@@ -17,6 +18,7 @@ import { handleCompletion, LIMITS } from "../../../apps/ai-backend/src/handler";
 import { AnthropicLLMClient, type MessagesApi } from "../../../apps/ai-backend/src/anthropic-llm-client";
 import { parseTtsRequest, synthesize } from "./tts";
 import { askOverpass, overpassQuery } from "./overpass";
+import { parseFlowRequest, tomtomFlow } from "./traffic";
 
 interface Env {
   ANTHROPIC_API_KEY: string;
@@ -28,6 +30,8 @@ interface Env {
   COPILOT_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
   TTS_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
   OVERPASS_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
+  TRAFFIC_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
+  TOMTOM_API_KEY?: string;
   AZURE_SPEECH_KEY?: string;
   AZURE_SPEECH_REGION?: string;
 }
@@ -47,7 +51,20 @@ export default {
       // The key's shape only (never its value): tells a bad paste from a revoked key.
       const k = apiKey(env.ANTHROPIC_API_KEY);
       const keyShape = k ? { startsLikeKey: k.startsWith("sk-ant-"), length: k.length, hasSpaceOrQuote: /[\s"']/.test(k) } : null;
-      return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!k, keyShape, tts: !!env.AZURE_SPEECH_KEY?.trim() });
+      return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!k, keyShape, tts: !!env.AZURE_SPEECH_KEY?.trim(), traffic: !!env.TOMTOM_API_KEY?.trim() });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/traffic/flow") {
+      if (!env.APP_TOKEN || request.headers.get("authorization") !== `Bearer ${env.APP_TOKEN}`) return json({ error: "forbidden" }, 403);
+      const key = env.TOMTOM_API_KEY?.trim();
+      if (!key) return json({ error: "traffic not configured" }, 503);
+      const device = (request.headers.get("x-navia-device") ?? "").slice(0, 64) || request.headers.get("cf-connecting-ip") || "anon";
+      if (!(await env.TRAFFIC_LIMITER.limit({ key: device })).success) return json({ error: "rate limited" }, 429);
+      let body: unknown;
+      try { body = await request.json(); } catch { return json({ error: "invalid JSON" }, 400); }
+      const p = parseFlowRequest(body);
+      if (typeof p === "string") return json({ error: p }, 400);
+      const r = await tomtomFlow(p, key, request.signal);
+      return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
     if (request.method === "POST" && url.pathname === "/v1/overpass") {
       if (!env.APP_TOKEN || request.headers.get("authorization") !== `Bearer ${env.APP_TOKEN}`) return json({ error: "forbidden" }, 403);

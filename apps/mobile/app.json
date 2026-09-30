@@ -28,7 +28,8 @@
           "location",
           "audio"
         ],
-        "NSLocationAlwaysUsageDescription": "Щоб голосові підказки звучали, коли екран заблоковано або відкрито іншу програму, дозвольте геолокацію «Завжди». NAVIA використовує її лише під час поїздки."
+        "NSLocationAlwaysUsageDescription": "Щоб голосові підказки звучали, коли екран заблоковано або відкрито іншу програму, дозвольте геолокацію «Завжди». NAVIA використовує її лише під час поїздки.",
+        "NSBluetoothAlwaysUsageDescription": "NAVIA підключається до OBD-адаптера вашого авто (Bluetooth), щоб знати справжню швидкість і вести без GPS."
       }
     },
     "android": {
@@ -69,7 +70,15 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [],
+          "bluetoothAlwaysPermission": "NAVIA підключається до OBD-адаптера вашого авто (Bluetooth), щоб знати справжню швидкість і вести без GPS."
+        }
+      ]
     ],
     "extra": {
       "eas": {

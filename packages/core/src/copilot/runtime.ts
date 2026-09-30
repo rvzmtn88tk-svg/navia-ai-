@@ -11,6 +11,7 @@ import { UnavailableTrafficProvider } from "../traffic";
 import type { TripPlanner } from "../trip-planner";
 import type { PreferenceStore } from "./preferences";
 import type { MapFeature } from "../landmark-localizer";
+import type { DriverObservation } from "../navigation-engine";
 
 export type SavedPlace = { kind: "home" | "work"; label: string; location: LatLon };
 
@@ -40,6 +41,8 @@ export interface CopilotRuntime {
   /** Move the navigation estimate to a confirmed landmark (NavigationEngine.applyLandmarkFix). */
   applyLandmarkFix?(location: LatLon, accuracyM: number): { applied: boolean; reason?: string; offRouteM?: number };
   undoLandmarkFix?(): boolean;
+  /** What the driver says about the car's motion (NavigationEngine.applyDriverObservation). */
+  applyDriverObservation?(o: DriverObservation): { applied: boolean; detail: string };
   /** Air-alert status and known shelters the app has loaded (get_safety_info); absent = no data. */
   safetyInfo?(): SafetyInfo;
   /** A fix too coarse for navigation but still where the phone is (±65 m indoors, no known Wi-Fi). */
@@ -60,6 +63,7 @@ export interface CopilotNavigationHost {
   applyRoute(route: Route): void;
   applyLandmarkFix?(location: LatLon, accuracyM: number): { applied: boolean; reason?: string; offRouteM?: number };
   undoLandmarkFix?(): boolean;
+  applyDriverObservation?(o: DriverObservation): { applied: boolean; detail: string };
 }
 
 export type EngineRuntimeOptions = {
@@ -123,6 +127,10 @@ export class EngineCopilotRuntime implements CopilotRuntime {
   undoLandmarkFix(): boolean {
     const h = this.host();
     return h.undoLandmarkFix ? h.undoLandmarkFix() : false;
+  }
+  applyDriverObservation(o: DriverObservation): { applied: boolean; detail: string } {
+    const h = this.host();
+    return h.applyDriverObservation ? h.applyDriverObservation(o) : { applied: false, detail: "this navigation mode takes no driver observations" };
   }
   preferences(): PreferenceStore | null { return this.options.preferences ?? null; }
 }

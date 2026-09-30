@@ -362,3 +362,27 @@ raw IMU and a car that accelerates and brakes realistically (≤3 m/s² /
 - **Map tiles.** Offline tiles need MapLibre offline packs for the route
   corridor. Not implemented. The saved route is enough for guidance, but the
   map background may be blank offline.
+
+
+## App path (route dead reckoning) — aids without GNSS (30.09.2026)
+
+`npx tsx packages/core/sim/outage-bench.ts 12`: the real Valhalla route along Mykoly Bazhana Ave (fixture), realistic speed
+(slowing for turns, two stops at lights), a phone IMU at 10 Hz in expo-sensors units, GNSS jammed at a random point;
+error of the engine's position vs. the truth, every second of the outage, 12 drives per variant.
+
+route 8031 m, 11 turns, 12 drives per variant
+| variant | error p50 | p90 | mean | confident & >100 m | error within 2σ |
+|---|---|---|---|---|---|
+| baseline (speed × time only) | 428 m | 1260 m | 582 m | 0.2% | 86.2% |
+| + gyro turns | 124 m | 940 m | 295 m | 0.4% | 83.6% |
+| + learned speed | 399 m | 983 m | 474 m | 0.2% | 96.4% |
+| + Wi-Fi/cell coarse fixes | 45 m | 122 m | 58 m | 1.3% | 94.4% |
+| all aids, no Wi-Fi | 120 m | 372 m | 167 m | 0.2% | 94.3% |
+| all aids + Wi-Fi | 33 m | 84 m | 42 m | 0.4% | 98.1% |
+
+What each aid is: gyroscope turns matched to the route's own heading profile (curves, ramps, loops; ambiguous → no
+anchor); coarse Wi-Fi/cell fixes (they survive GNSS jamming) as a 1-D Kalman update with an outlier gate; learned speed
+per ~200 m stretch × time of day; barometer humps/dips at the route's bridges/tunnels (map tiles); the driver's words
+(report_driver_observation); OBD speed (Bluetooth ELM327); pedometer when walking; live traffic flow (TomTom via the
+proxy — needs a key). "error within 2σ" = how honest the reported uncertainty is. Tests: `packages/core/test/dr-aids.test.ts`.
+Not yet from real drives: record trips (Settings → Запис поїздок) and replay them (`npm run replay:trips`).

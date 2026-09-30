@@ -2,7 +2,7 @@
 // turn, and the shape of spoken answers (no lists, no SKIP, not too long).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { capSpokenWords, neuterize, replyCorrection, toSpeakable, type ToolTraceEntry } from "../src/copilot/copilot";
+import { capSpokenWords, neuterize, replyCorrection, replyLanguage, toSpeakable, type ToolTraceEntry } from "../src/copilot/copilot";
 import { chooseTier } from "../src/copilot/model-router";
 
 const t = (tool: string, isError = false): ToolTraceEntry => ({ tool, input: {}, isError, result: {}, ms: 1 });
@@ -97,4 +97,9 @@ test("GPS not placing the car → the smart model (locating must not skip steps)
   const base = { callIndex: 0, distinctToolsUsed: 0, toolErrors: 0, userTextLength: 20, msSinceLastSmartTurn: null, previousTier: null };
   assert.equal(chooseTier(base), "fast");
   assert.equal(chooseTier({ ...base, positionUncertain: true }), "smart");
+});
+
+test("short Russian driving phrases are recognised as Russian", () => {
+  for (const q of ["стою в пробке", "поехали, еду где-то 40", "свернул направо"]) assert.equal(replyLanguage(q), "ru", q);
+  for (const q of ["стою в пробці", "їду 40", "повернув праворуч"]) assert.equal(replyLanguage(q), "uk", q);
 });

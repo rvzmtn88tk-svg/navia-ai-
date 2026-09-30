@@ -12,10 +12,13 @@ import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 // app's own requests must fail from the first one, like the map's.
 import "./src/offline/network";
 import { installNetLog, runNetSelfTest, selfTestRequestedAtLaunch } from "./src/net/netLog";
+import { startVehicleSpeed } from "./src/engine/naviaController";
 
 // Every failed request is kept (host, status/error, time) for Diagnostics and
 // for reading back from the phone; `-NaviaNetTest YES` repeats a service check.
 installNetLog();
+// The car's speed from an OBD adapter, when the driver switched it on in Settings.
+startVehicleSpeed();
 if (selfTestRequestedAtLaunch()) {
   setTimeout(() => void runNetSelfTest(), 3000);
   setInterval(() => void runNetSelfTest(), 30_000);

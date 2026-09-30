@@ -1,16 +1,16 @@
 # Live check: one brain (situation questions → the co-pilot)
 
-Run 2026-09-30T19:42:21.763Z · real model through the NAVIA proxy · real Kyiv data (Bazhana Ave: OSM tiles, Valhalla route, Nominatim reverse, KMDA shelters).
-**Result: 24/24 checks pass** · p50 2.8 s
+Run 2026-09-30T20:25:52.891Z · real model through the NAVIA proxy · real Kyiv data (Bazhana Ave: OSM tiles, Valhalla route, Nominatim reverse, KMDA shelters).
+**Result: 24/24 checks pass** · p50 2.9 s
 
 
 ## де я (GPS ok)
 
 **Водій:** де я зараз?
 
-**NAVIA:** Ви на проспекті Миколи Бажана, район Осокорки. GPS сильний. До пункту призначення залишилось 5 кілометрів, їхати близько 8 хвилин.
+**NAVIA:** Ви на проспекті Миколи Бажана в районі Осокорки. Зліва від вас магазин Стайер, далі IStudio і Brocard.
 
-Tools: where_am_i · 2.7 s · mode llm
+Tools: where_am_i · 2.4 s · mode llm
 
 - PASS where_am_i called
 - PASS names the real street
@@ -20,9 +20,9 @@ Tools: where_am_i · 2.7 s · mode llm
 
 **Водій:** що з GPS?
 
-**NAVIA:** GPS в нормі, NAVIA в зв'язку. Ви їдете по E 40, до цілі залишилося 5 кілометрів і близько 8 хвилин.
+**NAVIA:** GPS у нормі, сигнал стійкий. NAVIA навігує точно.
 
-Tools: none · 1.4 s · mode llm
+Tools: none · 1.3 s · mode llm
 
 - PASS does not claim GPS is lost
 - PASS short (≤ 35 words)
@@ -31,7 +31,7 @@ Tools: none · 1.4 s · mode llm
 
 **Водій:** скільки ще їхати?
 
-**NAVIA:** Залишилось 5 кілометрів, приблизно 8 хвилин. Приїдете о 22:50.
+**NAVIA:** Залишилося 5 кілометрів, близько 8 хвилин. Приїдете приблизно о 23:33.
 
 Tools: none · 1.2 s · mode llm
 
@@ -42,9 +42,9 @@ Tools: none · 1.2 s · mode llm
 
 **Водій:** де найближче укриття?
 
-**NAVIA:** Найближче укриття — підземні автопаркінги на вулиці Олександра Мишуги на відстані 160 метрів. Також метро на 220 метрів звідси. Повітряних тривог на Київ зараз немає.
+**NAVIA:** Найближче укриття — на відстані близько 160 метрів: підземні автопаркінги на вулиці Олександра Мишуги. Поточно повітряне сповіщення відсутнє.
 
-Tools: get_safety_info · 2.8 s · mode llm
+Tools: get_safety_info · 2.9 s · mode llm
 
 - PASS get_safety_info called
 - PASS never says safe
@@ -54,9 +54,9 @@ Tools: get_safety_info · 2.8 s · mode llm
 
 **Водій:** що з тривогою?
 
-**NAVIA:** Повітряна тривога активна. Поблизу є укриття: на відстані 160 м — підземні автопаркінги на вулиці Олександра Мишуги, далі паркінг та вхід в метро.
+**NAVIA:** Тривога в Київі активна з 12 хвилин тому. Найближчі укриття — підземні автопаркінги на вул. Олександра Мишуги за 160 метрів, паркінг там же за 210 метрів, вхід в метро за 220 метрів від вас.
 
-Tools: get_safety_info · 3.5 s · mode llm
+Tools: get_safety_info · 3.1 s · mode llm
 
 - PASS get_safety_info called
 - PASS says it is active
@@ -66,9 +66,9 @@ Tools: get_safety_info · 3.5 s · mode llm
 
 **Водій:** мені страшно
 
-**NAVIA:** Розумію. Де вам страшно — на цій дорозі, у темряві чи взагалі? Можу допомогти знайти місце для зупинки неподалік — парковку, заправку чи кафе, щоб ви відпочили. Або якщо це стосується повітряної тривоги — перевірю найближчі укриття.
+**NAVIA:** Ви їдете по дорозі, GPS працює нормально. Якщо потрібно - можу допомогти з місцем, де зупинитися. Розкажіть, що вас хвилює - чи це стан дороги, або щось інше?
 
-Tools: none · 2.4 s · mode llm
+Tools: get_safety_info · 3.5 s · mode llm
 
 - PASS short (≤ 40 words)
 - PASS never says safe
@@ -77,9 +77,9 @@ Tools: none · 2.4 s · mode llm
 
 **Водій:** де найближча аптека?
 
-**NAVIA:** «Біла Ромашка» за 150 метрів, «Подорожник» і АНЦ — за 250 метрів. Статус невідомий.
+**NAVIA:** Найближча — «Біла Ромашка» за 150 метрів. Також поруч «Подорожник» та «АНЦ» по 250 метрів.
 
-Tools: search_near · 2.9 s · mode llm
+Tools: search_near · 2.6 s · mode llm
 
 - PASS searches the map
 - PASS no coordinates
@@ -88,9 +88,9 @@ Tools: search_near · 2.9 s · mode llm
 
 **Водій:** расскажи анекдот
 
-**NAVIA:** Извините, рассказывать анекдоты — не мое дело. Я помогаю с навигацией: поиск мест, маршруты, остановки в пути. Вы едете по E 40, осталось около 8 минут до пункта назначения.
+**NAVIA:** Я NAVIA, навигационный помощник — я помогаю с маршрутом, местами и навигацией, а не развлекаю анекдотами. Впереди лёгкий поворот влево через 760 метров, и вы прибудете на место через 8 минут.
 
-Tools: none · 1.6 s · mode llm
+Tools: none · 1.7 s · mode llm
 
 - PASS short (≤ 45 words)
 - PASS answers in Russian
@@ -99,9 +99,9 @@ Tools: none · 1.6 s · mode llm
 
 **Водій:** где я сейчас?
 
-**NAVIA:** GPS сейчас потерян, позиция примерная — где-то в районе Осокорків, с точностью около 150 метров. Подскажите, что видите рядом — вывеску магазина, остановку, название улицы — чтобы уточнить положение?
+**NAVIA:** GPS сейчас потерян, положение оценивается по датчикам — примерно в районе Осокорки, точность около ±197 м. Рядом, по картам, есть магазины IStudio, Brocard и отделение Monobank. Подскажите, что видите вокруг — это поможет уточнить позицию точнее.
 
-Tools: where_am_i · 3.4 s · mode llm
+Tools: where_am_i · 4.3 s · mode llm
 
 - PASS where_am_i called
 - PASS says it is approximate
@@ -111,9 +111,9 @@ Tools: where_am_i · 3.4 s · mode llm
 
 **Водій:** де я?
 
-**NAVIA:** Ви приблизно на проспекті Миколи Бажана, район Осокорки (точність ±90 м, GPS втрачено). Поруч — магазини «Стайєр», IStudio, Brocard.
+**NAVIA:** Зараз ви приблизно на проспекті Миколи Бажана, район Осокорки — GPS втрачено, позиція орієнтовна (±90 м). Поруч, здається, магазини «Стайєр», «IStudio», «Brocard».
 
-Tools: where_am_i · 3.6 s · mode llm
+Tools: where_am_i · 4.2 s · mode llm
 
 - PASS where_am_i called
 - PASS says it is approximate

@@ -182,6 +182,21 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "report_driver_observation",
+    description:
+      "The driver tells how the car is moving while GPS is not placing it: standing ('стою в пробці'), moving again, their speed ('їду 40'), a turn they just made ('повернув праворуч'), being on a bridge or in a tunnel. The navigator uses it as evidence (stops advancing, takes the speed, places the car after the matching route turn or on the route's bridge/tunnel). Returns whether it was applied and why not.",
+    input_schema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["stopped", "moving", "speed", "turned", "on_bridge", "in_tunnel"] },
+        speed_kmh: { type: "number", minimum: 1, maximum: 200, description: "For kind=speed." },
+        direction: { type: "string", enum: ["left", "right", "around"], description: "For kind=turned." },
+      },
+      required: ["kind"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "undo_position_fix",
     description: "Undo the last confirm_position ('no, I'm not there', 'that was the wrong shop'): the navigator returns to its previous estimate.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
@@ -343,7 +358,7 @@ export const COPILOT_TOOLS: ToolDefinition[] = [
 
 export type CopilotToolName =
   | "search_along_route" | "search_near" | "get_place_details" | "get_route_overview" | "compare_routes" | "get_traffic_ahead"
-  | "find_destination" | "check_landmark" | "get_landmarks_ahead" | "locate_by_description" | "confirm_position" | "undo_position_fix" | "get_safety_info" | "where_am_i" | "add_stop" | "remove_stop" | "set_destination"
+  | "find_destination" | "check_landmark" | "get_landmarks_ahead" | "locate_by_description" | "confirm_position" | "undo_position_fix" | "report_driver_observation" | "get_safety_info" | "where_am_i" | "add_stop" | "remove_stop" | "set_destination"
   | "set_route_preferences" | "switch_route" | "reorder_stops" | "set_reminder" | "cancel_reminder"
   | "remember_preference" | "forget_preference" | "cancel_pending_action";
 
@@ -361,7 +376,7 @@ export type ToolPolicy = "read" | "safe_action" | "confirm";
 export const TOOL_POLICY: Record<CopilotToolName, ToolPolicy> = {
   search_along_route: "read", search_near: "read", get_place_details: "read", get_route_overview: "read",
   compare_routes: "read", get_traffic_ahead: "read", find_destination: "read", check_landmark: "read", get_landmarks_ahead: "read", locate_by_description: "safe_action", get_safety_info: "read", where_am_i: "read",
-  confirm_position: "safe_action", undo_position_fix: "safe_action",
+  confirm_position: "safe_action", undo_position_fix: "safe_action", report_driver_observation: "safe_action",
   add_stop: "confirm", set_destination: "confirm", switch_route: "confirm", reorder_stops: "confirm",
   remove_stop: "safe_action", set_route_preferences: "safe_action", set_reminder: "safe_action", cancel_reminder: "safe_action",
   remember_preference: "safe_action", forget_preference: "safe_action", cancel_pending_action: "safe_action",

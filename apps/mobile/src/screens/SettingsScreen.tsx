@@ -10,6 +10,8 @@ import { Button, Card, Divider, ListRow, SectionLabel, Segmented, Text, TextFiel
 import { hasGenderVoice, speak } from "../voice/VoiceGuide";
 import { cloudVoiceOnServer } from "../voice/cloudVoice";
 import { deleteAllTrips, listTrips, recordingEnabled, setRecordingEnabled, shareTrip, type SavedTrip } from "../trips/tripLog";
+import { navigationEngine } from "../engine/naviaController";
+import { obdEnabled, setObdEnabled, startObd, stopObd, useObdStore } from "../vehicle/obdService";
 import { OfflinePackageCard } from "../components/OfflinePackageCard";
 import { isSmartCopilotConfigured, useNaviaStore } from "../engine/naviaController";
 import { radius, space } from "../theme/tokens";
@@ -29,6 +31,13 @@ export function SettingsScreen(): JSX.Element {
   const [neural, setNeural] = useState<boolean | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [recordTrips, setRecordTrips] = useState(recordingEnabled);
+  const [obdOn, setObdOn] = useState(obdEnabled);
+  const obd = useObdStore((s) => s.status);
+  const obdLine = !obdOn ? t("obd.hint")
+    : obd.state === "connected" ? t("obd.connected", { device: obd.device ?? "OBD", speed: obd.speedKmh != null ? `${obd.speedKmh} км/год` : "—" })
+    : obd.state === "scanning" ? t("obd.scanning") : obd.state === "connecting" ? t("obd.connecting", { device: obd.device ?? "OBD" })
+    : obd.state === "bluetooth_off" ? t("obd.bluetoothOff") : obd.state === "not_found" ? t("obd.notFound")
+    : obd.state === "error" ? t("obd.error", { message: obd.message ?? "" }) : t("obd.hint");
   const [trips, setTrips] = useState<SavedTrip[]>([]);
   useEffect(() => { void listTrips().then(setTrips); }, []);
 
@@ -86,6 +95,12 @@ export function SettingsScreen(): JSX.Element {
 
       <SectionLabel style={styles.sectionGap}>{t("offline.section")}</SectionLabel>
       <OfflinePackageCard />
+
+      <SectionLabel style={styles.sectionGap}>{t("obd.title")}</SectionLabel>
+      <Card style={styles.list}>
+        <ListRow icon="car" title={t("obd.enable")} subtitle={obdLine}
+          trailing={<Switch value={obdOn} onValueChange={(v) => { setObdEnabled(v); setObdOn(v); if (v) void startObd((mps) => navigationEngine.setVehicleSpeed(mps, Date.now())); else void stopObd(); }} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("obd.enable")} />} />
+      </Card>
 
       <SectionLabel style={styles.sectionGap}>{t("trips.title")}</SectionLabel>
       <Card style={styles.list}>

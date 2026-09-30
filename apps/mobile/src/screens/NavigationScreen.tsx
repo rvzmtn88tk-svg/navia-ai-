@@ -8,7 +8,7 @@ import { useKeepAwake } from "expo-keep-awake";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { haversineMeters, initialBearing, positionAtDistance, type GNSSRawSample, type IMUSample, type NavigationState, type RouteStep } from "@navia/core";
 import type { RootStackParamList, RouteMode } from "../navigation/RootNavigator";
-import { activeCopilot, activeTripCache, demoEngine, navigationEngine, preferenceStore, tripPlanner, useNaviaStore } from "../engine/naviaController";
+import { activeCopilot, activeTripCache, demoEngine, navigationEngine, preferenceStore, saveSpeedMemory, tripPlanner, useNaviaStore } from "../engine/naviaController";
 import { ExpoLocationPositionProvider, probePosition } from "../providers/ExpoLocationPositionProvider";
 import { ExpoSensorsMotionProvider } from "../providers/ExpoSensorsMotionProvider";
 import { useAppSettings } from "../settings/AppSettings";
@@ -48,6 +48,11 @@ import { isNetworkError } from "../providers/netError";
 import { startBackgroundLocation, stopBackgroundLocation } from "../background/backgroundLocation";
 import { plausibleApproxFix, shownFix } from "../engine/approxFix";
 import { turnPromptsAllowed } from "../voice/voiceGate";
+import { landmarkQuestionText, pickLandmarkQuestion } from "../navigation/landmarkQuestion";
+import type { RouteLandmark } from "../navigation/landmarks";
+import { routeStructures } from "../providers/vectorTiles";
+import { flowAt } from "../providers/trafficFlow";
+import { startBarometer, startPedometer } from "../sensors/extraSensors";
 import { startTripRecording, type TripSession } from "../trips/tripLog";
 
 /** The "allow Always" hint is shown once per app run, not on every trip. */
@@ -126,6 +131,11 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     let positionSub: { remove: () => void } | null = null;
     let motionSub: { remove: () => void } | null = null;
     let recording: TripSession | null = null;
+    let baroSub: { remove: () => void } | null = null;
+    let stepSub: { remove: () => void } | null = null;
+    let wrongTurnHandled: number | null = null;
+    let speedSaveAt = Date.now();
+    let trafficAt = 0;
     let recordedRoute: unknown = null;
     let tick: ReturnType<typeof setInterval> | null = null;
     let routeRequested = false;
@@ -204,6 +214,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       if (!granted) { setPermissionDenied(true); return; }
       recording = startTripRecording();
       motionSub = new ExpoSensorsMotionProvider().subscribe((sample: IMUSample) => { recording?.imu(sample); navigationEngine.pushImuSample(sample); });
+      // More evidence for guidance without GPS: bridges/underpasses on the barometer, steps when walking.
+      baroSub = await startBarometer((altM, at) => navigationEngine.pushAltitude(altM, at));
+      if (modeRef.current === "walk") stepSub = await startPedometer((steps, at) => navigationEngine.pushStepCount(steps, at));
       try {
         positionSub = await location.subscribe(onSample, true);
       } catch (err) {
@@ -238,6 +251,24 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
         refresh();
         if (recording) { const r = navigationEngine.getRoute(); if (r && r !== recordedRoute) { recordedRoute = r; recording.route(r); } }
         const s = navigationEngine.getState();
+        if (Date.now() - speedSaveAt > 120_000) { speedSaveAt = Date.now(); saveSpeedMemory(); }
+        // Without GPS: the live flow speed where we probably are (traffic feed), once a minute.
+        if (s.positionMode === "DEAD_RECKONING" && s.position && Date.now() - trafficAt > 60_000) {
+          trafficAt = Date.now();
+          void flowAt(s.position.position).then((f) => navigationEngine.setTrafficSpeed(f && f.confidence >= 0.5 ? (f.closed ? 0 : f.currentMps) : null, Date.now()));
+        }
+        // The gyroscope felt a turn where the route goes straight: say so and route from there.
+        const wt = s.possibleWrongTurn;
+        if (wt && wrongTurnHandled !== wt.atMs && phaseRef.current === "navigating" && !rerouting) {
+          wrongTurnHandled = wt.atMs;
+          void say(t(wt.direction === "right" ? "route.wrongTurnRight" : "route.wrongTurnLeft"), PRIORITY.proactiveCritical, { lang, gender: voiceGender });
+          rerouting = true;
+          useNaviaStore.getState().setRerouting(true);
+          routeFrom(wt.origin)
+            .then(() => { if (!cancelled) setTripNotice(t("route.wrongTurnRerouted")); })
+            .catch(() => { if (!cancelled) setTripNotice(t("route.wrongTurnOffline")); })
+            .finally(() => { rerouting = false; useNaviaStore.getState().setRerouting(false); });
+        }
         const here = s.gnss === "NORMAL" ? s.trustedPosition?.position : null;
         if (here && s.offRoute && !rerouting && Date.now() - lastRerouteAt > 30_000 && phaseRef.current === "navigating") {
           rerouting = true;
@@ -283,6 +314,9 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       positionSub?.remove();
       motionSub?.remove();
       void recording?.stop();
+      baroSub?.remove();
+      stepSub?.remove();
+      saveSpeedMemory();
       if (!demo) void stopBackgroundLocation();
       if (tick) clearInterval(tick);
       stopSpeaking();
@@ -346,6 +380,13 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   // later without GPS ("after the OKKO fuel station turn right").
   const intel = useRouteIntel();
   useEffect(() => { if (route && !isDemo) void useRouteIntel.getState().prepare(route); }, [route?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The route's bridges and tunnels (map tiles), for barometer anchors and "I'm on the bridge".
+  useEffect(() => {
+    if (!route || isDemo) return;
+    let alive = true;
+    void routeStructures(route.geometry).then((st) => { if (alive) navigationEngine.setRouteStructures(st); }).catch(() => {});
+    return () => { alive = false; };
+  }, [route?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => useRouteIntel.getState().clear(), []);
   const nextCue = nextStep ? intel.byStep[nextStep.id] ?? null : null;
 
@@ -369,6 +410,40 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   }, [phase, state.offRoute, nextStep?.id, state.nextStepDistanceM, positionReliable, estimated, uncertaintyM, mode, lang, speakText, nextCue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cautiousSpoken = useRef<string | null>(null);
+
+  // ——— NAVIA asks about a landmark when the position is uncertain (a "yes" places the car) ———
+  const [landmarkAsk, setLandmarkAsk] = useState<RouteLandmark | null>(null);
+  const landmarkAskRef = useRef<RouteLandmark | null>(null);
+  landmarkAskRef.current = landmarkAsk;
+  const askedLandmarks = useRef(new Set<string>());
+  const lastLandmarkAskAt = useRef(0);
+  useEffect(() => {
+    if (phase !== "navigating" || isDemo || landmarkAsk) return;
+    const pick = pickLandmarkQuestion({
+      positionMode: state.positionMode, uncertaintyM: state.positionUncertaintyM, progressM: state.routeProgressM, speedMps: state.speedMps,
+      nextManeuverInM: state.nextStepDistanceM, landmarks: intel.along, asked: askedLandmarks.current, lastAskedAtMs: lastLandmarkAskAt.current, nowMs: Date.now(),
+    });
+    if (!pick) return;
+    askedLandmarks.current.add(pick.id);
+    lastLandmarkAskAt.current = Date.now();
+    setLandmarkAsk(pick);
+    // Tagged as an answer: hands-free listens for the reply without "NAVIA".
+    void say(landmarkQuestionText(pick, lang), PRIORITY.proactive, { lang, gender: voiceGender }, undefined, "answer");
+  }, [phase, state.routeProgressM, state.positionUncertaintyM]); // eslint-disable-line react-hooks/exhaustive-deps
+  const answerLandmark = useCallback((seen: boolean) => {
+    const l = landmarkAskRef.current;
+    if (!l) return;
+    setLandmarkAsk(null);
+    if (!seen) return;
+    const r = navigationEngine.applyLandmarkFix(l.location, 45);
+    void say(t(r.applied ? "landmark.fixed" : "landmark.notApplied"), PRIORITY.answer, { lang, gender: voiceGender });
+    useNaviaStore.getState().refresh();
+  }, [lang, voiceGender, t]);
+  useEffect(() => {
+    if (!landmarkAsk) return undefined;
+    const timer = setTimeout(() => setLandmarkAsk(null), 25_000);
+    return () => clearTimeout(timer);
+  }, [landmarkAsk]);
   // Proactive navigator (layer 4): GNSS unstable / lost / back, air alert
   // start / end, off route / back — each change once, from the live snapshot,
   // most urgent first; spoken at once (interrupting a stale prompt). The GNSS
@@ -385,6 +460,14 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
   const voiceNavigator = useRef(new Navigator()).current;
   /** One brain by voice too: the co-pilot when it can be reached, the on-device rules otherwise. */
   const voiceAnswer = useCallback(async (q: string): Promise<{ text: string; speech: string }> => {
+    // A reply to NAVIA's own "do you see …?" question.
+    const pendingLandmark = landmarkAskRef.current;
+    const ynLandmark = pendingLandmark ? yesNo(q) : null;
+    if (pendingLandmark && ynLandmark) {
+      answerLandmark(ynLandmark === "yes");
+      const text = t(ynLandmark === "yes" ? "landmark.thanks" : "landmark.noted");
+      return { text, speech: text };
+    }
     const st = useNaviaStore.getState();
     const copilot = activeCopilot();
     const yn = copilot.getPendingAction() ? yesNo(q) : null;
@@ -395,7 +478,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     }
     const local = await askSmart(voiceNavigator, q, snapshotRef.current);
     return { text: local.text, speech: local.speech };
-  }, [voiceNavigator]);
+  }, [voiceNavigator, answerLandmark, t]);
   const hf = useRef<HandsFree | null>(null);
   useEffect(() => {
     if (!handsFreeOn || phase !== "navigating") { hf.current?.disable(); hf.current = null; setHfState("off"); return undefined; }
@@ -602,6 +685,13 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
             {tripNotice && (
               <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.warningSoft, borderColor: c.warning }]}>
                 <Text variant="subhead" color="warning" style={styles.flex}>{tripNotice}</Text>
+              </Appear>
+            )}
+            {landmarkAsk && (
+              <Appear from={-8} style={[styles.resilientBanner, { backgroundColor: c.maneuverCard, borderColor: c.brandTeal }]}>
+                <Text variant="subhead" color={{ custom: c.onManeuver }} style={styles.flex}>{landmarkQuestionText(landmarkAsk, lang).replace(/ Скажіть.*$| Say yes.*$/, "")}</Text>
+                <Button label={t("copilot.yes")} style={styles.askBtn} onPress={() => answerLandmark(true)} />
+                <Button label={t("copilot.no")} style={styles.askBtn} variant="secondary" onPress={() => answerLandmark(false)} />
               </Appear>
             )}
             {voiceReply && (
@@ -842,6 +932,7 @@ function StateBlock({ title, body, debug, action, onAction }: { title: string; b
 }
 
 const styles = StyleSheet.create({
+  askBtn: { minWidth: 64 },
   screen: { flex: 1 },
   flex: { flex: 1, minWidth: 0 },
   flexEnd: { marginLeft: "auto" },

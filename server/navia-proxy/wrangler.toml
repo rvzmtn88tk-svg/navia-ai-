@@ -46,3 +46,11 @@ namespace_id = "1004"
   [ratelimits.simple]
   limit = 40
   period = 60
+
+# Live traffic flow samples (TomTom, key as the TOMTOM_API_KEY secret).
+[[ratelimits]]
+name = "TRAFFIC_LIMITER"
+namespace_id = "1005"
+  [ratelimits.simple]
+  limit = 60
+  period = 60

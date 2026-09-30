@@ -45,6 +45,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>NAVIA підключається до OBD-адаптера вашого авто (Bluetooth), щоб знати справжню швидкість і вести без GPS.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>NAVIA використовує камеру для розпізнавання орієнтирів (Camera Vision).</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

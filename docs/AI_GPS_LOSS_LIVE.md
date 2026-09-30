@@ -1,16 +1,16 @@
 # Live check: GPS loss → locate by what the driver sees
 
-Run 2026-09-30T19:42:48.209Z · real model through the NAVIA proxy · real OSM data of Kyiv (fixtures) · NavigationEngine route dead reckoning.
-**Result: 18/18 checks pass.**
+Run 2026-09-30T20:25:11.846Z · real model through the NAVIA proxy · real OSM data of Kyiv (fixtures) · NavigationEngine route dead reckoning.
+**Result: 20/20 checks pass.**
 
 
 ## S1 GPS lost: «Пропал навигатор» → honest state + asks what the driver sees
 
 **Водій:** Пропал навигатор, что делать?
 
-**NAVIA:** GPS пропал, но NAVIA продолжает вести по карте и датчикам движения — сейчас держитесь на E 40, скоро потребуется небольшой поворот налево, смотрите на дорогу. Что видите вокруг — может, заправку, ТЦ или название улицы?
+**NAVIA:** GPS временно потерян, NAVIA ведёт по датчикам движения — скоро будет левый поворот на E 40, следите за дорогой; скажите, что видите вокруг, чтобы уточнить позицию.
 
-Tools: none · 3.3 s
+Tools: none · 2.9 s
 
 - PASS no position fix without evidence
 - PASS asks what the driver sees
@@ -20,9 +20,9 @@ Tools: none · 3.3 s
 
 **Водій:** Вижу станцию метро, хз какая, а напротив магазин Днипро-М
 
-**NAVIA:** Это метро «Харківська». Через примерно 80 метров плавный поворот налево на E 40.
+**NAVIA:** Вы у метро «Харківська», через 80 метров плавный левый на Е 40.
 
-Tools: locate_by_description→unique, confirm_position→done · 6.4 s
+Tools: locate_by_description→unique, confirm_position→done · 6.0 s
 
 - PASS locate_by_description called
 - PASS position fixed
@@ -31,9 +31,9 @@ Tools: locate_by_description→unique, confirm_position→done · 6.4 s
 
 **Водій:** Нет, я не там
 
-**NAVIA:** Хорошо, вернулись к прежней оценке позиции — что видите сейчас рядом?
+**NAVIA:** Хорошо, отменено — что видите сейчас рядом?
 
-Tools: undo_position_fix→undone · 4.9 s
+Tools: undo_position_fix→undone · 3.4 s
 
 - PASS undo_position_fix called
 
@@ -41,9 +41,9 @@ Tools: undo_position_fix→undone · 4.9 s
 
 **Водій:** Вижу станцию метро, хз какая, а напротив магазин Днипро-М
 
-**NAVIA:** Это метро «Позняки» или «Харківська»?
+**NAVIA:** Уточните, пожалуйста: на табличке метро написано «Позняки» или «Харківська»?
 
-Tools: locate_by_description→ambiguous · 5.4 s
+Tools: locate_by_description→ambiguous · 4.8 s
 
 - PASS locate_by_description called
 - PASS no fix while ambiguous
@@ -51,9 +51,9 @@ Tools: locate_by_description→ambiguous · 5.4 s
 
 **Водій:** Харьковская
 
-**NAVIA:** Вы у метро «Харківська», рядом «Дніпро-М». Через примерно 80 метров — небольшой поворот налево, на E 40.
+**NAVIA:** Вы возле метро «Харківська» и «Дніпро-М». Через примерно 80 метров — небольшой поворот налево, на E 40.
 
-Tools: locate_by_description→unique, confirm_position→done · 6.2 s
+Tools: locate_by_description→unique, confirm_position→done · 6.4 s
 
 - PASS fixed after the answer
 
@@ -61,9 +61,9 @@ Tools: locate_by_description→unique, confirm_position→done · 6.2 s
 
 **Водій:** Вижу справа Икею
 
-**NAVIA:** На карте рядом с оценённой позицией IKEA не находится. Подскажите, видите ли поблизости ещё что-то — заправку, остановку или название улицы?
+**NAVIA:** На карте рядом Икею не нашлось. Подскажите, может видите ещё что-то — заправку, остановку или название улицы?
 
-Tools: locate_by_description→none · 5.5 s
+Tools: locate_by_description→none · 4.7 s
 
 - PASS locate_by_description called
 - PASS no fix
@@ -73,10 +73,28 @@ Tools: locate_by_description→none · 5.5 s
 
 **Водій:** Вижу Фору, а за ней перекрёсток
 
-**NAVIA:** С какой стороны Фора — слева или справа?
+**NAVIA:** С какой стороны от вас Фора — слева или справа?
 
-Tools: locate_by_description→ambiguous · 6.1 s
+Tools: locate_by_description→ambiguous · 4.7 s
 
 - PASS locate_by_description called
 - PASS no fix while ambiguous
 - PASS asks left or right
+
+## S6 driver's words while GPS is gone → dead-reckoning evidence
+
+**Водій:** стою в пробке
+
+**NAVIA:** Зрозуміло, позиція зафіксована, не рухається.
+
+Tools: report_driver_observation→applied · 3.7 s
+
+- PASS report_driver_observation(stopped)
+
+**Водій:** поехали, еду где-то 40
+
+**NAVIA:** Принято, скорость учтена.
+
+Tools: report_driver_observation→applied · 3.4 s
+
+- PASS report_driver_observation(speed)

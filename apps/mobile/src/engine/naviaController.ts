@@ -21,7 +21,7 @@
 import { create } from "zustand";
 import {
   NavigationEngine, DemoEngine, DeterministicDemoAIProvider, TripPlanner, NaviaCopilot, EngineCopilotRuntime, BackendLLMClient,
-  LocalPlaceSearchProvider, OverpassPlaceSearchProvider, FallbackPlaceSearchProvider, ActiveTripCache, PreferenceStore, ProactiveEngine,
+  LocalPlaceSearchProvider, OverpassPlaceSearchProvider, FallbackPlaceSearchProvider, SpeedMemory, ActiveTripCache, PreferenceStore, ProactiveEngine,
   DEMO_KYIV_TO_BORYSPIL_GRAPH, DEMO_ORIGIN, DEMO_DESTINATION, DEMO_POIS, DEMO_ROUTE_POIS,
   type NavigationState, type Route, type LatLon, type GNSSRawSample, type SavedPlace,
 } from "@navia/core";
@@ -36,6 +36,7 @@ import { usePlacesStore } from "../store/placesStore";
 import { TilePlaceSearchProvider, tileLocalizationData } from "../providers/vectorTiles";
 import { useNearbyStore } from "../store/nearbyStore";
 import { streetAt } from "../providers/streetAt";
+import { trafficProvider } from "../providers/trafficFlow";
 
 const idleState: NavigationState = {
   mode: "IDLE", position: null, trustedPosition: null, gnss: "LOST",
@@ -50,7 +51,23 @@ export const routingProvider = new OnlineValhallaProvider();
 // docs/GNSS_DENIED_REPORT.md) stays OFF until it has been driven on a phone:
 // the route dead reckoning tested on the iPhone (route-dead-reckoning.ts)
 // remains the GNSS-denied path. Turning it on is this one flag.
-export const navigationEngine = new NavigationEngine({ routingProvider, resilient: false });
+/** How fast this driver really goes on each stretch (learned with GPS, used without it); kept on the phone. */
+const SPEED_MEMORY_KEY = "navia.speedMemory.v1";
+export const speedMemory = (() => {
+  try {
+    const kv = (require("expo-sqlite/kv-store") as { default: { getItemSync(k: string): string | null } }).default;
+    const raw = kv.getItemSync(SPEED_MEMORY_KEY);
+    return new SpeedMemory(raw ? JSON.parse(raw) : undefined);
+  } catch { return new SpeedMemory(); }
+})();
+export function saveSpeedMemory(): void {
+  try {
+    const kv = (require("expo-sqlite/kv-store") as { default: { setItemAsync(k: string, v: string): Promise<void> } }).default;
+    void kv.setItemAsync(SPEED_MEMORY_KEY, JSON.stringify(speedMemory.toJSON())).catch(() => {});
+  } catch { /* storage unavailable */ }
+}
+
+export const navigationEngine = new NavigationEngine({ routingProvider, resilient: false, speedMemory });
 
 /** Device key-value storage (expo-sqlite) and the active trip saved in it, so losing internet or restarting the app doesn't end navigation. */
 export const deviceStore = new DeviceKeyValueStore();
@@ -183,6 +200,7 @@ const realRuntime = new EngineCopilotRuntime({
   // reports place search as unavailable (the offline POI index plugs in
   // here as a LocalPlaceSearchProvider once scripts/data has produced it).
   places: () => (navigationEngine.getState().networkAvailable ? placeSearch : null),
+  traffic: trafficProvider(),
   geocoder,
   savedPlaces,
   preferences: preferenceStore,
@@ -233,4 +251,10 @@ export function activeCopilot(): NaviaCopilot {
 
 export function isSmartCopilotConfigured(): boolean {
   return llm != null;
+}
+
+// The car's own speed from an OBD adapter (Settings → Автомобіль), when the driver switched it on.
+export function startVehicleSpeed(): void {
+  const { obdEnabled, startObd } = require("../vehicle/obdService") as typeof import("../vehicle/obdService");
+  if (obdEnabled()) void startObd((mps) => navigationEngine.setVehicleSpeed(mps, Date.now()));
 }

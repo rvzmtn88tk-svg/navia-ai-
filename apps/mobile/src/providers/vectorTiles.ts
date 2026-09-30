@@ -5,7 +5,7 @@
 // intersecting the route with rail lines and waterways.
 import { VectorTile, type VectorTileLayer } from "@mapbox/vector-tile";
 import Pbf from "pbf";
-import { RouteGeometryIndex, haversineMeters, junctionsFromRoads, matchesFilter, nameMatch, type LandmarkCategory, type LatLon, type MapFeature, type PlaceFilter, type PlaceSearchProvider, type POI } from "@navia/core";
+import { RouteGeometryIndex, haversineMeters, junctionsFromRoads, matchesFilter, nameMatch, type LandmarkCategory, type LatLon, type MapFeature, type PlaceFilter, type PlaceSearchProvider, type POI, type RouteStructure } from "@navia/core";
 import { INVISIBLE_NAME, type LandmarkKind, type RawLandmark } from "../navigation/landmarks";
 import type { FetchCategory } from "./NearbyPlacesProvider";
 
@@ -14,7 +14,7 @@ const Z = 14;
 
 export type TilePoi = { id: string; cls: string; sub: string; name: string | null; location: LatLon };
 type TileLine = { cls: string; name: string | null; points: LatLon[] };
-type DecodedTile = { pois: TilePoi[]; rails: TileLine[]; waterways: TileLine[]; junctions: LatLon[] };
+type DecodedTile = { pois: TilePoi[]; rails: TileLine[]; waterways: TileLine[]; junctions: LatLon[]; structures: TileLine[] };
 
 let templatePromise: Promise<string> | null = null;
 const tiles = new Map<string, Promise<DecodedTile>>();
@@ -82,6 +82,19 @@ function readLines(layer: VectorTileLayer | undefined, tx: number, ty: number, k
 
 const ROAD_CLASSES = new Set(["motorway", "trunk", "primary", "secondary", "tertiary", "minor", "service"]);
 
+/** Road bridges and tunnels as lines tagged by kind (cls = "bridge" | "tunnel"). */
+function readStructures(layer: VectorTileLayer | undefined, tx: number, ty: number): TileLine[] {
+  if (!layer) return [];
+  const out: TileLine[] = [];
+  for (let i = 0; i < layer.length; i++) {
+    const f = layer.feature(i);
+    const b = f.properties.brunnel;
+    if (f.type !== 2 || (b !== "bridge" && b !== "tunnel") || !ROAD_CLASSES.has(String(f.properties.class))) continue;
+    for (const ring of f.loadGeometry()) out.push({ cls: String(b), name: null, points: ring.map((pt) => toLatLon(pt.x, pt.y, tx, ty, f.extent)) });
+  }
+  return out;
+}
+
 function decode(buffer: ArrayBuffer, tx: number, ty: number): DecodedTile {
   const tile = new VectorTile(new Pbf(new Uint8Array(buffer)));
   const pois: TilePoi[] = [];
@@ -102,6 +115,8 @@ function decode(buffer: ArrayBuffer, tx: number, ty: number): DecodedTile {
     waterways: readLines(tile.layers.waterway, tx, ty, (p) => p.class === "river" || p.class === "canal" || (p.class === "stream" && !!p.name)),
     // Street junctions (for "the junction after the shop"): where drivable roads meet.
     junctions: junctionsFromRoads(readLines(tile.layers.transportation, tx, ty, (p) => ROAD_CLASSES.has(String(p.class)) && p.brunnel !== "tunnel")),
+    // Road bridges and tunnels (cls = "bridge" / "tunnel"): barometer anchors on the route.
+    structures: readStructures(tile.layers.transportation, tx, ty),
   };
 }
 
@@ -112,7 +127,7 @@ async function loadTile(x: number, y: number): Promise<DecodedTile> {
   const task = (async () => {
     const url = (await template()).replace("{z}", String(Z)).replace("{x}", String(x)).replace("{y}", String(y));
     const response = await doFetch(url);
-    if (response.status === 204 || response.status === 404) return { pois: [], rails: [], waterways: [], junctions: [] };
+    if (response.status === 204 || response.status === 404) return { pois: [], rails: [], waterways: [], junctions: [], structures: [] };
     if (!response.ok) throw new Error(`tile HTTP ${response.status}`);
     return decode(await response.arrayBuffer(), x, y);
   })();
@@ -381,4 +396,26 @@ export class TilePlaceSearchProvider implements PlaceSearchProvider {
       .slice(0, limit)
       .map((x) => x.p);
   }
+}
+
+// ——— Bridges and tunnels on a route (barometer anchors) ———
+
+/** The route's road bridges and tunnels as distance ranges along it (from the map tiles). */
+export async function routeStructures(geometry: LatLon[]): Promise<RouteStructure[]> {
+  if (geometry.length < 2) return [];
+  const keys = routeTiles(geometry, 150);
+  const decoded = await loadTiles(keys);
+  const index = new RouteGeometryIndex(geometry);
+  const out: RouteStructure[] = [];
+  for (const line of decoded.flatMap((t) => t.structures)) {
+    const ends = [line.points[0]!, line.points[line.points.length - 1]!].map((p) => index.project(p));
+    // Both ends on the route: the route itself goes over/under it (not a bridge beside it).
+    if (ends.some((e) => !e || e.offsetM > 25)) continue;
+    const fromM = Math.min(ends[0]!.alongM, ends[1]!.alongM), toM = Math.max(ends[0]!.alongM, ends[1]!.alongM);
+    if (toM - fromM < 15) continue;
+    const kind = line.cls === "tunnel" ? "tunnel" : "bridge";
+    const same = out.find((o) => o.kind === kind && fromM <= o.toM + 30 && toM >= o.fromM - 30);
+    if (same) { same.fromM = Math.min(same.fromM, fromM); same.toM = Math.max(same.toM, toM); } else out.push({ kind, fromM, toM });
+  }
+  return out.sort((a, b) => a.fromM - b.fromM);
 }

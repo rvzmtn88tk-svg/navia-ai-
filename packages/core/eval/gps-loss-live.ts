@@ -116,6 +116,14 @@ const SCENARIOS: Scenario[] = [
       ["asks left or right", (r) => /(справа|слева|праворуч|ліворуч|right|left)/i.test(r.text) && r.text.includes("?")],
     ] }],
   },
+  {
+    name: "S6 driver's words while GPS is gone → dead-reckoning evidence",
+    make: () => world(METRO, khPos - 900, 60),
+    turns: [
+      { say: "стою в пробке", checks: [["report_driver_observation(stopped)", (r) => r.tools.some((x) => x.tool === "report_driver_observation" && (x.input as { kind?: string }).kind === "stopped")]] },
+      { say: "поехали, еду где-то 40", checks: [["report_driver_observation(speed)", (r) => r.tools.some((x) => x.tool === "report_driver_observation" && ((x.input as { kind?: string }).kind === "speed" || (x.input as { kind?: string }).kind === "moving"))]] },
+    ],
+  },
 ];
 
 async function main() {

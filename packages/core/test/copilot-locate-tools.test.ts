@@ -153,3 +153,12 @@ test("with healthy GPS a landmark never overrides it", async () => {
     assert.equal(r.content.error, "gnss_is_trusted");
   }
 });
+
+test("report_driver_observation: the driver's words reach dead reckoning", async () => {
+  const { run } = setup(progressOf(kharkivska.location) - 700, 45);
+  assert.equal((await run("report_driver_observation", { kind: "stopped" })).content.status, "applied");
+  assert.equal((await run("report_driver_observation", { kind: "speed", speed_kmh: 40 })).content.status, "applied");
+  const turn = await run("report_driver_observation", { kind: "turned", direction: "left" });
+  assert.ok(turn.content.status === "applied" || /no route turn/.test(String(turn.content.detail)), JSON.stringify(turn.content));
+  assert.equal((await run("report_driver_observation", { kind: "flying" })).isError, true);
+});
