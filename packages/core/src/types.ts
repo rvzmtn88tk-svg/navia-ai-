@@ -150,6 +150,8 @@ export type NavigationState = {
   /** How the shown position is produced while a route is active: GNSS, dead
    * reckoning along the route, or a user-placed start. */
   positionMode?: "GNSS" | "DEAD_RECKONING" | "MANUAL" | null;
+  /** What the dead-reckoned position counts from, and how long ago (driver landmark, manual point, GNSS). */
+  deadReckoningAnchor?: { source: "gnss" | "manual" | "confirmation" | "landmark"; ageS: number } | null;
   /** Along-route uncertainty in metres while not on GNSS (grows over time). */
   positionUncertaintyM?: number | null;
   /** GNSS has consistently reported a place far from the dead-reckoned one

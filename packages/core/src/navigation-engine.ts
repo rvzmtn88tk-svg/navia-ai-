@@ -120,6 +120,7 @@ export class NavigationEngine {
   private route: Route | null = null;
   /** Where the vehicle was on the current route at the last update (m). */
   private lastProgressM: number | null = null;
+  private landmarkUndo: ReturnType<RouteDeadReckoner["snapshot"]>[] = [];
   /** Latest received sample (used only to determine whether the stream has stopped). */
   private lastGnssRaw: GNSSRawSample | null = null;
   /** Last sample that passed the integrity checks; rejected fixes never replace it. */
@@ -318,6 +319,36 @@ export class NavigationEngine {
     if (this.route) {
       this.deadReckoner.anchorManually(this.progressEngine.computeProgress(this.route, position, null, this.lastProgressM).distanceCompletedM, nowMs);
     }
+  }
+
+  /**
+   * The driver confirmed where they are by a landmark (locate-by-description):
+   * the along-route estimate moves there with `accuracyM` of uncertainty.
+   * Not applied while a fresh trusted GNSS fix exists (GNSS wins), or when the
+   * place is far off the route (then a reroute from there is needed).
+   */
+  applyLandmarkFix(position: LatLon, accuracyM: number, nowMs = Date.now()): { applied: boolean; reason?: "no_route" | "gnss_is_trusted" | "off_route"; offRouteM?: number } {
+    if (!this.route) return { applied: false, reason: "no_route" };
+    const s = this.currentState;
+    if (s.gnss === "NORMAL" && s.positionMode === "GNSS") return { applied: false, reason: "gnss_is_trusted" };
+    const progress = this.progressEngine.computeProgress(this.route, position, null, null);
+    const offRouteM = distanceFromRouteCorridorM(this.route, position);
+    if (offRouteM > 150) return { applied: false, reason: "off_route", offRouteM: Math.round(offRouteM) };
+    this.landmarkUndo.push(this.deadReckoner.snapshot());
+    if (this.landmarkUndo.length > 5) this.landmarkUndo.shift();
+    this.deadReckoner.anchorFromLandmark(progress.distanceCompletedM, Math.max(accuracyM, offRouteM), nowMs);
+    this.lastProgressM = progress.distanceCompletedM;
+    this.telemetry.log("LANDMARK", { kind: "driver-landmark", accuracyM }, nowMs);
+    return { applied: true };
+  }
+
+  /** Undo the last landmark fix ("no, I'm not there"). */
+  undoLandmarkFix(nowMs = Date.now()): boolean {
+    const prev = this.landmarkUndo.pop();
+    if (!prev) return false;
+    this.deadReckoner.restore(prev, nowMs);
+    this.telemetry.log("LANDMARK", { kind: "driver-landmark-undone" }, nowMs);
+    return true;
   }
 
   /** The user confirmed they reached the upcoming maneuver while GNSS is
@@ -636,6 +667,7 @@ export class NavigationEngine {
       offlineMapAvailable: false,
       lastTrustedFixAt: this.lastTrustedPosition?.position.timestamp ?? null,
       positionMode: route ? (hasFreshTrustedPosition ? "GNSS" : dr ? (dr.anchorSource === "manual" ? "MANUAL" : "DEAD_RECKONING") : null) : null,
+      deadReckoningAnchor: route && !hasFreshTrustedPosition && dr ? { source: dr.anchorSource, ageS: Math.round(dr.ageS) } : null,
       positionUncertaintyM: dr ? Math.round(dr.uncertaintyM) : null,
       gnssConflict: this.currentConflict(nowMs, dr ? dr.position : null),
       gnssTrend: this.lastTrend ? { level: this.lastTrend.level, reasons: this.lastTrend.reasons, sinceLastFixMs: this.lastTrend.sinceLastFixMs, expectedIntervalMs: this.lastTrend.expectedIntervalMs, accuracyM: this.lastTrend.accuracyM } : null,

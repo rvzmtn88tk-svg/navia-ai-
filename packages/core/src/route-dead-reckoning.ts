@@ -59,7 +59,7 @@ export type DeadReckoningEstimate = {
   uncertaintyM: number;
   /** Seconds since the last trusted anchor (GNSS fix or user confirmation). */
   ageS: number;
-  anchorSource: "gnss" | "manual" | "confirmation";
+  anchorSource: "gnss" | "manual" | "confirmation" | "landmark";
 };
 
 type Anchor = { progressM: number; atMs: number; accuracyM: number; source: DeadReckoningEstimate["anchorSource"] };
@@ -100,6 +100,24 @@ export class RouteDeadReckoner {
   /** The user confirmed a maneuver (e.g. "I've turned"): snap to its position. */
   confirmReached(progressM: number, nowMs: number): void {
     this.setAnchor(progressM, nowMs, 30, "confirmation");
+  }
+
+  /** The driver confirmed a landmark the map places at `progressM`; the trusted speed is kept. */
+  anchorFromLandmark(progressM: number, accuracyM: number, nowMs: number): void {
+    this.setAnchor(progressM, nowMs, accuracyM, "landmark");
+  }
+
+  /** Everything needed to undo an anchor ("no, I'm not there"). */
+  snapshot(): { anchor: Anchor | null; progressM: number; travelledSinceAnchorM: number; lastStepAt: number } {
+    return { anchor: this.anchor ? { ...this.anchor } : null, progressM: this.progressM, travelledSinceAnchorM: this.travelledSinceAnchorM, lastStepAt: this.lastStepAt };
+  }
+
+  restore(s: ReturnType<RouteDeadReckoner["snapshot"]>, nowMs: number): void {
+    // Time spent since the snapshot still counts: continue from where the old estimate would be.
+    this.anchor = s.anchor ? { ...s.anchor } : null;
+    this.progressM = s.progressM;
+    this.travelledSinceAnchorM = s.travelledSinceAnchorM;
+    this.lastStepAt = Math.min(s.lastStepAt, nowMs);
   }
 
   hasAnchor(): boolean {

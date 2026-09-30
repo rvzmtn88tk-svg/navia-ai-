@@ -5,7 +5,7 @@
 // intersecting the route with rail lines and waterways.
 import { VectorTile, type VectorTileLayer } from "@mapbox/vector-tile";
 import Pbf from "pbf";
-import type { LatLon } from "@navia/core";
+import { junctionsFromRoads, type LatLon, type MapFeature } from "@navia/core";
 import { INVISIBLE_NAME, type LandmarkKind, type RawLandmark } from "../navigation/landmarks";
 import type { FetchCategory } from "./NearbyPlacesProvider";
 
@@ -14,7 +14,7 @@ const Z = 14;
 
 export type TilePoi = { id: string; cls: string; sub: string; name: string | null; location: LatLon };
 type TileLine = { cls: string; name: string | null; points: LatLon[] };
-type DecodedTile = { pois: TilePoi[]; rails: TileLine[]; waterways: TileLine[] };
+type DecodedTile = { pois: TilePoi[]; rails: TileLine[]; waterways: TileLine[]; junctions: LatLon[] };
 
 let templatePromise: Promise<string> | null = null;
 const tiles = new Map<string, Promise<DecodedTile>>();
@@ -80,6 +80,8 @@ function readLines(layer: VectorTileLayer | undefined, tx: number, ty: number, k
   return out;
 }
 
+const ROAD_CLASSES = new Set(["motorway", "trunk", "primary", "secondary", "tertiary", "minor", "service"]);
+
 function decode(buffer: ArrayBuffer, tx: number, ty: number): DecodedTile {
   const tile = new VectorTile(new Pbf(new Uint8Array(buffer)));
   const pois: TilePoi[] = [];
@@ -98,6 +100,8 @@ function decode(buffer: ArrayBuffer, tx: number, ty: number): DecodedTile {
     pois,
     rails: readLines(tile.layers.transportation, tx, ty, (p) => p.class === "rail" && p.brunnel !== "bridge" && p.brunnel !== "tunnel"),
     waterways: readLines(tile.layers.waterway, tx, ty, (p) => p.class === "river" || p.class === "canal" || (p.class === "stream" && !!p.name)),
+    // Street junctions (for "the junction after the shop"): where drivable roads meet.
+    junctions: junctionsFromRoads(readLines(tile.layers.transportation, tx, ty, (p) => ROAD_CLASSES.has(String(p.class)) && p.brunnel !== "tunnel")),
   };
 }
 
@@ -108,7 +112,7 @@ async function loadTile(x: number, y: number): Promise<DecodedTile> {
   const task = (async () => {
     const url = (await template()).replace("{z}", String(Z)).replace("{x}", String(x)).replace("{y}", String(y));
     const response = await doFetch(url);
-    if (response.status === 204 || response.status === 404) return { pois: [], rails: [], waterways: [] };
+    if (response.status === 204 || response.status === 404) return { pois: [], rails: [], waterways: [], junctions: [] };
     if (!response.ok) throw new Error(`tile HTTP ${response.status}`);
     return decode(await response.arrayBuffer(), x, y);
   })();
@@ -182,6 +186,35 @@ export async function tilePoisNear(center: LatLon, category: FetchCategory, radi
     // The same place can sit in two tiles' buffers.
     .filter((p) => { const k = `${p.name ?? ""}@${p.location.lat.toFixed(4)},${p.location.lon.toFixed(4)}`; if (seen.has(k)) return false; seen.add(k); return true; })
     .sort((x, y) => x.distanceM - y.distanceM);
+}
+
+// ——— Localization by what the driver sees ———
+
+/** Every named/classed map feature and road junction within `radiusM` (for locate-by-description). */
+export async function tileLocalizationData(center: LatLon, radiusM: number): Promise<{ features: MapFeature[]; junctions: LatLon[] }> {
+  const dLat = radiusM / 110_540;
+  const dLon = radiusM / (111_320 * Math.cos(center.lat * Math.PI / 180));
+  const a = tileOf({ lat: center.lat + dLat, lon: center.lon - dLon });
+  const b = tileOf({ lat: center.lat - dLat, lon: center.lon + dLon });
+  const keys: { x: number; y: number }[] = [];
+  for (let x = a.x; x <= b.x; x++) for (let y = a.y; y <= b.y; y++) keys.push({ x, y });
+  if (keys.length > MAX_RADIUS_TILES) throw new Error(`tileLocalizationData: radius needs ${keys.length} tiles`);
+  const decoded = await loadTiles(keys);
+  const seen = new Set<string>();
+  const features: MapFeature[] = [];
+  for (const p of decoded.flatMap((t) => t.pois)) {
+    if (distanceM(center, p.location) > radiusM) continue;
+    // The same place can sit in two tiles' buffers.
+    const k = `${p.cls}/${p.sub}/${p.name ?? ""}@${p.location.lat.toFixed(4)},${p.location.lon.toFixed(4)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    features.push({ id: p.id, cls: p.cls, sub: p.sub || null, name: p.name, location: p.location });
+  }
+  const junctions: LatLon[] = [];
+  for (const j of decoded.flatMap((t) => t.junctions)) {
+    if (distanceM(center, j) <= radiusM && !junctions.some((o) => distanceM(o, j) < 25)) junctions.push(j);
+  }
+  return { features, junctions };
 }
 
 // ——— Landmarks along a route ———

@@ -2,6 +2,7 @@
 //   POST /v1/understand  { question, facts }  →  { intent, confidence, answer, usedFacts, model, latencyMs }
 //   POST /v1/copilot/complete  the tool-calling co-pilot's model calls
 //        (apps/ai-backend's handler: validated conversation, tools from @navia/core)
+//   POST /v1/overpass  data=<Overpass QL>  →  Overpass JSON (mirrors tried here)
 //   POST /v1/tts  { text, lang, gender }  →  audio/mpeg (neural voice, see tts.ts)
 //   GET  /health
 // The Anthropic key is a Worker secret (ANTHROPIC_API_KEY) and never leaves
@@ -15,6 +16,7 @@ import { understand } from "../../../functions/src/understand";
 import { handleCompletion, LIMITS } from "../../../apps/ai-backend/src/handler";
 import { AnthropicLLMClient, type MessagesApi } from "../../../apps/ai-backend/src/anthropic-llm-client";
 import { parseTtsRequest, synthesize } from "./tts";
+import { askOverpass, overpassQuery } from "./overpass";
 
 interface Env {
   ANTHROPIC_API_KEY: string;
@@ -25,6 +27,7 @@ interface Env {
   LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
   COPILOT_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
   TTS_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
+  OVERPASS_LIMITER: { limit(o: { key: string }): Promise<{ success: boolean }> };
   AZURE_SPEECH_KEY?: string;
   AZURE_SPEECH_REGION?: string;
 }
@@ -45,6 +48,14 @@ export default {
       const k = apiKey(env.ANTHROPIC_API_KEY);
       const keyShape = k ? { startsLikeKey: k.startsWith("sk-ant-"), length: k.length, hasSpaceOrQuote: /[\s"']/.test(k) } : null;
       return json({ ok: true, model: env.NAVIA_UNDERSTAND_MODEL ?? null, keySet: !!k, keyShape, tts: !!env.AZURE_SPEECH_KEY?.trim() });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/overpass") {
+      if (!env.APP_TOKEN || request.headers.get("authorization") !== `Bearer ${env.APP_TOKEN}`) return json({ error: "forbidden" }, 403);
+      const device = (request.headers.get("x-navia-device") ?? "").slice(0, 64) || request.headers.get("cf-connecting-ip") || "anon";
+      if (!(await env.OVERPASS_LIMITER.limit({ key: device })).success) return json({ error: "rate limited" }, 429);
+      const query = overpassQuery(await request.text());
+      if (!query) return json({ error: "bad query" }, 400);
+      return askOverpass(query, request.signal);
     }
     if (request.method === "POST" && url.pathname === "/v1/tts") {
       if (!env.APP_TOKEN || request.headers.get("authorization") !== `Bearer ${env.APP_TOKEN}`) return json({ error: "forbidden" }, 403);
