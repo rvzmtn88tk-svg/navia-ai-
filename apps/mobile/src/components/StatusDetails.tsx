@@ -73,7 +73,6 @@ export function StatusDetails({ kind, gpsStatus, onClose, style }: { kind: Statu
       <Row key="st" label={t("status.alert")} value={status} color={toneColor(c, phase === "active" ? tone : phase === "none" || phase === "ended" ? "success" : "neutral")} />,
       ...(alert?.locationLabel ? [<Row key="where" label={t("status.alert.where")} value={alert.locationLabel} />] : []),
       ...(phase === "active" ? [<Row key="since" label={t("status.alert.since")} value={alert?.since ? formatClock(alert.since, lang) : "—"} />] : []),
-      <Row key="src" label={t("status.alert.source")} value={alert?.source ?? "—"} />,
       <Row key="chk" label={t("status.alert.checked")} value={alert?.updatedAt != null && checkedAgo != null ? `${formatClock(alert.updatedAt, lang)} · ${ago(checkedAgo, t)}` : "—"} />,
     ];
   }

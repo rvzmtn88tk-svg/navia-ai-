@@ -63,6 +63,9 @@ PODS:
     - ExpoModulesCore
   - ExpoWebBrowser (14.0.2):
     - ExpoModulesCore
+  - EXTaskManager (12.0.6):
+    - ExpoModulesCore
+    - UMAppLoader
   - fast_float (6.1.4)
   - FBLazyVector (0.76.9)
   - fmt (11.0.2)
@@ -1654,6 +1657,7 @@ PODS:
   - RNSVG (15.8.0):
     - React-Core
   - SocketRocket (0.7.1)
+  - UMAppLoader (5.0.1)
   - Yoga (0.0.0)
 
 DEPENDENCIES:
@@ -1679,6 +1683,7 @@ DEPENDENCIES:
   - ExpoSpeechRecognition (from `../../../node_modules/expo-speech-recognition/ios`)
   - ExpoSQLite (from `../../../node_modules/expo-sqlite/ios`)
   - ExpoWebBrowser (from `../../../node_modules/expo-web-browser/ios`)
+  - EXTaskManager (from `../../../node_modules/expo-task-manager/ios`)
   - fast_float (from `../../../node_modules/react-native/third-party-podspecs/fast_float.podspec`)
   - FBLazyVector (from `../../../node_modules/react-native/Libraries/FBLazyVector`)
   - fmt (from `../../../node_modules/react-native/third-party-podspecs/fmt.podspec`)
@@ -1746,6 +1751,7 @@ DEPENDENCIES:
   - ReactCommon/turbomodule/core (from `../../../node_modules/react-native/ReactCommon`)
   - RNScreens (from `../../../node_modules/react-native-screens`)
   - RNSVG (from `../../../node_modules/react-native-svg`)
+  - UMAppLoader (from `../../../node_modules/unimodules-app-loader/ios`)
   - Yoga (from `../../../node_modules/react-native/ReactCommon/yoga`)
 
 SPEC REPOS:
@@ -1797,6 +1803,8 @@ EXTERNAL SOURCES:
     :path: "../../../node_modules/expo-sqlite/ios"
   ExpoWebBrowser:
     :path: "../../../node_modules/expo-web-browser/ios"
+  EXTaskManager:
+    :path: "../../../node_modules/expo-task-manager/ios"
   fast_float:
     :podspec: "../../../node_modules/react-native/third-party-podspecs/fast_float.podspec"
   FBLazyVector:
@@ -1928,6 +1936,8 @@ EXTERNAL SOURCES:
     :path: "../../../node_modules/react-native-screens"
   RNSVG:
     :path: "../../../node_modules/react-native-svg"
+  UMAppLoader:
+    :path: "../../../node_modules/unimodules-app-loader/ios"
   Yoga:
     :path: "../../../node_modules/react-native/ReactCommon/yoga"
 
@@ -1954,6 +1964,7 @@ SPEC CHECKSUMS:
   ExpoSpeechRecognition: e2903152d2d2bbd4ea66a5fac7bb3e8db2df4882
   ExpoSQLite: a55722487de46cdb8d87992e63a19c069818083c
   ExpoWebBrowser: 6890a769e6c9d83da938dceb9a03e764afc3ec9c
+  EXTaskManager: e9e20f65855cbe0a38d6e2dc2e895e5928b30923
   fast_float: 06eeec4fe712a76acc9376682e4808b05ce978b6
   FBLazyVector: 7605ea4810e0e10ae4815292433c09bf4324ba45
   fmt: 01b82d4ca6470831d1cc0852a1af644be019e8f6
@@ -2020,6 +2031,7 @@ SPEC CHECKSUMS:
   RNScreens: 02c4adf5b4820807807b1d7d4f8bc27eeaed8e11
   RNSVG: 8b1a777d54096b8c2a0fd38fc9d5a454332bbb4d
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
+  UMAppLoader: 7e7e0eaa7854ffd652c00a68c443afb28c3bedba
   Yoga: feb4910aba9742cfedc059e2b2902e22ffe9954a
 
 PODFILE CHECKSUM: 08d14699948541b1b89040ed35fd146b88a59ac1

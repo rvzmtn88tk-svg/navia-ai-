@@ -9,6 +9,7 @@ import { useT } from "../i18n";
 import { Button, Card, Divider, ListRow, SectionLabel, Segmented, Text, TextField, useColors } from "../components/ui";
 import { hasGenderVoice, speak } from "../voice/VoiceGuide";
 import { cloudVoiceOnServer } from "../voice/cloudVoice";
+import { deleteAllTrips, listTrips, recordingEnabled, setRecordingEnabled, shareTrip, type SavedTrip } from "../trips/tripLog";
 import { OfflinePackageCard } from "../components/OfflinePackageCard";
 import { isSmartCopilotConfigured, useNaviaStore } from "../engine/naviaController";
 import { radius, space } from "../theme/tokens";
@@ -27,6 +28,9 @@ export function SettingsScreen(): JSX.Element {
   const [maleOnDevice, setMaleOnDevice] = useState(true);
   const [neural, setNeural] = useState<boolean | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [recordTrips, setRecordTrips] = useState(recordingEnabled);
+  const [trips, setTrips] = useState<SavedTrip[]>([]);
+  useEffect(() => { void listTrips().then(setTrips); }, []);
 
   useEffect(() => { void hasGenderVoice(lang, "male").then(setMaleOnDevice); }, [lang]);
   useEffect(() => { void cloudVoiceOnServer().then(setNeural); }, []);
@@ -83,6 +87,20 @@ export function SettingsScreen(): JSX.Element {
       <SectionLabel style={styles.sectionGap}>{t("offline.section")}</SectionLabel>
       <OfflinePackageCard />
 
+      <SectionLabel style={styles.sectionGap}>{t("trips.title")}</SectionLabel>
+      <Card style={styles.list}>
+        <ListRow icon="route" title={t("trips.record")} subtitle={t("trips.recordHint")}
+          trailing={<Switch value={recordTrips} onValueChange={(v) => { setRecordingEnabled(v); setRecordTrips(v); }} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("trips.record")} />} />
+        {trips.slice(0, 5).map((trip) => <View key={trip.id}>
+          <Divider inset={52} />
+          <ListRow icon="send" title={trip.label} subtitle={t("trips.share")} onPress={() => void shareTrip(trip.id)} />
+        </View>)}
+        {trips.length > 0 && <>
+          <Divider inset={52} />
+          <ListRow icon="close" title={t("trips.deleteAll", { count: trips.length })} onPress={() => void deleteAllTrips().then(() => setTrips([]))} />
+        </>}
+      </Card>
+
       <SectionLabel style={styles.sectionGap}>NAVIA</SectionLabel>
       <Card style={styles.list}>
         <ListRow icon="volume" title={t("settings.sound")} trailing={<Switch value={introSoundEnabled} onValueChange={setIntroSoundEnabled} trackColor={{ false: c.border, true: c.accent }} accessibilityLabel={t("settings.sound")} />} />
@@ -100,6 +118,8 @@ export function SettingsScreen(): JSX.Element {
         <Divider inset={52} />
         <ListRow icon="satellite" title={t("settings.diagnostics")} onPress={() => navigation.navigate("Diagnostics")} />
       </Card>
+      {/* Data sources in one place only: small print at the very bottom. */}
+      <Text variant="caption" color="muted" style={styles.footer} onPress={() => navigation.navigate("Sources")}>{t("settings.footer")}</Text>
     </ScrollView>
   );
 }
@@ -110,4 +130,5 @@ const styles = StyleSheet.create({
   field: { marginTop: space.xs, borderRadius: radius.md, paddingHorizontal: space.sm, flexDirection: "row" },
   stack: { gap: space.sm },
   list: { paddingVertical: space.xxs },
+  footer: { marginTop: space.lg, textAlign: "center", fontSize: 11, lineHeight: 15 },
 });

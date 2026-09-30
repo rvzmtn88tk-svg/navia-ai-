@@ -66,8 +66,6 @@ demoTripPlanner.setDestination({ label: "Бориспіль (demo)", location: D
 
 const DEMO_PLACES = [...DEMO_POIS, ...DEMO_ROUTE_POIS];
 
-export type RecentDestination = { label: string; lat: number; lon: number; visitedAt: number };
-
 type NaviaStore = {
   isDemoMode: boolean;
   setDemoMode: (v: boolean) => void;
@@ -83,14 +81,11 @@ type NaviaStore = {
   setAirThreatSummary: (summary: AirThreatSummary | null) => void;
   destination: LatLon | null;
   setDestination: (d: LatLon | null) => void;
-  /** Session-only (not persisted across app restarts — no AsyncStorage
-   * wired up in this pass, see LIMITATIONS.md) list of recently navigated destinations. */
-  recentDestinations: RecentDestination[];
-  addRecentDestination: (d: RecentDestination) => void;
   /** A new route is being built after leaving the old one. */
   rerouting: boolean;
   setRerouting: (v: boolean) => void;
-  /** Home/work for "take me home". Session-only, like recentDestinations. */
+  /** Home/work the co-pilot set this session; the driver's own Home/Work and
+   * recent places are persisted in store/placesStore.ts. */
   savedPlaces: SavedPlace[];
   savePlace: (p: SavedPlace) => void;
   /** Spec section 30: "Send location context to AI" — conservative default OFF, asked once on first use, remembered. */
@@ -116,11 +111,8 @@ export const useNaviaStore = create<NaviaStore>((set, get) => ({
   setAirThreatSummary: (airThreatSummary) => set({ airThreatSummary }),
   destination: null,
   setDestination: (d) => set({ destination: d }),
-  recentDestinations: [],
   rerouting: false,
   setRerouting: (rerouting) => set({ rerouting }),
-  addRecentDestination: (d) =>
-    set((s) => ({ recentDestinations: [d, ...s.recentDestinations.filter((r) => r.label !== d.label)].slice(0, 8) })),
   savedPlaces: [],
   savePlace: (p) => set((s) => ({ savedPlaces: [...s.savedPlaces.filter((x) => x.kind !== p.kind), p] })),
   aiContextConsent: false,

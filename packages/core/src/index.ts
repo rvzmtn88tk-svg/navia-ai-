@@ -39,3 +39,4 @@ export * from "./voice-guidance";
 export * from "./position-smoother";
 export * from "./storage";
 export * from "./active-trip-cache";
+export * from "./trip-recording";

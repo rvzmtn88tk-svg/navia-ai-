@@ -4,14 +4,14 @@
 // is approximate community monitoring — never an empty map that could read as
 // "no targets" when the source is down.
 import React, { useEffect, useRef } from "react";
-import { Animated, Easing, Linking, StyleSheet, View } from "react-native";
+import { Animated, Easing, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { TARGETS_SOURCE_URL, distanceToTarget, targetsLine, type AirTarget, type TargetsView } from "../providers/AirTargetsProvider";
+import { distanceToTarget, targetsLine, type AirTarget, type TargetsView } from "../providers/AirTargetsProvider";
 export { targetsLine, type TargetsView };
 import { directionWords } from "../ai/copilotBrain";
 import { useT, type StringKey, type Translate } from "../i18n";
 import { Icon } from "./Icon";
-import { IconButton, Text, Touchable, useColors } from "./ui";
+import { IconButton, Text, useColors } from "./ui";
 import { elevation, iconSize, radius, space } from "../theme/tokens";
 
 export function TargetsOverlay({ open, view, selected, onSelect, onClose, position }: {
@@ -44,11 +44,6 @@ export function TargetsOverlay({ open, view, selected, onSelect, onClose, positi
           <IconButton icon="close" tone="plain" size={40} label={t("common.close")} onPress={onClose} />
         </View>
         <Text variant="callout" color={line.tone === "warning" ? "critical" : "primary"}>{line.text}</Text>
-        <Touchable accessibilityRole="link" onPress={() => void Linking.openURL(TARGETS_SOURCE_URL)} style={styles.source}>
-          <Icon name="info" size={iconSize.sm} color={c.accent} />
-          <Text variant="caption" color="accent">{t("targets.source")}</Text>
-        </Touchable>
-        <Text variant="caption" color="secondary">{t("targets.disclaimer")}</Text>
       </View>
       {selected && (
         <View style={[styles.card, styles.detail, { backgroundColor: c.surfaceElevated }, elevation(3, c)]}>
@@ -79,7 +74,7 @@ function TargetDetail({ target, position, t, lang }: { target: AirTarget; positi
       <Text variant="callout" color="secondary">{target.quality === "area" ? t("targets.detail.area") : t("targets.detail.accuracy", { km: target.uncertaintyKm ?? "?", reports: target.reports })}</Text>
       <Text variant="callout" color="secondary">{t("targets.detail.updated", { ago })}</Text>
       {target.stale && <Text variant="callout" color="critical">{t("targets.detail.stale")}</Text>}
-      {!!target.note && <Text variant="caption" color="muted">NEPTUN: {target.note}</Text>}
+      {!!target.note && <Text variant="caption" color="muted">{target.note}</Text>}
     </View>
   );
 }
@@ -90,6 +85,5 @@ const styles = StyleSheet.create({
   detail: { alignSelf: "stretch" },
   header: { flexDirection: "row", alignItems: "center", gap: space.sm },
   flex: { flex: 1 },
-  source: { flexDirection: "row", alignItems: "center", gap: space.xs, paddingVertical: 2 },
   lines: { gap: 2 },
 });

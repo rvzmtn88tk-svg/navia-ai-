@@ -3,6 +3,8 @@
 // in this environment (no react-native types / Metro bundler available
 // here); it follows the standard Expo `registerRootComponent` entry shape.
 import { registerRootComponent } from "expo";
+// Background navigation task: defined before the app registers (expo-task-manager requirement).
+import "./src/background/backgroundLocation";
 import App from "./App";
 
 registerRootComponent(App);

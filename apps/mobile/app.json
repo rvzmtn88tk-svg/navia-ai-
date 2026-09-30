@@ -8,9 +8,9 @@
     "scheme": "navia",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/splash-blank.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0A111C"
+      "backgroundColor": "#02050C"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -20,10 +20,15 @@
       "bundleIdentifier": "ua.navia.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "NAVIA потребує доступ до геолокації для навігації у фоновому режимі під час поїздки.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Щоб голосові підказки звучали, коли екран заблоковано або відкрито іншу програму, дозвольте геолокацію «Завжди». NAVIA використовує її лише під час поїздки.",
         "NSMicrophoneUsageDescription": "NAVIA використовує мікрофон для голосових команд.",
         "NSCameraUsageDescription": "NAVIA використовує камеру для розпізнавання орієнтирів (Camera Vision).",
-        "NSSpeechRecognitionUsageDescription": "NAVIA розпізнає ваші голосові запитання, щоб штурман міг відповісти."
+        "NSSpeechRecognitionUsageDescription": "NAVIA розпізнає ваші голосові запитання, щоб штурман міг відповісти.",
+        "UIBackgroundModes": [
+          "location",
+          "audio"
+        ],
+        "NSLocationAlwaysUsageDescription": "Щоб голосові підказки звучали, коли екран заблоковано або відкрито іншу програму, дозвольте геолокацію «Завжди». NAVIA використовує її лише під час поїздки."
       }
     },
     "android": {
@@ -41,7 +46,12 @@
       }
     },
     "plugins": [
-      "expo-location",
+      [
+        "expo-location",
+        {
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
       "expo-sensors",
       "expo-sqlite",
       [

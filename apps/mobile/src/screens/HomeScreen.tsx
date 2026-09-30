@@ -67,8 +67,8 @@ const PEEK_H = 100;
 /** Ukraine: its centre and width in degrees of longitude, to fill the screen width on the targets map. */
 const UKRAINE_CENTER = { lat: 48.4, lon: 31.2 };
 const UKRAINE_LON_SPAN = 18.1;
-/** Height of the targets overlay card (source, time, disclaimer) that the map must stay below. */
-const TARGETS_OVERLAY_H = 300;
+/** Height of the targets overlay card (title and status line) that the map must stay below. */
+const TARGETS_OVERLAY_H = 170;
 
 export function HomeScreen({ navigation, route }: Props): JSX.Element {
   // Render time of the whole screen (the benchmark reads it; React's Profiler is off in release builds).
@@ -387,10 +387,6 @@ export function HomeScreen({ navigation, route }: Props): JSX.Element {
                 {i > 0 && <Divider inset={52} />}
                 <ListRow icon="clock" iconTint={c.textSecondary} title={p.label} subtitle={p.subtitle} onPress={() => { setSelected(p); setSnap("half"); focusOn(p, 16); }} />
               </View>)}
-              <Pressable onPress={() => navigation.navigate("Sources")} accessibilityRole="link" style={styles.sources}>
-                <Icon name="info" size={iconSize.sm} color={c.textMuted} />
-                <Text variant="caption" color="muted">{t("home.sources")} · © OpenStreetMap</Text>
-              </Pressable>
               {__DEV__ && <Text variant="caption" color="accent" style={styles.demoLink} onPress={() => {
                 setDemoMode(true);
                 navigation.navigate("Navigation", { destinationLat: DEMO_DESTINATION.lat, destinationLon: DEMO_DESTINATION.lon, destinationLabel: `Бориспіль (${t("common.demo")})` });
@@ -673,7 +669,6 @@ const styles = StyleSheet.create({
   stack: { gap: space.md },
   buttonRow: { flexDirection: "row", gap: space.xs },
   empty: { gap: space.sm, paddingVertical: space.lg },
-  sources: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.xs, paddingVertical: space.md },
   demoLink: { textAlign: "center" },
   modalScrim: { flex: 1, justifyContent: "flex-end", padding: space.md },
   layersCard: { borderRadius: radius.xl, padding: space.md, gap: space.md, marginBottom: space.xl },

@@ -7,6 +7,7 @@
 // documented LocationObject fields.
 import * as Location from "expo-location";
 import type { GNSSRawSample } from "@navia/core";
+import { onBackgroundLocation } from "../background/backgroundLocation";
 
 export type PositionSubscription = { remove: () => void };
 
@@ -50,10 +51,20 @@ export class ExpoLocationPositionProvider {
     if (!granted) {
       throw new Error("ExpoLocationPositionProvider: location permission not granted");
     }
+    // Fixes come from the foreground watch and, during a trip, from the
+    // background task too (the only source once the screen is locked):
+    // each fix is passed on once, in time order.
+    let lastTs = 0;
+    const deliver = (loc: Location.LocationObject) => {
+      if (loc.timestamp <= lastTs) return;
+      lastTs = loc.timestamp;
+      onSample(locationToSample(loc));
+    };
     const sub = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 0 },
-      (loc) => onSample(locationToSample(loc)),
+      deliver,
     );
-    return { remove: () => sub.remove() };
+    const offBackground = onBackgroundLocation(deliver);
+    return { remove: () => { sub.remove(); offBackground(); } };
   }
 }

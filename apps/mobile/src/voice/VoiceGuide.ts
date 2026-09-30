@@ -52,7 +52,8 @@ async function ensureAudioMode(): Promise<void> {
     interruptionModeIOS: InterruptionModeIOS.DuckOthers,
     interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
     shouldDuckAndroid: true,
-    staysActiveInBackground: false,
+    // Prompts keep sounding with the screen locked (UIBackgroundModes "audio").
+    staysActiveInBackground: true,
   }).catch(() => {});
   audioModeReady = true;
 }

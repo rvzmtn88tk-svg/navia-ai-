@@ -2,7 +2,7 @@
   "name": "navia",
   "private": true,
   "version": "0.1.0",
-  "description": "NAVIA AI — resilient offline-capable navigation for Ukraine. Monorepo: packages/core (platform-independent navigation engine), apps/mobile (Expo/React Native app), scripts/data (OSM/Valhalla offline data pipeline).",
+  "description": "NAVIA AI \u2014 resilient offline-capable navigation for Ukraine. Monorepo: packages/core (platform-independent navigation engine), apps/mobile (Expo/React Native app), scripts/data (OSM/Valhalla offline data pipeline).",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -20,7 +20,8 @@
     "bench:ai": "tsx packages/core/eval/benchmark.ts",
     "sim:gnss": "tsx packages/core/sim/run-monte-carlo.ts --n 2000 --workers 4 --out packages/core/sim/reports/mc-2k.json",
     "sim:gnss:100k": "tsx packages/core/sim/run-monte-carlo.ts --n 100000 --workers 4 --out packages/core/sim/reports/mc-100k.json",
-    "sim:replay": "tsx packages/core/sim/replay-one.ts"
+    "sim:replay": "tsx packages/core/sim/replay-one.ts",
+    "replay:trips": "tsx scripts/trips/replay-trips.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.15",

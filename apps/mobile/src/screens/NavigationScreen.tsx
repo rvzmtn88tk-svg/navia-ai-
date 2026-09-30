@@ -42,6 +42,11 @@ import { recordVoiceLatency } from "../perf/voiceLatency";
 import { PRIORITY } from "../voice/speechQueue";
 import { easing, elevation, iconSize, motion, radius, space, type ThemeColors } from "../theme/tokens";
 import { isNetworkError } from "../providers/netError";
+import { startBackgroundLocation, stopBackgroundLocation } from "../background/backgroundLocation";
+import { startTripRecording, type TripSession } from "../trips/tripLog";
+
+/** The "allow Always" hint is shown once per app run, not on every trip. */
+let backgroundHintShown = false;
 
 type Props = NativeStackScreenProps<RootStackParamList, "Navigation">;
 type Phase = "overview" | "navigating" | "arrived";
@@ -115,6 +120,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     let cancelled = false;
     let positionSub: { remove: () => void } | null = null;
     let motionSub: { remove: () => void } | null = null;
+    let recording: TripSession | null = null;
+    let recordedRoute: unknown = null;
     let tick: ReturnType<typeof setInterval> | null = null;
     let routeRequested = false;
     let rerouting = false;
@@ -171,6 +178,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
     let lastProbeAt = 0;
     function onSample(sample: GNSSRawSample) {
       if (cancelled) return;
+      recording?.gnss(sample);
       lastSampleAt = Date.now();
       navigationEngine.pushGnssSample(sample, Date.now());
       navigationEngine.tick(Date.now());
@@ -184,7 +192,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       const granted = await location.requestPermission().catch(() => false);
       if (cancelled) return;
       if (!granted) { setPermissionDenied(true); return; }
-      motionSub = new ExpoSensorsMotionProvider().subscribe((sample: IMUSample) => navigationEngine.pushImuSample(sample));
+      recording = startTripRecording();
+      motionSub = new ExpoSensorsMotionProvider().subscribe((sample: IMUSample) => { recording?.imu(sample); navigationEngine.pushImuSample(sample); });
       try {
         positionSub = await location.subscribe(onSample, true);
       } catch (err) {
@@ -192,6 +201,11 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
         return;
       }
       if (cancelled) { positionSub.remove(); motionSub?.remove(); return; }
+      // Keep guiding with the screen locked or another app in front.
+      void startBackgroundLocation(!backgroundHintShown).then((bg) => {
+        if (cancelled) { void stopBackgroundLocation(); return; }
+        if (bg === "needs-always" && !backgroundHintShown) { backgroundHintShown = true; setTripNotice(t("background.needsAlways")); }
+      });
       // No trusted fix soon → offer to start from the last stable position or a point the user sets.
       const noFixTimer = setTimeout(() => { if (!cancelled && !routeRequested) setNoFix(true); }, 8_000);
       startFromRef.current = (p) => {
@@ -212,6 +226,7 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
         }
         navigationEngine.tick(Date.now());
         refresh();
+        if (recording) { const r = navigationEngine.getRoute(); if (r && r !== recordedRoute) { recordedRoute = r; recording.route(r); } }
         const s = navigationEngine.getState();
         const here = s.gnss === "NORMAL" ? s.trustedPosition?.position : null;
         if (here && s.offRoute && !rerouting && Date.now() - lastRerouteAt > 30_000 && phaseRef.current === "navigating") {
@@ -257,6 +272,8 @@ export function NavigationScreen({ route: navRoute, navigation }: Props): JSX.El
       cancelled = true;
       positionSub?.remove();
       motionSub?.remove();
+      void recording?.stop();
+      if (!demo) void stopBackgroundLocation();
       if (tick) clearInterval(tick);
       stopSpeaking();
       if (demo) demoEngine.reset(); else { navigationEngine.clearRoute(); navigationEngine.tick(Date.now()); }
